@@ -84,6 +84,12 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.2.0** (2026-09-25) — Audio items now play directly from the shelf
+  row: a play/pause button, inline progress bar, and elapsed/total time,
+  no more jumping into the full-page reader first. A single shared audio
+  element is reused across tracks and the file is only decrypted at the
+  moment you press play, not for every audio row up front. Playback
+  position still saves automatically (same as before).
 - **v1.1.0** (2026-09-25) — Export is no longer plain JSON by default. The
   export button now opens a modal offering "Encrypted" (default) or "Plain
   JSON" (opt-in, with an inline warning). Encrypted backups use their own

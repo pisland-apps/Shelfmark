@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -127,6 +127,72 @@ const TYPE_COLOR = {pdf:'var(--pdf)', markdown:'var(--md)', image:'var(--img)', 
 const TYPE_LABEL = {pdf:'PDF', markdown:'Note', image:'Picture', audio:'Recording'};
 let db, pendingFile = null, pendingType = null;
 let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
+
+// ---- Inline shelf audio player ----
+// Audio items play directly from the shelf row (tap to play/pause, inline
+// progress bar) instead of opening the full-page reader. One shared <audio>
+// element is reused across tracks; the file is only decrypted when actually
+// played, not eagerly for every audio row.
+let shelfAudioEl = null, shelfPlayingId = null, shelfAudioBlobUrl = null;
+
+function ensureShelfAudio(){
+  if(shelfAudioEl) return shelfAudioEl;
+  shelfAudioEl = new Audio();
+  shelfAudioEl.addEventListener('timeupdate', onShelfAudioTimeUpdate);
+  shelfAudioEl.addEventListener('play', ()=>refreshShelfAudioRowUI());
+  shelfAudioEl.addEventListener('pause', ()=>refreshShelfAudioRowUI());
+  shelfAudioEl.addEventListener('ended', ()=>{
+    if(shelfPlayingId) saveShelfProgress(shelfPlayingId, 0);
+    refreshShelfAudioRowUI();
+  });
+  return shelfAudioEl;
+}
+async function toggleShelfPlay(id){
+  const aud = ensureShelfAudio();
+  if(shelfPlayingId === id){
+    if(aud.paused) aud.play(); else aud.pause();
+    return;
+  }
+  if(shelfPlayingId){
+    await saveShelfProgress(shelfPlayingId, aud.currentTime);
+  }
+  if(shelfAudioBlobUrl){ URL.revokeObjectURL(shelfAudioBlobUrl); shelfAudioBlobUrl = null; }
+  const it = await getOne(id);
+  if(!it || it.type !== 'audio') return;
+  shelfAudioBlobUrl = URL.createObjectURL(it.content);
+  shelfPlayingId = id;
+  aud.src = shelfAudioBlobUrl;
+  aud.onloadedmetadata = ()=>{
+    if(it.progress && it.progress.time) aud.currentTime = it.progress.time;
+    aud.play();
+  };
+  refreshShelfAudioRowUI();
+}
+function onShelfAudioTimeUpdate(){
+  if(!shelfPlayingId) return;
+  const aud = shelfAudioEl;
+  const row = document.querySelector(`.spine[data-id="${shelfPlayingId}"]`);
+  if(row){
+    const pct = aud.duration ? (aud.currentTime/aud.duration)*100 : 0;
+    const fill = row.querySelector('.inline-bar-fill');
+    if(fill) fill.style.width = pct + '%';
+    const timeEl = row.querySelector('.inline-time');
+    if(timeEl) timeEl.textContent = fmtTime(aud.currentTime) + ' / ' + fmtTime(aud.duration || 0);
+  }
+  clearTimeout(aud._t);
+  aud._t = setTimeout(()=>saveShelfProgress(shelfPlayingId, aud.currentTime), 800);
+}
+async function saveShelfProgress(id, time){
+  await putMetaOnly(id, { progress: { time } });
+}
+function refreshShelfAudioRowUI(){
+  document.querySelectorAll('.spine.audio-row').forEach(row=>{
+    const isCurrent = row.dataset.id === shelfPlayingId;
+    row.classList.toggle('playing', isCurrent && shelfAudioEl && !shelfAudioEl.paused);
+    const btn = row.querySelector('.inline-play');
+    if(btn) btn.innerHTML = (isCurrent && shelfAudioEl && !shelfAudioEl.paused) ? '&#10074;&#10074;' : '&#9658;';
+  });
+}
 
 function openDB(){
   return new Promise((res,rej)=>{
@@ -484,17 +550,34 @@ async function render(){
     for(const it of groups.get(cat)){
       const row = document.createElement('div');
       row.className = 'spine';
+      row.dataset.id = it.id;
       row.style.setProperty('--t', TYPE_COLOR[it.type]);
-      row.onclick = ()=>openReader(it.id);
-      row.innerHTML = `<div class="meta"><div class="title">${escapeHtml(it.title)}</div>
-        <div class="sub">${TYPE_LABEL[it.type]}${it.progress ? ' \u00b7 in progress' : ''}</div></div>
-        <button class="edit" title="Rename or recategorize">&#9998;</button>
-        <button class="del" title="Remove">&times;</button>`;
+
+      if(it.type === 'audio'){
+        row.classList.add('audio-row');
+        if(shelfPlayingId === it.id) row.classList.add('playing');
+        row.innerHTML = `<button class="inline-play">${shelfPlayingId===it.id && shelfAudioEl && !shelfAudioEl.paused ? '&#10074;&#10074;' : '&#9658;'}</button>
+          <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
+          <div class="sub">${TYPE_LABEL[it.type]}</div>
+          <div class="inline-bar"><div class="inline-bar-fill"></div></div>
+          <div class="inline-time"></div></div>
+          <button class="edit" title="Rename or recategorize">&#9998;</button>
+          <button class="del" title="Remove">&times;</button>`;
+        row.querySelector('.inline-play').onclick = (e)=>{ e.stopPropagation(); toggleShelfPlay(it.id); };
+        row.onclick = ()=>toggleShelfPlay(it.id);
+      } else {
+        row.onclick = ()=>openReader(it.id);
+        row.innerHTML = `<div class="meta"><div class="title">${escapeHtml(it.title)}</div>
+          <div class="sub">${TYPE_LABEL[it.type]}${it.progress ? ' \u00b7 in progress' : ''}</div></div>
+          <button class="edit" title="Rename or recategorize">&#9998;</button>
+          <button class="del" title="Remove">&times;</button>`;
+      }
       row.querySelector('.edit').onclick = (e)=>{ e.stopPropagation(); openEdit(it.id); };
       row.querySelector('.del').onclick = (e)=>{ e.stopPropagation(); removeItem(it.id); };
       shelf.appendChild(row);
     }
   }
+  if(shelfPlayingId) refreshShelfAudioRowUI();
 }
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 

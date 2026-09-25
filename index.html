@@ -92,6 +92,20 @@
   }
   .spine .edit:hover{color:var(--ink);}
 
+  /* inline audio playback directly on the shelf row (no page navigation) */
+  .spine.audio-row .meta{display:flex;flex-direction:column;gap:0;}
+  .inline-play{
+    flex-shrink:0;width:34px;height:34px;border-radius:50%;border:none;
+    background:var(--t);color:#fff;font-size:13px;display:flex;align-items:center;
+    justify-content:center;padding:0;
+  }
+  .inline-bar{
+    width:100%;height:3px;border-radius:2px;background:var(--line);margin-top:8px;overflow:hidden;
+  }
+  .inline-bar-fill{height:100%;width:0%;background:var(--t);border-radius:2px;transition:width .15s linear;}
+  .inline-time{font-size:11px;color:var(--ink-soft);margin-top:4px;font-variant-numeric:tabular-nums;}
+  .spine.playing .inline-play{background:var(--ink);}
+
   /* modal */
   .overlay{
     position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;
