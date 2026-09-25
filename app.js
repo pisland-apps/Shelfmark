@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -215,9 +215,34 @@ async function putContentOnly(id, type, contentValue){
   await putRaw(rec);
 }
 
-async function exportData(){
+// ---- Export / Import ----
+// Export can be either a passphrase-encrypted file (AES-256-GCM, PBKDF2-
+// derived key, own random salt — independent of the app-lock passcode, so a
+// backup is portable even if you later change or forget your app passcode)
+// or plain JSON (fully readable, opt-in only, for people who explicitly want
+// that). Import auto-detects which kind a file is via its `encrypted` flag.
+let exportMode = 'enc';
+let pendingImportBackup = null;
+
+function setExportMode(m){
+  exportMode = m;
+  document.getElementById('expModeEnc').classList.toggle('active', m==='enc');
+  document.getElementById('expModePlain').classList.toggle('active', m==='plain');
+  document.getElementById('expPassFields').style.display = m==='enc' ? 'block' : 'none';
+  document.getElementById('expPlainWarning').style.display = m==='plain' ? 'block' : 'none';
+  document.getElementById('expError').textContent = '';
+}
+function openExportModal(){
+  document.getElementById('exppass').value = '';
+  document.getElementById('exppass2').value = '';
+  document.getElementById('expError').textContent = '';
+  setExportMode('enc');
+  document.getElementById('exportOverlay').style.display = 'flex';
+}
+function closeExportModal(){ document.getElementById('exportOverlay').style.display = 'none'; }
+
+async function buildExportItems(){
   const metas = await getAll();
-  if(!metas.length){ alert('Your shelf is empty — nothing to export yet.'); return; }
   const out = [];
   for(const m of metas){
     const full = await getOne(m.id);
@@ -225,21 +250,84 @@ async function exportData(){
     out.push({id:full.id, title:full.title, category:full.category, type:full.type, mime:full.mime,
       addedAt:full.addedAt, progress:full.progress, bookmarks:full.bookmarks, content});
   }
-  const blob = new Blob([JSON.stringify({app:'shelfmark', exportedAt:Date.now(), items:out}, null, 0)], {type:'application/json'});
+  return out;
+}
+function downloadJSON(obj, filename){
+  const blob = new Blob([JSON.stringify(obj)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'shelfmark-backup-'+new Date().toISOString().slice(0,10)+'.json';
+  a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
+}
+
+async function doExport(){
+  const errEl = document.getElementById('expError');
+  errEl.textContent = '';
+  const items = await buildExportItems();
+  if(!items.length){ errEl.textContent = 'Your shelf is empty — nothing to export yet.'; return; }
+
+  if(exportMode === 'plain'){
+    downloadJSON({app:'shelfmark', exportedAt:Date.now(), encrypted:false, items},
+      'shelfmark-backup-'+new Date().toISOString().slice(0,10)+'.json');
+    closeExportModal();
+    return;
+  }
+
+  const pass = document.getElementById('exppass').value;
+  const pass2 = document.getElementById('exppass2').value;
+  if(pass.length < 4){ errEl.textContent = 'Use at least 4 characters.'; return; }
+  if(pass !== pass2){ errEl.textContent = "Passphrases don't match."; return; }
+
+  const salt = randomBytes(16);
+  const key = await deriveKey(pass, salt, PBKDF2_ITERATIONS);
+  const { iv, cipher } = await encryptJSON(key, { items });
+  downloadJSON({
+    app:'shelfmark', exportedAt:Date.now(), encrypted:true,
+    kdf:'PBKDF2', iterations: PBKDF2_ITERATIONS,
+    salt: buf2b64(salt), iv: buf2b64(iv), cipher: buf2b64(cipher)
+  }, 'shelfmark-backup-'+new Date().toISOString().slice(0,10)+'.enc.json');
+  closeExportModal();
 }
 
 async function onImportFile(e){
   const f = e.target.files[0];
   e.target.value = '';
   if(!f) return;
+  let parsed;
+  try{ parsed = JSON.parse(await f.text()); }
+  catch(err){ alert("Couldn't read that file — make sure it's a Shelfmark export."); return; }
+
+  if(parsed && parsed.encrypted === true){
+    pendingImportBackup = parsed;
+    document.getElementById('imppass').value = '';
+    document.getElementById('impError').textContent = '';
+    document.getElementById('importPassOverlay').style.display = 'flex';
+    return;
+  }
+  await mergeImportedItems(Array.isArray(parsed) ? parsed : (parsed.items || []));
+}
+function closeImportPassModal(){ document.getElementById('importPassOverlay').style.display = 'none'; pendingImportBackup = null; }
+
+async function doImportDecrypt(){
+  const errEl = document.getElementById('impError');
+  errEl.textContent = '';
+  const pass = document.getElementById('imppass').value;
+  if(!pendingImportBackup) return;
   try{
-    const parsed = JSON.parse(await f.text());
-    const items = Array.isArray(parsed) ? parsed : (parsed.items || []);
+    const salt = b642buf(pendingImportBackup.salt);
+    const key = await deriveKey(pass, salt, pendingImportBackup.iterations || PBKDF2_ITERATIONS);
+    const { items } = await decryptJSON(key, b642buf(pendingImportBackup.iv), b642buf(pendingImportBackup.cipher));
+    document.getElementById('importPassOverlay').style.display = 'none';
+    pendingImportBackup = null;
+    await mergeImportedItems(items || []);
+  }catch(err){
+    errEl.textContent = 'Incorrect passphrase.';
+  }
+}
+
+async function mergeImportedItems(items){
+  try{
     const existingItems = await getAll();
     let added = 0, updated = 0;
     for(const it of items){

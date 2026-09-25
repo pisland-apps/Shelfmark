@@ -76,11 +76,22 @@ most common reason the two look out of sync.
   wipes the local IndexedDB database entirely so you can start over —
   it does not recover old data.
 - Use Export (⇡ in the header) periodically if you want a backup outside
-  the browser; the exported JSON is **not** encrypted, so store it
-  somewhere private.
+  the browser. Choose "Encrypted" (the default) and it's protected with its
+  own passphrase, separate from your app-lock passcode — pick something you
+  can remember independently, since it's the only way back into that file.
+  "Plain JSON" is available but fully readable by anyone who opens it; only
+  use it somewhere you already trust.
 
 ## Changelog
 
+- **v1.1.0** (2026-09-25) — Export is no longer plain JSON by default. The
+  export button now opens a modal offering "Encrypted" (default) or "Plain
+  JSON" (opt-in, with an inline warning). Encrypted backups use their own
+  passphrase — independent of your app-lock passcode, chosen at export time
+  — via AES-256-GCM with a PBKDF2-derived key (250,000 iterations, random
+  salt, stored alongside the ciphertext in the file). Import auto-detects
+  an encrypted backup (`encrypted:true` in the file) and prompts for its
+  passphrase before merging; plain/legacy export files import unchanged.
 - **v1.0.0** (2026-09-25) — Packaged from the single-file prototype into a
   multi-file PWA: added the full-screen passcode lock screen, AES-256-GCM +
   PBKDF2 IndexedDB encryption (metadata and file content encrypted

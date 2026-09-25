@@ -257,7 +257,7 @@
     <div class="brand">Shelfmark<span>your own shelf, added by hand</span></div>
     <div style="display:flex;gap:8px;align-items:center;">
       <button class="icon-btn" onclick="document.getElementById('importPick').click()" title="Import from JSON">&#8681;</button>
-      <button class="icon-btn" onclick="exportData()" title="Export shelf as JSON">&#8679;</button>
+      <button class="icon-btn" onclick="openExportModal()" title="Export shelf as JSON">&#8679;</button>
       <input type="file" id="importPick" accept="application/json" style="display:none" onchange="onImportFile(event)">
       <button class="add-btn" onclick="openAdd()">+ Add</button>
     </div>
@@ -302,6 +302,43 @@
       <button class="cancel" onclick="closeEdit()">Cancel</button>
       <button class="save" onclick="saveEdit()">Save changes</button>
     </div>
+  </div>
+</div>
+
+<div id="exportOverlay" class="overlay" style="display:none;">
+  <div class="sheet">
+    <h2>Export shelf</h2>
+    <div class="seg" style="margin-bottom:6px;">
+      <button id="expModeEnc" onclick="setExportMode('enc')">Encrypted</button>
+      <button id="expModePlain" onclick="setExportMode('plain')">Plain JSON</button>
+    </div>
+    <div id="expPassFields">
+      <label for="exppass">Passphrase</label>
+      <input id="exppass" type="password" autocomplete="off" placeholder="Choose a passphrase for this backup">
+      <label for="exppass2">Confirm passphrase</label>
+      <input id="exppass2" type="password" autocomplete="off" placeholder="Confirm passphrase">
+    </div>
+    <div id="expPlainWarning" style="display:none;font-size:12.5px;color:var(--ink-soft);margin-top:14px;line-height:1.5;">
+      This file will be fully readable by anyone who opens it — only choose this if you're storing it somewhere you already trust.
+    </div>
+    <div class="row">
+      <button class="cancel" onclick="closeExportModal()">Cancel</button>
+      <button class="save" id="expGoBtn" onclick="doExport()">Export</button>
+    </div>
+    <div class="lock-error" id="expError"></div>
+  </div>
+</div>
+
+<div id="importPassOverlay" class="overlay" style="display:none;">
+  <div class="sheet">
+    <h2>Encrypted backup</h2>
+    <label for="imppass">This backup is encrypted — enter its passphrase</label>
+    <input id="imppass" type="password" autocomplete="off" placeholder="Passphrase">
+    <div class="row">
+      <button class="cancel" onclick="closeImportPassModal()">Cancel</button>
+      <button class="save" onclick="doImportDecrypt()">Import</button>
+    </div>
+    <div class="lock-error" id="impError"></div>
   </div>
 </div>
 
