@@ -1,0 +1,16 @@
+{
+  "name": "Shelfmark",
+  "short_name": "Shelfmark",
+  "description": "Your own shelf, added by hand — a private, offline personal library for PDFs, notes, pictures and recordings.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#e4dfc8",
+  "theme_color": "#2a2822",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
