@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -117,7 +117,7 @@ function onResetRequest(){
 async function unlockApp(){
   document.getElementById('lockScreen').classList.add('hidden');
   const saved = await getPrefsDecrypted();
-  if(saved) prefs = saved;
+  if(saved) prefs = { ...prefs, ...saved };
   applyPrefs(prefs);
   render();
 }
@@ -158,6 +158,13 @@ async function onShelfAudioEnded(){
     const idx = order.indexOf(finishedId);
     if(idx > -1 && idx < order.length - 1){
       await playShelfTrack(order[idx+1]);
+      return;
+    }
+    // Last track in the category: loop back to the first one if the loop
+    // toggle (header, 🔁) is on. Only loops when there's more than one
+    // track — a single-item category just replays itself.
+    if(prefs.loopAudio && order.length > 0){
+      await playShelfTrack(order[0]);
       return;
     }
   }
@@ -450,7 +457,7 @@ async function mergeImportedItems(items){
 
 const FONT_MAP = {serif:"Georgia,'Times New Roman',serif", sans:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", mono:"'SFMono-Regular',Consolas,Menlo,monospace", zh:"'PingFang SC','Heiti SC','Microsoft YaHei',sans-serif"};
 const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
-let prefs = {theme:'auto', font:'serif', size:'m'};
+let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -469,6 +476,13 @@ function applyPrefs(p){
   else document.documentElement.setAttribute('data-theme', p.theme);
   document.documentElement.style.setProperty('--read-font', FONT_MAP[p.font] || FONT_MAP.serif);
   document.documentElement.style.setProperty('--read-size', SIZE_MAP[p.size] || SIZE_MAP.m);
+  const loopBtn = document.getElementById('loopBtn');
+  if(loopBtn) loopBtn.classList.toggle('active', !!p.loopAudio);
+}
+function toggleLoopAudio(){
+  prefs.loopAudio = !prefs.loopAudio;
+  applyPrefs(prefs);
+  putPrefs(prefs);
 }
 function setPref(key, val){
   prefs[key] = val;

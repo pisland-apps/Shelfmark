@@ -63,6 +63,7 @@
     display:flex; align-items:center; justify-content:center; flex-shrink:0;
   }
   .icon-btn:active{background:var(--card);}
+  .icon-btn.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
   main{max-width:640px;margin:0 auto;padding:20px;}
   .empty{
     text-align:center; padding:64px 20px; color:var(--ink-soft);
@@ -270,6 +271,7 @@
   <div class="bar">
     <div class="brand">Shelfmark<span>your own shelf, added by hand</span></div>
     <div style="display:flex;gap:8px;align-items:center;">
+      <button class="icon-btn" id="loopBtn" onclick="toggleLoopAudio()" title="Loop audio within a category">&#128257;</button>
       <button class="icon-btn" onclick="document.getElementById('importPick').click()" title="Import from JSON">&#8681;</button>
       <button class="icon-btn" onclick="openExportModal()" title="Export shelf as JSON">&#8679;</button>
       <input type="file" id="importPick" accept="application/json" style="display:none" onchange="onImportFile(event)">

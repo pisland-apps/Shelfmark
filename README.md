@@ -84,6 +84,11 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.4.0** (2026-09-25) — Looping is now optional: a 🔁 button in the
+  header toggles it on/off (persisted, encrypted, in your settings — same
+  as theme/font/size). Off by default. When on, reaching the last audio
+  item in a category loops back to the first one in that category instead
+  of stopping; still scoped per category, same as auto-advance.
 - **v1.3.0** (2026-09-25) — Auto-advance for audio: when a track finishes,
   if there's another audio item in the same category (following shelf
   order), it starts automatically — a lightweight playlist scoped to each
