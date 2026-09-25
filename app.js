@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.5.4';
+const APP_VERSION = '1.5.5';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -970,10 +970,23 @@ function renderMarkdown(src){
   s = s.replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>');
   s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
   s = s.replace(/`([^`]+)`/g,'<code>$1</code>');
-  s = s.replace(/\[(.+?)\]\((.+?)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // audio-file links (e.g. https://.../track.mp3) render as an inline player
+  // instead of a plain link. Note: this fetches the file live from that URL
+  // (a real network request) when played — unlike everything else in
+  // Shelfmark, which never talks to the network.
+  const AUDIO_EXT = /\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|weba)(\?.*)?$/i;
+  s = s.replace(/\[(.+?)\]\((.+?)\)/g,(_,label,url)=>{
+    const trimmedUrl = url.trim();
+    if(AUDIO_EXT.test(trimmedUrl)){
+      return `<div class="md-audio"><div class="md-audio-label">${label}</div>`
+           + `<audio controls preload="none" src="${trimmedUrl}"></audio></div>`;
+    }
+    return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`;
+  });
   return s.split(/\n{2,}/).map((block,idx)=>{
     let html;
     if(/^<h[123]|^<pre/.test(block)) html = block;
+    else if(/^<div class="md-audio"/.test(block)) html = block;
     else if(/^\s*[-*]\s+/m.test(block)){
       const items = block.split(/\n/).filter(l=>l.trim()).map(l=>`<li>${l.replace(/^\s*[-*]\s+/,'')}</li>`).join('');
       html = `<ul>${items}</ul>`;

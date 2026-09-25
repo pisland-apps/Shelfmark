@@ -84,6 +84,14 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.5.5** (2026-09-25) — Markdown note links to an audio file (URL ending
+  in `.mp3`/`.m4a`/`.wav`/`.ogg`/`.oga`/`.opus`/`.aac`/`.flac`/`.weba`, with
+  optional query string) now render as an inline player (`<audio
+  controls>`) instead of a plain clickable link — no new syntax, still
+  plain `[label](url)`. Note this is the one place in the app that can make
+  a real network request: playing the track fetches it live from that URL,
+  unlike every other feature, which stays fully offline (see Security notes
+  above). A link to anything else still renders as a normal link.
 - **v1.5.4** (2026-09-25) — Added a sort toggle for items within each
   category: "Newest" (added-date descending, the original behavior) or
   "A–Z" (title, using a numeric-aware compare so "2" sorts before "10"
