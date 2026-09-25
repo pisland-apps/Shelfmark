@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -133,7 +133,7 @@ let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
 // progress bar) instead of opening the full-page reader. One shared <audio>
 // element is reused across tracks; the file is only decrypted when actually
 // played, not eagerly for every audio row.
-let shelfAudioEl = null, shelfPlayingId = null, shelfAudioBlobUrl = null;
+let shelfAudioEl = null, shelfPlayingId = null, shelfPlayingCategory = null, shelfAudioBlobUrl = null;
 
 function ensureShelfAudio(){
   if(shelfAudioEl) return shelfAudioEl;
@@ -141,19 +141,32 @@ function ensureShelfAudio(){
   shelfAudioEl.addEventListener('timeupdate', onShelfAudioTimeUpdate);
   shelfAudioEl.addEventListener('play', ()=>refreshShelfAudioRowUI());
   shelfAudioEl.addEventListener('pause', ()=>refreshShelfAudioRowUI());
-  shelfAudioEl.addEventListener('ended', ()=>{
-    if(shelfPlayingId) saveShelfProgress(shelfPlayingId, 0);
-    refreshShelfAudioRowUI();
-  });
+  shelfAudioEl.addEventListener('ended', onShelfAudioEnded);
   return shelfAudioEl;
 }
-async function toggleShelfPlay(id){
-  const aud = ensureShelfAudio();
-  if(shelfPlayingId === id){
-    if(aud.paused) aud.play(); else aud.pause();
-    return;
+// Shelf order within a category, same sort/grouping render() uses — used to
+// find "the next track" for auto-advance.
+async function categoryAudioOrder(category){
+  const items = (await getAll()).sort((a,b)=>b.addedAt-a.addedAt);
+  return items.filter(it=>it.type==='audio' && (it.category||'Uncategorized')===category).map(it=>it.id);
+}
+async function onShelfAudioEnded(){
+  const finishedId = shelfPlayingId, cat = shelfPlayingCategory;
+  if(finishedId) await saveShelfProgress(finishedId, 0);
+  if(cat){
+    const order = await categoryAudioOrder(cat);
+    const idx = order.indexOf(finishedId);
+    if(idx > -1 && idx < order.length - 1){
+      await playShelfTrack(order[idx+1]);
+      return;
+    }
   }
-  if(shelfPlayingId){
+  shelfPlayingId = null; shelfPlayingCategory = null;
+  refreshShelfAudioRowUI();
+}
+async function playShelfTrack(id){
+  const aud = ensureShelfAudio();
+  if(shelfPlayingId && shelfPlayingId !== id){
     await saveShelfProgress(shelfPlayingId, aud.currentTime);
   }
   if(shelfAudioBlobUrl){ URL.revokeObjectURL(shelfAudioBlobUrl); shelfAudioBlobUrl = null; }
@@ -161,12 +174,21 @@ async function toggleShelfPlay(id){
   if(!it || it.type !== 'audio') return;
   shelfAudioBlobUrl = URL.createObjectURL(it.content);
   shelfPlayingId = id;
+  shelfPlayingCategory = it.category || 'Uncategorized';
   aud.src = shelfAudioBlobUrl;
   aud.onloadedmetadata = ()=>{
     if(it.progress && it.progress.time) aud.currentTime = it.progress.time;
     aud.play();
   };
   refreshShelfAudioRowUI();
+}
+async function toggleShelfPlay(id){
+  const aud = ensureShelfAudio();
+  if(shelfPlayingId === id){
+    if(aud.paused) aud.play(); else aud.pause();
+    return;
+  }
+  await playShelfTrack(id);
 }
 function onShelfAudioTimeUpdate(){
   if(!shelfPlayingId) return;

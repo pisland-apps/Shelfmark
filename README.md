@@ -84,6 +84,12 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.3.0** (2026-09-25) — Auto-advance for audio: when a track finishes,
+  if there's another audio item in the same category (following shelf
+  order), it starts automatically — a lightweight playlist scoped to each
+  category. Playing across category boundaries still requires manually
+  tapping the next one; it won't jump into a different category or loop
+  back to the start.
 - **v1.2.0** (2026-09-25) — Audio items now play directly from the shelf
   row: a play/pause button, inline progress bar, and elapsed/total time,
   no more jumping into the full-page reader first. A single shared audio
