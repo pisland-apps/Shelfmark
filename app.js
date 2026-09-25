@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -394,8 +394,28 @@ async function buildExportItems(){
   }
   return out;
 }
-function downloadJSON(obj, filename){
+async function downloadJSON(obj, filename){
   const blob = new Blob([JSON.stringify(obj)], {type:'application/json'});
+  // In a standalone, home-screen-installed PWA (iOS especially — this app
+  // ships an apple-touch-icon for exactly that use case) there's no browser
+  // chrome to catch a synthetic <a download> click, so it silently does
+  // nothing: no error, no download, no dialog. It also has to fire
+  // *synchronously* inside the user's tap — any await beforehand (we do
+  // IndexedDB reads and, for encrypted exports, PBKDF2 + AES-GCM) already
+  // breaks that. The Web Share API routes through the native share sheet
+  // instead, which does work from an installed PWA, so try that first and
+  // only fall back to the old anchor-click for browsers/tabs that don't
+  // support sharing files.
+  const file = new File([blob], filename, {type:'application/json'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{
+      await navigator.share({files:[file], title: filename});
+      return;
+    }catch(err){
+      if(err && err.name === 'AbortError') return; // user closed the share sheet — not a failure
+      // any other error: fall through to the download-link path below
+    }
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -410,7 +430,7 @@ async function doExport(){
   if(!items.length){ errEl.textContent = 'Your shelf is empty — nothing to export yet.'; return; }
 
   if(exportMode === 'plain'){
-    downloadJSON({app:'shelfmark', exportedAt:Date.now(), encrypted:false, items},
+    await downloadJSON({app:'shelfmark', exportedAt:Date.now(), encrypted:false, items},
       'shelfmark-backup-'+new Date().toISOString().slice(0,10)+'.json');
     closeExportModal();
     return;
@@ -424,7 +444,7 @@ async function doExport(){
   const salt = randomBytes(16);
   const key = await deriveKey(pass, salt, PBKDF2_ITERATIONS);
   const { iv, cipher } = await encryptJSON(key, { items });
-  downloadJSON({
+  await downloadJSON({
     app:'shelfmark', exportedAt:Date.now(), encrypted:true,
     kdf:'PBKDF2', iterations: PBKDF2_ITERATIONS,
     salt: buf2b64(salt), iv: buf2b64(iv), cipher: buf2b64(cipher)
