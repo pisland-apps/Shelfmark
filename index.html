@@ -73,8 +73,17 @@
   .cathead{
     font-family:'Lora',serif; font-size:14px; color:var(--ink-soft);
     margin:22px 0 2px; padding-bottom:6px; border-bottom:1px solid var(--line);
+    cursor:pointer; user-select:none; display:flex; align-items:center; gap:6px;
   }
+  .cathead:hover{color:var(--ink);}
+  .cathead .chev{
+    display:inline-block; font-size:10px; transition:transform .15s ease;
+    transform:rotate(90deg);
+  }
+  .cathead.collapsed .chev{transform:rotate(0deg);}
   .cathead:first-child{margin-top:0;}
+  .catbody{display:flex; flex-direction:column; gap:10px;}
+  .catbody.collapsed{display:none;}
   .spine{
     display:flex; align-items:center; gap:14px; background:var(--card);
     border-radius:6px; padding:14px 16px; border-left:5px solid var(--t);

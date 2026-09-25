@@ -84,6 +84,26 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.5.3** (2026-09-25) — Category headers on the shelf are now
+  collapsible: click a category name to hide/show its items (a chevron
+  shows the state). Collapsed/expanded state is kept in memory and
+  survives adding, editing or removing items, but resets to all-expanded
+  each time the app is reopened.
+- **v1.5.2** (2026-09-25) — Fixed export throwing "Maximum call stack
+  size exceeded" on any shelf with meaningful content in it: `buf2b64`
+  (used to encode the encrypted export blob) was spreading the whole
+  buffer into `String.fromCharCode(...bytes)`, one function argument per
+  byte, which blows the JS engine's argument-count limit well before a
+  shelf with a few PDFs/images/audio files in it reaches typical export
+  size. Now encodes in fixed-size chunks instead, so it works at any size.
+- **v1.5.1** (2026-09-25) — Export now routes through the Web Share API
+  (native share sheet) when available, falling back to the old
+  anchor-download otherwise. Fixes export silently doing nothing when the
+  app is installed to the iOS home screen: a standalone PWA has no browser
+  chrome to catch a synthetic `<a download>` click, and the `await`s
+  before the click (IndexedDB reads, PBKDF2 + AES-GCM for encrypted
+  exports) also broke the direct-user-gesture requirement that trick
+  depends on.
 - **v1.5.0** (2026-09-25) — Storage-full handling: writes to IndexedDB
   (`putRaw`/`putAuth`/`putPrefs`/`del`) now properly reject on error instead
   of silently hanging forever if the browser refuses a write (most commonly

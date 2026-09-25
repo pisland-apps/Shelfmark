@@ -8,7 +8,7 @@
 // the badge (and your GitHub repo) shows a newer number. See APP_VERSION's
 // comment in app.js, and the deploy checklist in README.md.
 // ============================================================================
-const CACHE_VERSION = 'shelfmark-v1.5.2';
+const CACHE_VERSION = 'shelfmark-v1.5.3';
 
 const PRECACHE_URLS = [
   './',

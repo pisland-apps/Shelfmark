@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.5.2';
+const APP_VERSION = '1.5.3';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -156,6 +156,10 @@ let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
 // element is reused across tracks; the file is only decrypted when actually
 // played, not eagerly for every audio row.
 let shelfAudioEl = null, shelfPlayingId = null, shelfPlayingCategory = null, shelfAudioBlobUrl = null;
+// Which category headers are collapsed. In-memory only (resets on reload,
+// matching that nothing but library content lives in IndexedDB) — expanded
+// is the default each time the app opens.
+const collapsedCats = new Set();
 
 function ensureShelfAudio(){
   if(shelfAudioEl) return shelfAudioEl;
@@ -679,8 +683,20 @@ async function render(){
   for(const cat of cats){
     const head = document.createElement('div');
     head.className = 'cathead';
-    head.textContent = cat;
+    if(collapsedCats.has(cat)) head.classList.add('collapsed');
+    head.innerHTML = `<span class="chev">&#9656;</span><span>${escapeHtml(cat)}</span>`;
     shelf.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'catbody';
+    if(collapsedCats.has(cat)) body.classList.add('collapsed');
+
+    head.onclick = () => {
+      const nowCollapsed = body.classList.toggle('collapsed');
+      head.classList.toggle('collapsed', nowCollapsed);
+      if(nowCollapsed) collapsedCats.add(cat); else collapsedCats.delete(cat);
+    };
+
     for(const it of groups.get(cat)){
       const row = document.createElement('div');
       row.className = 'spine';
@@ -708,8 +724,9 @@ async function render(){
       }
       row.querySelector('.edit').onclick = (e)=>{ e.stopPropagation(); openEdit(it.id); };
       row.querySelector('.del').onclick = (e)=>{ e.stopPropagation(); removeItem(it.id); };
-      shelf.appendChild(row);
+      body.appendChild(row);
     }
+    shelf.appendChild(body);
   }
   if(shelfPlayingId) refreshShelfAudioRowUI();
 }
