@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -47,7 +47,7 @@ async function decryptJSON(key, iv, cipher){
 
 function txSec(mode){ return db.transaction('security', mode).objectStore('security'); }
 function getAuth(){ return new Promise(res=>{ const r = txSec('readonly').get('auth'); r.onsuccess=()=>res(r.result||null); r.onerror=()=>res(null); }); }
-function putAuth(rec){ return new Promise(res=>{ const r = txSec('readwrite').put(rec); r.onsuccess=()=>res(); }); }
+function putAuth(rec){ return new Promise((res,rej)=>{ const r = txSec('readwrite').put(rec); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
 
 async function createPasscode(passcode){
   const salt = randomBytes(16);
@@ -120,6 +120,13 @@ async function unlockApp(){
   if(saved) prefs = { ...prefs, ...saved };
   applyPrefs(prefs);
   render();
+  // Best-effort: ask the browser to protect this origin's storage from
+  // automatic eviction under disk pressure. Silent either way — some
+  // browsers auto-grant based on site engagement, some prompt, some just
+  // say no; none of that should block or interrupt using the app.
+  if(navigator.storage && navigator.storage.persist){
+    navigator.storage.persist().catch(()=>{});
+  }
 }
 
 // ---- IndexedDB --------------------------------------------------------------
@@ -212,7 +219,8 @@ function onShelfAudioTimeUpdate(){
   aud._t = setTimeout(()=>saveShelfProgress(shelfPlayingId, aud.currentTime), 800);
 }
 async function saveShelfProgress(id, time){
-  await putMetaOnly(id, { progress: { time } });
+  try{ await putMetaOnly(id, { progress: { time } }); }
+  catch(err){ /* autosave — fail silently, don't interrupt playback with alerts */ }
 }
 function refreshShelfAudioRowUI(){
   document.querySelectorAll('.spine.audio-row').forEach(row=>{
@@ -248,8 +256,47 @@ function blobToDataURL(blob){
 function tx(mode){ return db.transaction('items',mode).objectStore('items'); }
 function getAllRaw(){ return new Promise((res)=>{ const r = tx('readonly').getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>res([]); }); }
 function getOneRaw(id){ return new Promise((res)=>{ const r = tx('readonly').get(id); r.onsuccess=()=>res(r.result); }); }
-function putRaw(rec){ return new Promise((res)=>{ const r = tx('readwrite').put(rec); r.onsuccess=()=>res(); }); }
-function del(id){ return new Promise((res)=>{ const r = tx('readwrite').delete(id); r.onsuccess=()=>res(); }); }
+function putRaw(rec){ return new Promise((res,rej)=>{ const r = tx('readwrite').put(rec); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+function del(id){ return new Promise((res,rej)=>{ const r = tx('readwrite').delete(id); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+function isQuotaError(err){
+  return !!err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
+}
+function fmtBytes(n){
+  if(n == null || isNaN(n)) return '—';
+  const units = ['B','KB','MB','GB','TB'];
+  let i = 0, v = n;
+  while(v >= 1024 && i < units.length - 1){ v /= 1024; i++; }
+  return v.toFixed(v < 10 && i > 0 ? 1 : 0) + ' ' + units[i];
+}
+async function updateStorageBadge(){
+  const btn = document.getElementById('storageBtn');
+  if(!btn) return;
+  if(!(navigator.storage && navigator.storage.estimate)){ btn.style.display = 'none'; return; }
+  try{
+    const { usage, quota } = await navigator.storage.estimate();
+    const pct = quota ? Math.round((usage / quota) * 100) : null;
+    btn.textContent = pct === null ? fmtBytes(usage) : pct + '%';
+    btn.title = `Storage used: ${fmtBytes(usage)}${quota ? ' of ' + fmtBytes(quota) + ' available' : ''} — tap for details`;
+    btn.style.display = 'flex';
+  }catch(err){ btn.style.display = 'none'; }
+}
+async function showStorageDetail(){
+  if(!(navigator.storage && navigator.storage.estimate)){
+    alert("Your browser doesn't report storage usage here, so there's nothing to show — Shelfmark itself has no built-in size limit beyond what your browser/device allows.");
+    return;
+  }
+  const { usage, quota } = await navigator.storage.estimate();
+  const pct = quota ? Math.round((usage / quota) * 100) : null;
+  let persisted = 'unknown';
+  if(navigator.storage && navigator.storage.persisted){
+    try{ persisted = (await navigator.storage.persisted()) ? 'yes' : 'no'; }catch(err){}
+  }
+  alert(
+    `Storage used: ${fmtBytes(usage)}${quota ? ` of ${fmtBytes(quota)} available (${pct}%)` : ''}\n` +
+    `Protected from automatic cleanup: ${persisted}\n\n` +
+    `This is shared with everything else this site stores in your browser — Shelfmark itself doesn't cap how much you can add beyond that.`
+  );
+}
 
 // Every item is stored as { id, metaIv, metaCipher, contentIv, contentCipher }.
 // Metadata (title/category/type/mime/addedAt/progress/bookmarks) is one small
@@ -422,9 +469,9 @@ async function doImportDecrypt(){
 }
 
 async function mergeImportedItems(items){
+  let added = 0, updated = 0, stoppedOnQuota = false;
   try{
     const existingItems = await getAll();
-    let added = 0, updated = 0;
     for(const it of items){
       let existing = it.id ? existingItems.find(x=>x.id===it.id) : null;
       if(!existing){
@@ -442,14 +489,23 @@ async function mergeImportedItems(items){
         addedAt: it.addedAt || Date.now(), progress: it.progress || null,
         bookmarks: it.bookmarks || []
       };
-      await put(record);
+      try{
+        await put(record);
+      }catch(err){
+        if(isQuotaError(err)){ stoppedOnQuota = true; break; } // stop; keep whatever imported so far
+        throw err;
+      }
       if(existing){ updated++; } else { added++; existingItems.push(record); }
     }
     render();
     const parts = [];
     if(added) parts.push(`added ${added} new item${added===1?'':'s'}`);
     if(updated) parts.push(`updated ${updated} existing item${updated===1?'':'s'}`);
-    alert(parts.length ? parts.join(', ')+'.' : "That file didn't contain any recognizable items.");
+    if(stoppedOnQuota){
+      alert((parts.length ? parts.join(', ')+', then s' : 'S')+"topped partway through — your device's storage is full. Free up space or remove a few items, then re-import the same file to pick up the rest (already-imported items will be skipped).");
+    } else {
+      alert(parts.length ? parts.join(', ')+'.' : "That file didn't contain any recognizable items.");
+    }
   }catch(err){
     alert("Couldn't read that file — make sure it's a Shelfmark export.");
   }
@@ -468,7 +524,7 @@ async function getPrefsDecrypted(){
 }
 async function putPrefs(p){
   const { iv, cipher } = await encryptJSON(cryptoKey, p);
-  return new Promise(res=>{ const r = txS('readwrite').put({id:'prefs', iv, cipher}); r.onsuccess=()=>res(); });
+  return new Promise((res,rej)=>{ const r = txS('readwrite').put({id:'prefs', iv, cipher}); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); });
 }
 
 function applyPrefs(p){
@@ -482,12 +538,12 @@ function applyPrefs(p){
 function toggleLoopAudio(){
   prefs.loopAudio = !prefs.loopAudio;
   applyPrefs(prefs);
-  putPrefs(prefs);
+  putPrefs(prefs).catch(()=>{});
 }
 function setPref(key, val){
   prefs[key] = val;
   applyPrefs(prefs);
-  putPrefs(prefs);
+  putPrefs(prefs).catch(()=>{});
   refreshSettingsUI();
 }
 function refreshSettingsUI(){
@@ -555,7 +611,13 @@ async function saveItem(){
     title, category, type: pendingType, content, mime: pendingFile.type,
     addedAt: Date.now(), progress: null
   };
-  await put(item);
+  try{
+    await put(item);
+  }catch(err){
+    if(isQuotaError(err)) alert("Your device's storage is full, so this couldn't be saved. Free up space, remove a few items from your shelf, or export a backup and move it elsewhere — then try again.");
+    else alert("Couldn't save this item — please try again.");
+    return; // keep the Add sheet open with the fields intact
+  }
   closeAdd();
   render();
 }
@@ -565,6 +627,7 @@ async function render(){
   document.getElementById('empty').style.display = items.length ? 'none' : 'block';
   const shelf = document.getElementById('shelf');
   shelf.innerHTML = '';
+  updateStorageBadge();
 
   const groups = new Map();
   for(const it of items){
@@ -640,7 +703,12 @@ async function saveEdit(){
   if(!editId) return;
   const title = document.getElementById('etitle').value.trim();
   const category = document.getElementById('ecat').value.trim() || 'Uncategorized';
-  await putMetaOnly(editId, { ...(title && {title}), category });
+  try{
+    await putMetaOnly(editId, { ...(title && {title}), category });
+  }catch(err){
+    alert(isQuotaError(err) ? "Your device's storage is full, so this couldn't be saved." : "Couldn't save these changes — please try again.");
+    return;
+  }
   closeEdit();
   render();
 }
@@ -722,7 +790,8 @@ function fmtTime(t){ t=Math.floor(t); return Math.floor(t/60)+':'+String(t%60).p
 
 async function saveProgress(p){
   if(!curId) return;
-  await putMetaOnly(curId, { progress: p });
+  try{ await putMetaOnly(curId, { progress: p }); }
+  catch(err){ /* autosave — fail silently */ }
 }
 
 function startEditNote(){
@@ -742,7 +811,12 @@ function cancelEditNote(){
 async function saveEditNote(){
   if(!curId) return;
   const text = document.getElementById('mdEditArea').value;
-  await putContentOnly(curId, 'markdown', text);
+  try{
+    await putContentOnly(curId, 'markdown', text);
+  }catch(err){
+    alert(isQuotaError(err) ? "Your device's storage is full, so this couldn't be saved. Your edits are still in the text box — free up space and try Save again." : "Couldn't save this note — please try again.");
+    return;
+  }
   curNoteRaw = text;
   document.getElementById('mdView').innerHTML = renderMarkdown(text);
   const it = await getOne(curId);
@@ -769,14 +843,16 @@ async function toggleBookmark(idx){
     const snippet = el ? el.textContent.trim().slice(0,80) : ('Paragraph '+(idx+1));
     bookmarks.push({idx, snippet, createdAt:Date.now()});
   }
-  await putMetaOnly(curId, { bookmarks });
+  try{ await putMetaOnly(curId, { bookmarks }); }
+  catch(err){ if(isQuotaError(err)) alert("Your device's storage is full, so this bookmark couldn't be saved."); return; }
   updateBookmarkUI(bookmarks);
 }
 async function deleteBookmark(idx){
   const it = await getOne(curId);
   if(!it) return;
   const bookmarks = (it.bookmarks||[]).filter(b=>b.idx!==idx);
-  await putMetaOnly(curId, { bookmarks });
+  try{ await putMetaOnly(curId, { bookmarks }); }
+  catch(err){ /* removing a bookmark frees space, extremely unlikely to fail on quota */ }
   updateBookmarkUI(bookmarks);
 }
 function jumpBookmark(idx){

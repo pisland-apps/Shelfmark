@@ -84,6 +84,22 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.5.0** (2026-09-25) — Storage-full handling: writes to IndexedDB
+  (`putRaw`/`putAuth`/`putPrefs`/`del`) now properly reject on error instead
+  of silently hanging forever if the browser refuses a write (most commonly
+  a `QuotaExceededError`). Adding, editing, importing, and bookmarking all
+  now show a clear message when storage is full instead of hanging with no
+  feedback; auto-saved playback/reading progress fails silently instead
+  (it fires too often to interrupt with alerts). Import stops cleanly and
+  reports how far it got if it runs out of room partway through — you can
+  free up space and re-import the same file to pick up where it left off
+  (already-imported items are skipped). Added a storage-usage badge in the
+  header (percentage used; tap for a detail breakdown including whether
+  this origin is protected from automatic browser cleanup) — only shown
+  when the browser supports `navigator.storage.estimate()`. Also now
+  requests persistent storage (`navigator.storage.persist()`) once per
+  unlock, best-effort, to reduce the chance of the browser evicting your
+  data under disk pressure.
 - **v1.4.0** (2026-09-25) — Looping is now optional: a 🔁 button in the
   header toggles it on/off (persisted, encrypted, in your settings — same
   as theme/font/size). Off by default. When on, reaching the last audio
