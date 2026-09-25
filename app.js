@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.5.2';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -18,7 +18,22 @@ const PBKDF2_ITERATIONS = 250000;
 let cryptoKey = null; // held only in memory for this session, never persisted
 
 function randomBytes(n){ return crypto.getRandomValues(new Uint8Array(n)); }
-function buf2b64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+function buf2b64(buf){
+  // Do NOT spread the whole buffer into String.fromCharCode(...bytes) — that
+  // passes one function argument per byte, and JS engines cap how many
+  // arguments a call can take (tens of thousands, well below what a
+  // multi-MB encrypted export — PDFs/images/audio, base64'd then
+  // re-encrypted — needs). Past that cap it throws "Maximum call stack
+  // size exceeded". Build the string in fixed-size chunks instead so it
+  // works at any size.
+  const bytes = new Uint8Array(buf);
+  const CHUNK = 8192;
+  let binary = '';
+  for(let i = 0; i < bytes.length; i += CHUNK){
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
 function b642buf(b64){ return Uint8Array.from(atob(b64), c=>c.charCodeAt(0)); }
 
 async function deriveKey(passcode, salt, iterations){
