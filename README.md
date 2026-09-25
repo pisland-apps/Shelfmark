@@ -84,6 +84,11 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.5.4** (2026-09-25) — Added a sort toggle for items within each
+  category: "Newest" (added-date descending, the original behavior) or
+  "A–Z" (title, using a numeric-aware compare so "2" sorts before "10"
+  rather than after). In-memory only, resets to "Newest" on reopen, same
+  as the category-collapse state below.
 - **v1.5.3** (2026-09-25) — Category headers on the shelf are now
   collapsible: click a category name to hide/show its items (a chevron
   shows the state). Collapsed/expanded state is kept in memory and

@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.5.3';
+const APP_VERSION = '1.5.4';
 const APP_VERSION_DATE = '2026-09-25';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -160,6 +160,21 @@ let shelfAudioEl = null, shelfPlayingId = null, shelfPlayingCategory = null, she
 // matching that nothing but library content lives in IndexedDB) — expanded
 // is the default each time the app opens.
 const collapsedCats = new Set();
+// Sort order for items within each category: 'newest' (added-date desc,
+// the original behavior) or 'title' (alphabetical). In-memory only, same
+// reasoning as collapsedCats — resets to 'newest' each time the app opens.
+let itemSortMode = 'newest';
+function toggleSortMode(){
+  itemSortMode = itemSortMode === 'newest' ? 'title' : 'newest';
+  const btn = document.getElementById('sortBtn');
+  if(btn){
+    btn.textContent = itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z';
+    btn.title = itemSortMode === 'newest'
+      ? 'Sorting items by newest added \u2014 tap for A\u2013Z'
+      : 'Sorting items A\u2013Z \u2014 tap for newest added';
+  }
+  render();
+}
 
 function ensureShelfAudio(){
   if(shelfAudioEl) return shelfAudioEl;
@@ -679,6 +694,14 @@ async function render(){
     if(b==='Uncategorized') return -1;
     return a.localeCompare(b);
   });
+  if(itemSortMode === 'title'){
+    // numeric:true so "2" sorts before "10" (plain localeCompare would put
+    // "10" first) — matters for titles like the recordings in the
+    // screenshot (01, 02_1, 02_2, 02_10, ...).
+    for(const list of groups.values()){
+      list.sort((a,b)=>a.title.localeCompare(b.title, undefined, {numeric:true, sensitivity:'base'}));
+    }
+  }
 
   for(const cat of cats){
     const head = document.createElement('div');
