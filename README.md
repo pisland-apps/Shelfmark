@@ -84,6 +84,34 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.7.0** (2026-09-26) — Four of the suggestions from the last review,
+  the more contained ones:
+  - **Search.** A search box under the header filters the shelf by title
+    and category as you type. Deliberately doesn't search inside note
+    content — that would mean decrypting every note on every keystroke,
+    which isn't worth the cost for what's meant to be a fast filter.
+  - **Undo on delete.** Removing an item no longer asks for confirmation —
+    it's deleted immediately, but a toast with an Undo button stays up for
+    6 seconds and can bring it back exactly as it was. Only one undo slot:
+    deleting something new while a previous delete is still undoable lets
+    that earlier one's grace period lapse right away (it's already
+    permanently gone either way). Closing the tab during the window means
+    the delete stands — undo only works within the same session.
+  - **Markdown: task checklists, blockquotes, ordered lists.**
+    `- [ ] text` / `- [x] text` renders as a real, tappable checkbox that
+    flips the source text and saves immediately — no need to open the
+    editor just to check something off. `> quoted text` and `1. item`
+    numbered lists now render properly too (previously fell through to
+    plain paragraphs).
+  - **Playback speed** on the recording player (0.5x–2x, cycled by a
+    button next to the scrub bar). Sticks for the rest of the session —
+    not saved across app restarts — so it carries over between recordings
+    the way a podcast app's speed setting would.
+
+  Left for later, since they're bigger jobs: a persistent mini-player,
+  multi-select, PDF reading progress (needs swapping the native iframe
+  viewer for a vendored pdf.js renderer), and extending shelf:// links
+  (with backlinks) to note-to-note and note-to-PDF, not just note-to-audio.
 - **v1.6.1** (2026-09-26) — Review/hardening pass over the last few
   releases, no new features:
   - **Security fix**: an item's `cover` field was inserted into `<img

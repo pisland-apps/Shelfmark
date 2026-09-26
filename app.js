@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 const APP_VERSION_DATE = '2026-09-26';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -745,9 +745,25 @@ function removeCover(mode){
   document.getElementById(mode === 'add' ? 'coverRemoveBtn' : 'coverRemoveBtnEdit').style.display = 'none';
 }
 
+let searchQuery = '';
+function onSearchInput(){
+  searchQuery = document.getElementById('searchInput').value.trim().toLowerCase();
+  render();
+}
+
 async function render(){
-  const items = (await getAll()).sort((a,b)=>b.addedAt-a.addedAt);
-  document.getElementById('empty').style.display = items.length ? 'none' : 'block';
+  const allItems = (await getAll()).sort((a,b)=>b.addedAt-a.addedAt);
+  const items = searchQuery
+    ? allItems.filter(it => it.title.toLowerCase().includes(searchQuery) || (it.category||'').toLowerCase().includes(searchQuery))
+    : allItems;
+  document.getElementById('empty').style.display = allItems.length ? 'none' : 'block';
+  const noResults = document.getElementById('noResults');
+  if(allItems.length && searchQuery && !items.length){
+    document.getElementById('noResultsText').textContent = `No matches for "${document.getElementById('searchInput').value.trim()}"`;
+    noResults.style.display = 'block';
+  } else {
+    noResults.style.display = 'none';
+  }
   const shelf = document.getElementById('shelf');
   shelf.innerHTML = '';
   updateStorageBadge();
@@ -830,9 +846,37 @@ function isValidCoverDataUrl(s){
   return typeof s === 'string' && /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(s);
 }
 
+// ---- Delete with a brief undo window ----
+// Deletion is real and immediate (no confirm() dialog) — the raw encrypted
+// record is kept in memory for a few seconds so Undo can restore it via
+// putRaw(). Only one undo slot: starting a new delete while a previous one
+// is still undoable lets that earlier one's grace period lapse right away
+// (it's already permanently gone either way, so nothing is lost by that).
+let lastDeleted = null; // { id, rec, timeoutId }
 async function removeItem(id){
-  if(!confirm('Remove this from your shelf?')) return;
+  const rec = await getOneRaw(id);
+  if(!rec) return;
   await del(id);
+  if(lastDeleted) clearTimeout(lastDeleted.timeoutId);
+  const timeoutId = setTimeout(()=>{ lastDeleted = null; hideUndoToast(); }, 6000);
+  lastDeleted = { id, rec, timeoutId };
+  render();
+  showUndoToast();
+}
+function showUndoToast(){
+  document.getElementById('undoToast').classList.add('show');
+}
+function hideUndoToast(){
+  document.getElementById('undoToast').classList.remove('show');
+}
+async function undoDelete(){
+  if(!lastDeleted) return;
+  clearTimeout(lastDeleted.timeoutId);
+  const { rec } = lastDeleted;
+  lastDeleted = null;
+  hideUndoToast();
+  try{ await putRaw(rec); }
+  catch(err){ alert("Couldn't bring that back — please try again."); return; }
   render();
 }
 
@@ -921,6 +965,7 @@ async function openReader(id){
     div.id = 'mdView';
     div.innerHTML = renderMarkdown(it.content);
     wireInlineAudio(div);
+    wireTaskCheckboxes(div);
     const editWrap = document.createElement('div');
     editWrap.id = 'mdEditWrap';
     editWrap.innerHTML = `<textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
@@ -948,8 +993,10 @@ async function openReader(id){
         </div>
         <input type="range" class="scrub" id="scrub" min="0" max="100" value="0">
         <div class="time" id="atime">0:00</div>
+        <button class="speedBtn" id="speedBtn" onclick="cycleSpeed()">${audioSpeed}x</button>
       </div>`;
     const aud = document.getElementById('aud');
+    aud.playbackRate = audioSpeed;
     aud.onloadedmetadata = ()=>{ if(it.progress && it.progress.time) aud.currentTime = it.progress.time; };
     aud.ontimeupdate = ()=>{
       const pct = aud.duration ? (aud.currentTime/aud.duration)*100 : 0;
@@ -965,6 +1012,19 @@ async function openReader(id){
 }
 function togglePlay(){ const a = document.getElementById('aud'); if(a.paused) a.play(); else a.pause(); }
 function skip(s){ const a = document.getElementById('aud'); a.currentTime = Math.max(0, Math.min((a.duration||0), a.currentTime+s)); }
+// Sticks for the rest of this session (not saved across app restarts) —
+// picking a speed once and having it apply to the next recording you open
+// matches how podcast/audiobook apps behave.
+const SPEED_STEPS = [1, 1.25, 1.5, 1.75, 2, 0.5, 0.75];
+let audioSpeed = 1;
+function cycleSpeed(){
+  const i = SPEED_STEPS.indexOf(audioSpeed);
+  audioSpeed = SPEED_STEPS[(i + 1) % SPEED_STEPS.length];
+  const a = document.getElementById('aud');
+  if(a) a.playbackRate = audioSpeed;
+  const btn = document.getElementById('speedBtn');
+  if(btn) btn.textContent = audioSpeed + 'x';
+}
 function fmtTime(t){ t=Math.floor(t); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0'); }
 
 async function saveProgress(p){
@@ -999,6 +1059,7 @@ async function saveEditNote(){
   curNoteRaw = text;
   document.getElementById('mdView').innerHTML = renderMarkdown(text);
   wireInlineAudio(document.getElementById('mdView'));
+  wireTaskCheckboxes(document.getElementById('mdView'));
   const it = await getOne(curId);
   updateBookmarkUI(it.bookmarks || []);
   cancelEditNote();
@@ -1159,12 +1220,75 @@ function renderMarkdown(src){
     let html;
     if(/^<h[123]|^<pre/.test(block)) html = block;
     else if(/^<div class="md-audio/.test(block)) html = block;
+    else if(/^\s*&gt;/.test(block) && block.split('\n').every(l=>!l.trim() || /^\s*&gt;/.test(l))){
+      const inner = block.split('\n').filter(l=>l.trim()).map(l=>l.replace(/^\s*&gt;\s?/,'')).join('<br>');
+      html = `<blockquote>${inner}</blockquote>`;
+    }
+    else if(/^\s*\d+\.\s+/.test(block)){
+      const items = block.split('\n').filter(l=>l.trim()).map(l=>`<li>${l.replace(/^\s*\d+\.\s+/,'')}</li>`).join('');
+      html = `<ol>${items}</ol>`;
+    }
     else if(/^\s*[-*]\s+/m.test(block)){
-      const items = block.split(/\n/).filter(l=>l.trim()).map(l=>`<li>${l.replace(/^\s*[-*]\s+/,'')}</li>`).join('');
-      html = `<ul>${items}</ul>`;
+      // A checklist ("- [ ] text" / "- [x] text") is a plain unordered list
+      // with a checkbox per line. data-block-idx/data-line-idx address the
+      // exact raw-source line to flip on click (toggleTaskCheckbox below) —
+      // line indices come from the UNFILTERED split so they still line up
+      // with curNoteRaw.split(/\n{2,}/)[blockIdx].split('\n')[lineIdx].
+      const lines = block.split('\n');
+      let isTaskList = false;
+      const items = lines.map((l,li)=>{
+        if(!l.trim()) return '';
+        const stripped = l.replace(/^\s*[-*]\s+/,'');
+        const taskMatch = stripped.match(/^\[( |x|X)\]\s*(.*)$/);
+        if(taskMatch){
+          isTaskList = true;
+          const checked = /x/i.test(taskMatch[1]);
+          return `<li class="task-item"><label><input type="checkbox" data-block-idx="${idx}" data-line-idx="${li}"${checked ? ' checked' : ''}><span${checked ? ' class="done"' : ''}>${taskMatch[2]}</span></label></li>`;
+        }
+        return `<li>${stripped}</li>`;
+      }).join('');
+      html = `<ul${isTaskList ? ' class="task-list"' : ''}>${items}</ul>`;
     } else html = `<p>${block.replace(/\n/g,'<br>')}</p>`;
     return `<div class="mdblock" data-idx="${idx}"><button class="bm-btn" onclick="toggleBookmark(${idx})" title="Bookmark this spot">&#128278;</button>${html}</div>`;
   }).join('\n');
+}
+
+// A tap on a checklist checkbox re-splits curNoteRaw the same way
+// renderMarkdown did (by blank-line blocks, then by line) to find the exact
+// source line, flips its [ ]/[x], and saves — rather than trying to map
+// back through the rendered HTML, which renderMarkdown has already
+// transformed away from the raw source. This does mean multiple blank
+// lines between blocks collapse to exactly one blank line on save, since
+// the block separator isn't preserved once split.
+async function toggleTaskCheckbox(blockIdx, lineIdx){
+  if(!curId || curNoteRaw == null) return;
+  const blocks = curNoteRaw.split(/\n{2,}/);
+  if(blocks[blockIdx] == null) return;
+  const lines = blocks[blockIdx].split('\n');
+  const line = lines[lineIdx];
+  if(line == null) return;
+  const m = line.match(/^(\s*[-*]\s+\[)( |x|X)(\].*)$/);
+  if(!m) return;
+  lines[lineIdx] = m[1] + (m[2].trim() === '' ? 'x' : ' ') + m[3];
+  blocks[blockIdx] = lines.join('\n');
+  const newText = blocks.join('\n\n');
+  try{ await putContentOnly(curId, 'markdown', newText); }
+  catch(err){ alert("Couldn't save that change — please try again."); return; }
+  curNoteRaw = newText;
+  const mdView = document.getElementById('mdView');
+  if(mdView){
+    mdView.innerHTML = renderMarkdown(newText);
+    wireInlineAudio(mdView);
+    wireTaskCheckboxes(mdView);
+  }
+}
+function wireTaskCheckboxes(container){
+  container.querySelectorAll('input[type=checkbox][data-block-idx]').forEach(cb=>{
+    cb.onclick = (e)=>{
+      e.stopPropagation();
+      toggleTaskCheckbox(Number(cb.dataset.blockIdx), Number(cb.dataset.lineIdx));
+    };
+  });
 }
 
 // ---- boot -------------------------------------------------------------------

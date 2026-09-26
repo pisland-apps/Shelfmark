@@ -64,6 +64,14 @@
   }
   .icon-btn:active{background:var(--card);}
   .icon-btn.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  .searchRow{max-width:640px;margin:0 auto;padding:0 0 14px;}
+  .searchRow input[type=search]{
+    width:100%;box-sizing:border-box;padding:9px 12px;border-radius:8px;
+    border:1px solid var(--line);background:var(--card);color:var(--ink);
+    font-size:14px;font-family:inherit;
+  }
+  .searchRow input[type=search]::placeholder{color:var(--ink-soft);}
+  .no-results{text-align:center;padding:48px 20px;color:var(--ink-soft);}
   main{max-width:640px;margin:0 auto;padding:20px;}
   .empty{
     text-align:center; padding:64px 20px; color:var(--ink-soft);
@@ -197,6 +205,16 @@
   .mdbody pre{background:var(--card);padding:12px;border-radius:6px;overflow:auto;font-size:13px;}
   .mdbody code{background:var(--card);padding:2px 5px;border-radius:4px;font-size:.9em;}
   .mdbody a{color:var(--md);}
+  .mdbody blockquote{
+    margin:14px 0; padding:2px 16px; border-left:3px solid var(--line);
+    color:var(--ink-soft); font-style:italic;
+  }
+  .mdbody ol{padding-left:1.4em;}
+  .mdbody ul.task-list{list-style:none;padding-left:0;}
+  .mdbody .task-item{display:flex;align-items:flex-start;gap:8px;margin:4px 0;}
+  .mdbody .task-item label{display:flex;align-items:flex-start;gap:8px;cursor:pointer;}
+  .mdbody .task-item input[type=checkbox]{margin-top:5px;flex-shrink:0;width:16px;height:16px;}
+  .mdbody .task-item .done{text-decoration:line-through;color:var(--ink-soft);}
   .md-audio{
     margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
     background:var(--card);display:flex;flex-direction:column;gap:6px;
@@ -245,6 +263,11 @@
   }
   .avwrap .scrub{width:260px;max-width:80vw;}
   .avwrap .time{font-size:12px;color:var(--ink-soft);}
+  .avwrap .speedBtn{
+    background:var(--card); border:1px solid var(--line); color:var(--ink);
+    padding:6px 16px; border-radius:20px; font-size:13px; font-weight:600;
+  }
+  .avwrap .speedBtn:active{background:var(--paper);}
   iframe.pdf{border:none;width:100%;height:100%;}
 
   /* replaced Google Fonts (Lora/Inter) with system font stacks so the app
@@ -293,6 +316,21 @@
     font-family:'SFMono-Regular',Consolas,Menlo,monospace; opacity:.85;
     pointer-events:none; user-select:none;
   }
+
+  /* ---- undo-delete toast ---- */
+  #undoToast{
+    position:fixed; left:50%; transform:translateX(-50%);
+    bottom:calc(20px + env(safe-area-inset-bottom,0px)); z-index:200;
+    background:var(--ink); color:var(--paper); border-radius:10px;
+    padding:12px 10px 12px 18px; display:none; align-items:center; gap:16px;
+    font-size:14px; box-shadow:0 6px 20px rgba(0,0,0,.25); max-width:calc(100vw - 32px);
+  }
+  #undoToast.show{display:flex;}
+  #undoToast button{
+    background:none; border:none; color:var(--paper); font-weight:600;
+    font-size:14px; padding:6px 10px; border-radius:6px; flex-shrink:0;
+  }
+  #undoToast button:active{background:rgba(255,255,255,.15);}
 </style>
 </head>
 <body>
@@ -301,6 +339,11 @@
      even before a passcode is entered. It only ever displays APP_VERSION /
      APP_VERSION_DATE from app.js — see the comment there before changing it. -->
 <div id="versionBadge">v&hellip;</div>
+
+<div id="undoToast">
+  <span id="undoToastText">Removed from your shelf</span>
+  <button onclick="undoDelete()">Undo</button>
+</div>
 
 <div id="lockScreen">
   <div class="lock-card">
@@ -328,12 +371,18 @@
       <button class="add-btn" onclick="openAdd()">+ Add</button>
     </div>
   </div>
+  <div class="searchRow">
+    <input type="search" id="searchInput" placeholder="Search your shelf&hellip;" oninput="onSearchInput()">
+  </div>
 </header>
 
 <main>
   <div id="empty" class="empty" style="display:none;">
     <div class="serif">Your shelf is empty</div>
     <div>Add a PDF, a note, a picture, or a recording to begin.</div>
+  </div>
+  <div id="noResults" class="no-results" style="display:none;">
+    <div class="serif" id="noResultsText">No matches</div>
   </div>
   <div id="shelf" class="shelf"></div>
 </main>
