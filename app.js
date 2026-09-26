@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 const APP_VERSION_DATE = '2026-09-26';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -298,7 +298,7 @@ function updateMiniPlayer(){
   const mp = document.getElementById('miniPlayer');
   const readerShowingThisTrack = curId === shelfPlayingId && curType === 'audio'
     && document.getElementById('reader').classList.contains('open');
-  if(!shelfPlayingId || readerShowingThisTrack){
+  if(!shelfPlayingId || readerShowingThisTrack || selectMode){
     mp.classList.remove('show');
     return;
   }
@@ -702,6 +702,14 @@ function onFile(e){
   }
 }
 
+async function populateCategoryDatalist(datalistId, excludeUncategorized){
+  const items = await getAll();
+  let cats = [...new Set(items.map(i=>i.category).filter(Boolean))];
+  if(excludeUncategorized) cats = cats.filter(c=>c !== 'Uncategorized');
+  cats.sort();
+  document.getElementById(datalistId).innerHTML = cats.map(c=>`<option value="${escapeHtml(c)}">`).join('');
+}
+
 async function openAdd(){
   pendingFile = null; pendingType = null;
   document.getElementById('fbtn').textContent = 'Choose a file\u2026';
@@ -711,9 +719,7 @@ async function openAdd(){
   document.getElementById('saveBtn').disabled = true;
   document.getElementById('coverField').style.display = 'none';
   removeCover('add');
-  const items = await getAll();
-  const cats = [...new Set(items.map(i=>i.category).filter(Boolean))].sort();
-  document.getElementById('catlist').innerHTML = cats.map(c=>`<option value="${escapeHtml(c)}">`).join('');
+  await populateCategoryDatalist('catlist');
   document.getElementById('overlay').style.display = 'flex';
 }
 function closeAdd(){ document.getElementById('overlay').style.display = 'none'; }
@@ -819,6 +825,7 @@ async function render(){
   const shelf = document.getElementById('shelf');
   shelf.innerHTML = '';
   updateStorageBadge();
+  lastRenderedIds = items.map(it=>it.id);
 
   const groups = new Map();
   for(const it of items){
@@ -863,6 +870,18 @@ async function render(){
       row.dataset.id = it.id;
       row.style.setProperty('--t', TYPE_COLOR[it.type]);
 
+      if(selectMode){
+        const isSelected = selectedIds.has(it.id);
+        row.classList.toggle('selected', isSelected);
+        row.innerHTML = `<div class="sel-indicator">${isSelected ? '&#10003;' : ''}</div>
+          ${it.cover ? `<img class="cover-thumb" src="${escapeHtml(it.cover)}">` : ''}
+          <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
+          <div class="sub">${TYPE_LABEL[it.type]}</div></div>`;
+        row.onclick = ()=>toggleSelectItem(it.id, row);
+        body.appendChild(row);
+        continue;
+      }
+
       if(it.type === 'audio'){
         row.classList.add('audio-row');
         row.dataset.audioId = it.id;
@@ -894,28 +913,38 @@ async function render(){
     shelf.appendChild(body);
   }
   if(shelfPlayingId) refreshShelfAudioRowUI();
+  if(selectMode) updateSelectBar();
 }
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function isValidCoverDataUrl(s){
   return typeof s === 'string' && /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(s);
 }
 
-// ---- Delete with a brief undo window ----
+// ---- Delete with a brief undo window (single item or a batch) ----
 // Deletion is real and immediate (no confirm() dialog) — the raw encrypted
-// record is kept in memory for a few seconds so Undo can restore it via
-// putRaw(). Only one undo slot: starting a new delete while a previous one
-// is still undoable lets that earlier one's grace period lapse right away
-// (it's already permanently gone either way, so nothing is lost by that).
-let lastDeleted = null; // { id, rec, timeoutId }
-async function removeItem(id){
-  const rec = await getOneRaw(id);
-  if(!rec) return;
-  await del(id);
+// record(s) are kept in memory for a few seconds so Undo can restore them
+// via putRaw(). Only one undo slot: starting a new delete while a previous
+// one is still undoable lets that earlier one's grace period lapse right
+// away (it's already permanently gone either way, so nothing is lost).
+let lastDeleted = null; // { items: [{id, rec}], timeoutId }
+async function deleteItemsWithUndo(ids){
+  const items = [];
+  for(const id of ids){
+    const rec = await getOneRaw(id);
+    if(rec) items.push({ id, rec });
+  }
+  if(!items.length) return;
+  for(const { id } of items) await del(id);
   if(lastDeleted) clearTimeout(lastDeleted.timeoutId);
   const timeoutId = setTimeout(()=>{ lastDeleted = null; hideUndoToast(); }, 6000);
-  lastDeleted = { id, rec, timeoutId };
-  render();
+  lastDeleted = { items, timeoutId };
+  document.getElementById('undoToastText').textContent =
+    items.length === 1 ? 'Removed from your shelf' : `Removed ${items.length} items from your shelf`;
   showUndoToast();
+}
+async function removeItem(id){
+  await deleteItemsWithUndo([id]);
+  render();
 }
 function showUndoToast(){
   document.getElementById('undoToast').classList.add('show');
@@ -926,12 +955,82 @@ function hideUndoToast(){
 async function undoDelete(){
   if(!lastDeleted) return;
   clearTimeout(lastDeleted.timeoutId);
-  const { rec } = lastDeleted;
+  const { items } = lastDeleted;
   lastDeleted = null;
   hideUndoToast();
-  try{ await putRaw(rec); }
+  try{ for(const { rec } of items) await putRaw(rec); }
   catch(err){ alert("Couldn't bring that back — please try again."); return; }
   render();
+}
+
+// ---- Multi-select ----
+// A lightweight mode: while active, rows show a selection indicator instead
+// of their normal controls (play/edit/delete/expand), and a bottom bar
+// offers bulk Move-to-category and Delete. The mini-player is hidden while
+// selecting to avoid competing for the same screen real estate.
+let selectMode = false;
+let selectedIds = new Set();
+let lastRenderedIds = []; // ids currently visible (post-search), for "Select all"
+function toggleSelectMode(){
+  selectMode = !selectMode;
+  if(!selectMode) selectedIds.clear();
+  const btn = document.getElementById('selectModeBtn');
+  btn.classList.toggle('active', selectMode);
+  btn.innerHTML = selectMode ? '&times;' : '&#9745;';
+  btn.title = selectMode ? 'Exit selection' : 'Select multiple items';
+  document.getElementById('selectBar').classList.toggle('show', selectMode);
+  updateSelectBar();
+  updateMiniPlayer();
+  render();
+}
+function exitSelectMode(){ if(selectMode) toggleSelectMode(); }
+function toggleSelectItem(id, rowEl){
+  if(selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+  const nowSelected = selectedIds.has(id);
+  if(rowEl){
+    rowEl.classList.toggle('selected', nowSelected);
+    const ind = rowEl.querySelector('.sel-indicator');
+    if(ind) ind.innerHTML = nowSelected ? '&#10003;' : '';
+  }
+  updateSelectBar();
+}
+function updateSelectBar(){
+  document.getElementById('selectCount').textContent = `${selectedIds.size} selected`;
+  const allSelected = lastRenderedIds.length > 0 && lastRenderedIds.every(id=>selectedIds.has(id));
+  document.getElementById('selectAllBtn').textContent = allSelected ? 'Select none' : 'Select all';
+}
+function selectAllToggle(){
+  const allSelected = lastRenderedIds.length > 0 && lastRenderedIds.every(id=>selectedIds.has(id));
+  if(allSelected) lastRenderedIds.forEach(id=>selectedIds.delete(id));
+  else lastRenderedIds.forEach(id=>selectedIds.add(id));
+  render();
+}
+async function bulkDeleteSelected(){
+  if(!selectedIds.size) return;
+  const ids = [...selectedIds];
+  await deleteItemsWithUndo(ids);
+  selectedIds.clear();
+  exitSelectMode(); // renders once, already reflecting the deletion
+}
+function openMoveCategory(){
+  if(!selectedIds.size) return;
+  document.getElementById('moveCatInput').value = '';
+  populateCategoryDatalist('catlist3', true);
+  document.getElementById('moveCatOverlay').style.display = 'flex';
+}
+function closeMoveCategory(){ document.getElementById('moveCatOverlay').style.display = 'none'; }
+async function confirmMoveCategory(){
+  const category = document.getElementById('moveCatInput').value.trim() || 'Uncategorized';
+  const ids = [...selectedIds];
+  closeMoveCategory();
+  let failed = 0;
+  for(const id of ids){
+    try{ await putMetaOnly(id, { category }); }
+    catch(err){ failed++; }
+  }
+  selectedIds.clear();
+  exitSelectMode(); // renders once, already reflecting the moved category
+  if(failed) alert(`Moved ${ids.length - failed} of ${ids.length} items — ${failed} couldn't be saved. Please try those again.`);
 }
 
 let editId = null;
@@ -941,9 +1040,7 @@ async function openEdit(id){
   if(!it) return;
   document.getElementById('etitle').value = it.title;
   document.getElementById('ecat').value = (it.category && it.category !== 'Uncategorized') ? it.category : '';
-  const items = await getAll();
-  const cats = [...new Set(items.map(i=>i.category).filter(c=>c && c!=='Uncategorized'))].sort();
-  document.getElementById('catlist2').innerHTML = cats.map(c=>`<option value="${escapeHtml(c)}">`).join('');
+  await populateCategoryDatalist('catlist2', true);
   editCoverDataUrl = undefined; // unchanged, unless the user picks/removes one below
   const coverField = document.getElementById('coverFieldEdit');
   const preview = document.getElementById('coverPreviewEdit');

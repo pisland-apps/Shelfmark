@@ -84,6 +84,16 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.9.0** (2026-09-26) — Multi-select. Tap the ☑ button in the header
+  to enter selection mode: rows show a plain checkmark indicator instead of
+  their usual play/edit/delete controls, and a bar at the bottom shows how
+  many are selected with **Select all**, **Move** (bulk re-category, with
+  the usual category autocomplete), **Delete**, and **Done**. Bulk delete
+  reuses the same undo-toast as a single delete — "Removed N items —
+  Undo" restores all of them. "Select all" only selects what's currently
+  visible, so it respects an active search filter. The mini-player is
+  hidden while selecting (it'd otherwise compete for the same space at the
+  bottom of the screen) and reappears once you tap Done.
 - **v1.8.0** (2026-09-26) — Persistent mini-player, plus a real bug this
   surfaced along the way:
   - **Found while building this**: the full-page audio player (disc/cover

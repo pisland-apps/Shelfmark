@@ -358,6 +358,30 @@
   #miniPlayer .mp-bar-fill{height:100%; width:0%; background:var(--audio); border-radius:2px; transition:width .15s linear;}
   #miniPlayer button{background:none; border:none; color:var(--ink); font-size:19px; padding:8px; flex-shrink:0; line-height:1;}
   #miniPlayer .mp-close{font-size:20px; color:var(--ink-soft);}
+
+  /* ---- multi-select ---- */
+  .spine.selected{background:var(--card);}
+  .sel-indicator{
+    width:22px; height:22px; border-radius:50%; border:2px solid var(--line);
+    flex-shrink:0; display:flex; align-items:center; justify-content:center;
+    font-size:13px; color:var(--paper); background:transparent;
+  }
+  .spine.selected .sel-indicator{background:var(--ink); border-color:var(--ink);}
+  #selectBar{
+    position:fixed; left:0; right:0; bottom:0; z-index:16;
+    background:var(--card); border-top:1px solid var(--line);
+    box-shadow:0 -2px 10px rgba(0,0,0,.08);
+    display:none; align-items:center; justify-content:space-between; gap:10px;
+    padding:10px calc(16px + env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px));
+  }
+  #selectBar.show{display:flex;}
+  #selectBar #selectCount{font-size:13px; color:var(--ink-soft); flex-shrink:0;}
+  #selectBar .selectBar-actions{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;}
+  #selectBar button{
+    background:transparent; border:1px solid var(--line); color:var(--ink);
+    font-size:13px; font-weight:500; padding:7px 12px; border-radius:8px;
+  }
+  #selectBar button.done{background:var(--ink); color:var(--paper); border-color:var(--ink);}
 </style>
 </head>
 <body>
@@ -381,6 +405,16 @@
   <button class="mp-close" onclick="miniPlayerClose()" title="Stop">&times;</button>
 </div>
 
+<div id="selectBar">
+  <span id="selectCount">0 selected</span>
+  <div class="selectBar-actions">
+    <button id="selectAllBtn" onclick="selectAllToggle()">Select all</button>
+    <button onclick="openMoveCategory()">Move</button>
+    <button onclick="bulkDeleteSelected()">Delete</button>
+    <button class="done" onclick="exitSelectMode()">Done</button>
+  </div>
+</div>
+
 <div id="lockScreen">
   <div class="lock-card">
     <div class="lock-icon">&#128278;</div>
@@ -401,6 +435,7 @@
       <button class="icon-btn" id="storageBtn" onclick="showStorageDetail()" title="Storage used" style="width:auto;padding:0 10px;font-size:11px;font-family:'SFMono-Regular',Consolas,Menlo,monospace;display:none;">&hellip;</button>
       <button class="icon-btn" id="sortBtn" onclick="toggleSortMode()" title="Sorting items by newest added — tap for A–Z" style="width:auto;padding:0 10px;font-size:12px;">Newest</button>
       <button class="icon-btn" id="loopBtn" onclick="toggleLoopAudio()" title="Loop audio within a category">&#128257;</button>
+      <button class="icon-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="Select multiple items">&#9745;</button>
       <button class="icon-btn" onclick="document.getElementById('importPick').click()" title="Import from JSON">&#8681;</button>
       <button class="icon-btn" onclick="openExportModal()" title="Export shelf as JSON">&#8679;</button>
       <input type="file" id="importPick" accept="application/json" style="display:none" onchange="onImportFile(event)">
@@ -513,6 +548,19 @@
     <div id="audioLinkList" class="alink-list"></div>
     <div class="row">
       <button class="cancel" onclick="closeAudioLinkPicker()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="moveCatOverlay" class="overlay" style="display:none;">
+  <div class="sheet">
+    <h2>Move to category</h2>
+    <label for="moveCatInput">Category</label>
+    <input id="moveCatInput" type="text" list="catlist3" placeholder="e.g. Recipes, Work">
+    <datalist id="catlist3"></datalist>
+    <div class="row">
+      <button class="cancel" onclick="closeMoveCategory()">Cancel</button>
+      <button class="save" onclick="confirmMoveCategory()">Move</button>
     </div>
   </div>
 </div>
