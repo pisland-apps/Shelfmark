@@ -84,6 +84,17 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.5.6** (2026-09-26) — Markdown notes can now link to an audio item
+  already on your shelf (like an Obsidian-style internal link), not just
+  external URLs. In a note, tap **🎵 Link audio** in the edit toolbar, pick
+  a recording, and it inserts `[Title](shelf://<id>)` at your cursor —
+  rendered as an inline play button/progress bar right in the note, using
+  the same on-shelf player and on-demand decrypt as the shelf list itself
+  (fully offline, no network request, unlike the external-audio-URL case
+  below). If the linked recording is later deleted, tapping it shows a
+  plain alert rather than doing nothing silently. Renaming the recording
+  doesn't break the link (it's tied to the item's id, not its title) — but
+  the label typed into the note itself won't auto-update to match.
 - **v1.5.5** (2026-09-25) — Markdown note links to an audio file (URL ending
   in `.mp3`/`.m4a`/`.wav`/`.ogg`/`.oga`/`.opus`/`.aac`/`.flac`/`.weba`, with
   optional query string) now render as an inline player (`<audio

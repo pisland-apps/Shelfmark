@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.5.5';
-const APP_VERSION_DATE = '2026-09-25';
+const APP_VERSION = '1.5.6';
+const APP_VERSION_DATE = '2026-09-26';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -219,7 +219,10 @@ async function playShelfTrack(id){
   }
   if(shelfAudioBlobUrl){ URL.revokeObjectURL(shelfAudioBlobUrl); shelfAudioBlobUrl = null; }
   const it = await getOne(id);
-  if(!it || it.type !== 'audio') return;
+  if(!it || it.type !== 'audio'){
+    alert("This linked recording isn't on your shelf anymore — it may have been deleted.");
+    return;
+  }
   shelfAudioBlobUrl = URL.createObjectURL(it.content);
   shelfPlayingId = id;
   shelfPlayingCategory = it.category || 'Uncategorized';
@@ -241,14 +244,13 @@ async function toggleShelfPlay(id){
 function onShelfAudioTimeUpdate(){
   if(!shelfPlayingId) return;
   const aud = shelfAudioEl;
-  const row = document.querySelector(`.spine[data-id="${shelfPlayingId}"]`);
-  if(row){
+  document.querySelectorAll(`[data-audio-id="${shelfPlayingId}"]`).forEach(row=>{
     const pct = aud.duration ? (aud.currentTime/aud.duration)*100 : 0;
     const fill = row.querySelector('.inline-bar-fill');
     if(fill) fill.style.width = pct + '%';
     const timeEl = row.querySelector('.inline-time');
     if(timeEl) timeEl.textContent = fmtTime(aud.currentTime) + ' / ' + fmtTime(aud.duration || 0);
-  }
+  });
   clearTimeout(aud._t);
   aud._t = setTimeout(()=>saveShelfProgress(shelfPlayingId, aud.currentTime), 800);
 }
@@ -257,8 +259,8 @@ async function saveShelfProgress(id, time){
   catch(err){ /* autosave — fail silently, don't interrupt playback with alerts */ }
 }
 function refreshShelfAudioRowUI(){
-  document.querySelectorAll('.spine.audio-row').forEach(row=>{
-    const isCurrent = row.dataset.id === shelfPlayingId;
+  document.querySelectorAll('[data-audio-id]').forEach(row=>{
+    const isCurrent = row.dataset.audioId === shelfPlayingId;
     row.classList.toggle('playing', isCurrent && shelfAudioEl && !shelfAudioEl.paused);
     const btn = row.querySelector('.inline-play');
     if(btn) btn.innerHTML = (isCurrent && shelfAudioEl && !shelfAudioEl.paused) ? '&#10074;&#10074;' : '&#9658;';
@@ -728,6 +730,7 @@ async function render(){
 
       if(it.type === 'audio'){
         row.classList.add('audio-row');
+        row.dataset.audioId = it.id;
         if(shelfPlayingId === it.id) row.classList.add('playing');
         row.innerHTML = `<button class="inline-play">${shelfPlayingId===it.id && shelfAudioEl && !shelfAudioEl.paused ? '&#10074;&#10074;' : '&#9658;'}</button>
           <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
@@ -818,13 +821,16 @@ async function openReader(id){
     div.className = 'mdbody';
     div.id = 'mdView';
     div.innerHTML = renderMarkdown(it.content);
+    wireInlineAudio(div);
     const editWrap = document.createElement('div');
     editWrap.id = 'mdEditWrap';
     editWrap.innerHTML = `<textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
       <div class="ebar"><button class="cancel" onclick="cancelEditNote()">Cancel</button>
+      <button class="cancel" onclick="openAudioLinkPicker()">&#127925; Link audio</button>
       <button class="save" onclick="saveEditNote()">Save</button></div>`;
     c.appendChild(div);
     c.appendChild(editWrap);
+    wireInlineAudio(div);
     if(it.progress && it.progress.scroll) c.scrollTop = it.progress.scroll;
     c.onscroll = ()=>{ clearTimeout(c._t); c._t = setTimeout(()=>saveProgress({scroll:c.scrollTop}), 400); };
     document.getElementById('bmBtn').style.display = 'flex';
@@ -894,9 +900,64 @@ async function saveEditNote(){
   }
   curNoteRaw = text;
   document.getElementById('mdView').innerHTML = renderMarkdown(text);
+  wireInlineAudio(document.getElementById('mdView'));
   const it = await getOne(curId);
   updateBookmarkUI(it.bookmarks || []);
   cancelEditNote();
+}
+
+// Wires up the play button on every shelf://<id> inline audio widget inside
+// a just-rendered note (renderMarkdown only produces markup — it can't
+// attach handlers, since it runs before the HTML exists in the DOM).
+function wireInlineAudio(container){
+  container.querySelectorAll('.md-audio-inline').forEach(el=>{
+    const id = el.dataset.audioId;
+    const btn = el.querySelector('.inline-play');
+    if(btn) btn.onclick = (e)=>{ e.stopPropagation(); toggleShelfPlay(id); };
+  });
+  if(shelfPlayingId) refreshShelfAudioRowUI();
+}
+
+// ---- Linking a note to an audio item already on the shelf ----
+// Inserts a `[Title](shelf://<id>)` link at the note editor's cursor; render
+// turns that into an inline player rather than a plain outgoing link.
+let mdAudioLinkCursor = null;
+async function openAudioLinkPicker(){
+  const ta = document.getElementById('mdEditArea');
+  mdAudioLinkCursor = { start: ta.selectionStart, end: ta.selectionEnd };
+  const items = (await getAll()).filter(it=>it.type==='audio');
+  const list = document.getElementById('audioLinkList');
+  if(!items.length){
+    list.innerHTML = `<div class="alink-empty">No recordings on your shelf yet — add one first, then come back here to link it into this note.</div>`;
+  } else {
+    items.sort((a,b)=>(a.category||'').localeCompare(b.category||'') || a.title.localeCompare(b.title, undefined, {numeric:true, sensitivity:'base'}));
+    list.innerHTML = items.map(it=>`
+      <button class="alink-row" data-id="${escapeHtml(it.id)}" data-title="${escapeHtml(it.title)}">
+        <span class="alink-title">${escapeHtml(it.title)}</span>
+        <span class="alink-cat">${escapeHtml(it.category || 'Uncategorized')}</span>
+      </button>`).join('');
+    list.querySelectorAll('.alink-row').forEach(btn=>{
+      btn.onclick = ()=>insertAudioLink(btn.dataset.id, btn.dataset.title);
+    });
+  }
+  document.getElementById('audioLinkOverlay').style.display = 'flex';
+}
+function closeAudioLinkPicker(){
+  document.getElementById('audioLinkOverlay').style.display = 'none';
+}
+function insertAudioLink(id, title){
+  const ta = document.getElementById('mdEditArea');
+  // Square brackets in the title would break the [label] part of the link
+  // syntax — strip them from the inserted label only, the stored item title
+  // itself is untouched.
+  const safeLabel = title.replace(/[[\]]/g,'');
+  const markdown = `[${safeLabel}](shelf://${id})`;
+  const { start, end } = mdAudioLinkCursor || { start: ta.value.length, end: ta.value.length };
+  ta.value = ta.value.slice(0, start) + markdown + ta.value.slice(end);
+  closeAudioLinkPicker();
+  ta.focus();
+  const newPos = start + markdown.length;
+  ta.setSelectionRange(newPos, newPos);
 }
 
 let bmPanelOpen = false;
@@ -970,13 +1031,26 @@ function renderMarkdown(src){
   s = s.replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>');
   s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
   s = s.replace(/`([^`]+)`/g,'<code>$1</code>');
-  // audio-file links (e.g. https://.../track.mp3) render as an inline player
-  // instead of a plain link. Note: this fetches the file live from that URL
-  // (a real network request) when played — unlike everything else in
-  // Shelfmark, which never talks to the network.
+  // Two special link targets get their own inline widget instead of a plain
+  // <a>: an audio-file URL plays via a native <audio> element (fetches live
+  // over the network — the one place in Shelfmark that does); a shelf://<id>
+  // link points at an audio item already stored on this shelf and reuses
+  // the same on-shelf player/decrypt-on-play code path as the shelf list
+  // (wireInlineAudio() attaches its click handler once this HTML is in the
+  // DOM — see openReader/saveEditNote).
   const AUDIO_EXT = /\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|weba)(\?.*)?$/i;
+  const SHELF_LINK = /^shelf:\/\/(.+)$/;
   s = s.replace(/\[(.+?)\]\((.+?)\)/g,(_,label,url)=>{
     const trimmedUrl = url.trim();
+    const shelfMatch = trimmedUrl.match(SHELF_LINK);
+    if(shelfMatch){
+      const id = shelfMatch[1];
+      return `<div class="md-audio-inline" data-audio-id="${id}">`
+           + `<button class="inline-play">&#9658;</button>`
+           + `<div class="meta"><div class="title">${label}</div>`
+           + `<div class="inline-bar"><div class="inline-bar-fill"></div></div>`
+           + `<div class="inline-time"></div></div></div>`;
+    }
     if(AUDIO_EXT.test(trimmedUrl)){
       return `<div class="md-audio"><div class="md-audio-label">${label}</div>`
            + `<audio controls preload="none" src="${trimmedUrl}"></audio></div>`;
@@ -986,7 +1060,7 @@ function renderMarkdown(src){
   return s.split(/\n{2,}/).map((block,idx)=>{
     let html;
     if(/^<h[123]|^<pre/.test(block)) html = block;
-    else if(/^<div class="md-audio"/.test(block)) html = block;
+    else if(/^<div class="md-audio/.test(block)) html = block;
     else if(/^\s*[-*]\s+/m.test(block)){
       const items = block.split(/\n/).filter(l=>l.trim()).map(l=>`<li>${l.replace(/^\s*[-*]\s+/,'')}</li>`).join('');
       html = `<ul>${items}</ul>`;
