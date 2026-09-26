@@ -84,6 +84,17 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.6.0** (2026-09-26) — Optional cover image for notes, PDFs, and
+  recordings (not pictures — those already are the cover). Pick one when
+  adding an item, or add/change/remove it later from the item's Edit
+  (pencil) button. Shows as a small square thumbnail on the shelf list and
+  as a full banner image when you open the item (replaces the plain music
+  note icon on the audio player screen). Stored as a resized, compressed
+  JPEG (max 640px) right in the item's existing encrypted metadata rather
+  than as a separate encrypted field — keeps it simple and still fully
+  offline, but means every item's metadata (cover included) gets decrypted
+  each time the shelf list renders, so covers are deliberately kept small.
+  Included in both encrypted and plain-JSON export/import.
 - **v1.5.6** (2026-09-26) — Markdown notes can now link to an audio item
   already on your shelf (like an Obsidian-style internal link), not just
   external URLs. In a note, tap **🎵 Link audio** in the edit toolbar, pick

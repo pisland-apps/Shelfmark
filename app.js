@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.5.6';
+const APP_VERSION = '1.6.0';
 const APP_VERSION_DATE = '2026-09-26';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -426,7 +426,7 @@ async function buildExportItems(){
     const full = await getOne(m.id);
     const content = full.type === 'markdown' ? full.content : await blobToDataURL(full.content);
     out.push({id:full.id, title:full.title, category:full.category, type:full.type, mime:full.mime,
-      addedAt:full.addedAt, progress:full.progress, bookmarks:full.bookmarks, content});
+      addedAt:full.addedAt, progress:full.progress, bookmarks:full.bookmarks, cover:full.cover || null, content});
   }
   return out;
 }
@@ -543,7 +543,7 @@ async function mergeImportedItems(items){
         id, title: it.title || 'Untitled', category: it.category || 'Uncategorized',
         type: it.type, content, mime: it.mime,
         addedAt: it.addedAt || Date.now(), progress: it.progress || null,
-        bookmarks: it.bookmarks || []
+        bookmarks: it.bookmarks || [], cover: it.cover || null
       };
       try{
         await put(record);
@@ -639,6 +639,15 @@ function onFile(e){
   const ti = document.getElementById('ttitle');
   if(!ti.value) ti.value = f.name.replace(/\.[^.]+$/, '');
   document.getElementById('saveBtn').disabled = false;
+  // A cover image doesn't make sense on top of a picture that's already the
+  // whole item, so the field only shows for the other three types.
+  const coverField = document.getElementById('coverField');
+  if(t === 'image'){
+    coverField.style.display = 'none';
+    removeCover('add');
+  } else {
+    coverField.style.display = 'block';
+  }
 }
 
 async function openAdd(){
@@ -648,6 +657,8 @@ async function openAdd(){
   document.getElementById('ttitle').value = '';
   document.getElementById('tcat').value = '';
   document.getElementById('saveBtn').disabled = true;
+  document.getElementById('coverField').style.display = 'none';
+  removeCover('add');
   const items = await getAll();
   const cats = [...new Set(items.map(i=>i.category).filter(Boolean))].sort();
   document.getElementById('catlist').innerHTML = cats.map(c=>`<option value="${escapeHtml(c)}">`).join('');
@@ -665,7 +676,8 @@ async function saveItem(){
   const item = {
     id: Date.now()+'-'+Math.random().toString(36).slice(2),
     title, category, type: pendingType, content, mime: pendingFile.type,
-    addedAt: Date.now(), progress: null
+    addedAt: Date.now(), progress: null,
+    ...(pendingCoverDataUrl ? {cover: pendingCoverDataUrl} : {})
   };
   try{
     await put(item);
@@ -676,6 +688,55 @@ async function saveItem(){
   }
   closeAdd();
   render();
+}
+
+// ---- Cover images ----
+// A cover is stored as a small resized JPEG data URL right inside the
+// item's (already-encrypted) metadata — not as a separate encrypted field
+// like PDF/audio/image content — so it shows up in the shelf list without
+// having to decrypt each item's full content just to list them. Keeping it
+// downsized matters because every item's metadata, cover included, gets
+// decrypted every time the shelf list renders.
+let pendingCoverDataUrl = null; // Add sheet: null = none chosen
+let editCoverDataUrl; // Edit sheet: undefined = unchanged, null = removed, string = new
+function resizeCoverImage(file, maxDim, quality){
+  maxDim = maxDim || 640; quality = quality || 0.82;
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = ()=>{
+      let { width, height } = img;
+      if(width > maxDim || height > maxDim){
+        if(width >= height){ height = Math.round(height * (maxDim / width)); width = maxDim; }
+        else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('image load failed')); };
+    img.src = url;
+  });
+}
+async function onCoverPick(e, mode){
+  const f = e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  let dataUrl;
+  try{ dataUrl = await resizeCoverImage(f); }
+  catch(err){ alert("Couldn't use that image \u2014 try a different file."); return; }
+  if(mode === 'add') pendingCoverDataUrl = dataUrl; else editCoverDataUrl = dataUrl;
+  const preview = document.getElementById(mode === 'add' ? 'coverPreview' : 'coverPreviewEdit');
+  preview.src = dataUrl; preview.style.display = 'block';
+  document.getElementById(mode === 'add' ? 'coverRemoveBtn' : 'coverRemoveBtnEdit').style.display = 'block';
+}
+function removeCover(mode){
+  if(mode === 'add') pendingCoverDataUrl = null; else editCoverDataUrl = null;
+  const preview = document.getElementById(mode === 'add' ? 'coverPreview' : 'coverPreviewEdit');
+  preview.src = ''; preview.style.display = 'none';
+  document.getElementById(mode === 'add' ? 'coverRemoveBtn' : 'coverRemoveBtnEdit').style.display = 'none';
 }
 
 async function render(){
@@ -733,6 +794,7 @@ async function render(){
         row.dataset.audioId = it.id;
         if(shelfPlayingId === it.id) row.classList.add('playing');
         row.innerHTML = `<button class="inline-play">${shelfPlayingId===it.id && shelfAudioEl && !shelfAudioEl.paused ? '&#10074;&#10074;' : '&#9658;'}</button>
+          ${it.cover ? `<img class="cover-thumb" src="${it.cover}">` : ''}
           <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
           <div class="sub">${TYPE_LABEL[it.type]}</div>
           <div class="inline-bar"><div class="inline-bar-fill"></div></div>
@@ -743,7 +805,8 @@ async function render(){
         row.onclick = ()=>toggleShelfPlay(it.id);
       } else {
         row.onclick = ()=>openReader(it.id);
-        row.innerHTML = `<div class="meta"><div class="title">${escapeHtml(it.title)}</div>
+        row.innerHTML = `${it.cover ? `<img class="cover-thumb" src="${it.cover}">` : ''}
+          <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
           <div class="sub">${TYPE_LABEL[it.type]}${it.progress ? ' \u00b7 in progress' : ''}</div></div>
           <button class="edit" title="Rename or recategorize">&#9998;</button>
           <button class="del" title="Remove">&times;</button>`;
@@ -774,6 +837,17 @@ async function openEdit(id){
   const items = await getAll();
   const cats = [...new Set(items.map(i=>i.category).filter(c=>c && c!=='Uncategorized'))].sort();
   document.getElementById('catlist2').innerHTML = cats.map(c=>`<option value="${escapeHtml(c)}">`).join('');
+  editCoverDataUrl = undefined; // unchanged, unless the user picks/removes one below
+  const coverField = document.getElementById('coverFieldEdit');
+  const preview = document.getElementById('coverPreviewEdit');
+  const removeBtn = document.getElementById('coverRemoveBtnEdit');
+  if(it.type === 'image'){
+    coverField.style.display = 'none';
+  } else {
+    coverField.style.display = 'block';
+    if(it.cover){ preview.src = it.cover; preview.style.display = 'block'; removeBtn.style.display = 'block'; }
+    else { preview.src = ''; preview.style.display = 'none'; removeBtn.style.display = 'none'; }
+  }
   document.getElementById('editOverlay').style.display = 'flex';
 }
 function closeEdit(){ document.getElementById('editOverlay').style.display = 'none'; editId = null; }
@@ -781,8 +855,10 @@ async function saveEdit(){
   if(!editId) return;
   const title = document.getElementById('etitle').value.trim();
   const category = document.getElementById('ecat').value.trim() || 'Uncategorized';
+  const updates = { ...(title && {title}), category };
+  if(editCoverDataUrl !== undefined) updates.cover = editCoverDataUrl; // string (new) or null (removed)
   try{
-    await putMetaOnly(editId, { ...(title && {title}), category });
+    await putMetaOnly(editId, updates);
   }catch(err){
     alert(isQuotaError(err) ? "Your device's storage is full, so this couldn't be saved." : "Couldn't save these changes — please try again.");
     return;
@@ -805,18 +881,32 @@ async function openReader(id){
   bmPanelOpen = false;
   document.getElementById('bmPanel').style.display = 'none';
   const c = document.getElementById('rcontent');
-  c.className = ''; c.innerHTML = '';
+  c.className = ''; c.innerHTML = ''; c.style.display = ''; c.style.flexDirection = '';
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
 
   if(it.type === 'pdf'){
     c.classList.add('pad0');
     curBlobUrl = URL.createObjectURL(it.content);
-    c.innerHTML = `<iframe class="pdf" src="${curBlobUrl}"></iframe>`;
+    if(it.cover){
+      // The iframe normally fills #rcontent via CSS height:100%; with a
+      // cover banner above it that no longer leaves room, so switch this
+      // one case to a flex column and let the iframe take what's left.
+      c.style.display = 'flex'; c.style.flexDirection = 'column';
+      c.innerHTML = `<img class="reader-cover" src="${it.cover}"><iframe class="pdf" style="flex:1;" src="${curBlobUrl}"></iframe>`;
+    } else {
+      c.innerHTML = `<iframe class="pdf" src="${curBlobUrl}"></iframe>`;
+    }
   } else if(it.type === 'image'){
     curBlobUrl = URL.createObjectURL(it.content);
     c.innerHTML = `<img class="full" src="${curBlobUrl}">`;
   } else if(it.type === 'markdown'){
     curNoteRaw = it.content;
+    if(it.cover){
+      const coverImg = document.createElement('img');
+      coverImg.className = 'reader-cover';
+      coverImg.src = it.cover;
+      c.appendChild(coverImg);
+    }
     const div = document.createElement('div');
     div.className = 'mdbody';
     div.id = 'mdView';
@@ -830,7 +920,6 @@ async function openReader(id){
       <button class="save" onclick="saveEditNote()">Save</button></div>`;
     c.appendChild(div);
     c.appendChild(editWrap);
-    wireInlineAudio(div);
     if(it.progress && it.progress.scroll) c.scrollTop = it.progress.scroll;
     c.onscroll = ()=>{ clearTimeout(c._t); c._t = setTimeout(()=>saveProgress({scroll:c.scrollTop}), 400); };
     document.getElementById('bmBtn').style.display = 'flex';
@@ -841,7 +930,7 @@ async function openReader(id){
     curBlobUrl = URL.createObjectURL(it.content);
     c.innerHTML = `
       <div class="avwrap">
-        <div class="disc">&#9835;</div>
+        ${it.cover ? `<img class="disc-cover" src="${it.cover}">` : `<div class="disc">&#9835;</div>`}
         <audio id="aud" src="${curBlobUrl}" style="display:none"></audio>
         <div class="actrl">
           <button class="skip" onclick="skip(-10)">&#8634;10</button>

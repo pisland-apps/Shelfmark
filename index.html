@@ -97,6 +97,12 @@
     background:none;border:none;color:var(--ink-soft);font-size:18px;padding:6px;line-height:1;
   }
   .spine .del:hover{color:var(--pdf);}
+  .cover-thumb{
+    width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;
+  }
+  .cover-preview{
+    display:block;max-width:100%;max-height:160px;border-radius:8px;margin-top:8px;
+  }
   .spine .edit{
     background:none;border:none;color:var(--ink-soft);font-size:15px;padding:6px;line-height:1;
   }
@@ -219,10 +225,16 @@
   .alink-cat{flex-shrink:0;font-size:12px;color:var(--ink-soft);}
   .alink-empty{font-size:13.5px;color:var(--ink-soft);line-height:1.5;padding:6px 2px 14px;}
   #rcontent img.full{max-width:100%;display:block;margin:0 auto;border-radius:4px;}
+  img.reader-cover{
+    width:100%;max-height:260px;object-fit:cover;display:block;
+  }
   .avwrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:22px;}
   .avwrap .disc{
     width:150px;height:150px;border-radius:50%;background:var(--audio);
     display:flex;align-items:center;justify-content:center;color:var(--paper);font-size:44px;
+  }
+  .avwrap .disc-cover{
+    width:150px;height:150px;border-radius:50%;object-fit:cover;
   }
   .avwrap .actrl{display:flex;align-items:center;gap:18px;}
   .avwrap button.skip{
@@ -337,6 +349,13 @@
     <label for="tcat">Category</label>
     <input id="tcat" type="text" list="catlist" placeholder="e.g. Recipes, Work (optional)">
     <datalist id="catlist"></datalist>
+    <div id="coverField" style="display:none;">
+      <label for="coverpick">Cover image (optional)</label>
+      <input id="coverpick" type="file" accept="image/*" style="display:none" onchange="onCoverPick(event,'add')">
+      <button type="button" class="filebtn" id="coverbtn" onclick="document.getElementById('coverpick').click()">Choose a cover image&hellip;</button>
+      <img id="coverPreview" class="cover-preview" style="display:none;">
+      <button type="button" class="cancel" id="coverRemoveBtn" style="display:none;margin-top:8px;width:100%;" onclick="removeCover('add')">Remove cover</button>
+    </div>
     <div class="row">
       <button class="cancel" onclick="closeAdd()">Cancel</button>
       <button class="save" id="saveBtn" disabled onclick="saveItem()">Add to shelf</button>
@@ -352,6 +371,13 @@
     <label for="ecat">Category</label>
     <input id="ecat" type="text" list="catlist2" placeholder="e.g. Recipes, Work (optional)">
     <datalist id="catlist2"></datalist>
+    <div id="coverFieldEdit" style="display:none;">
+      <label for="coverpickEdit">Cover image (optional)</label>
+      <input id="coverpickEdit" type="file" accept="image/*" style="display:none" onchange="onCoverPick(event,'edit')">
+      <button type="button" class="filebtn" id="coverbtnEdit" onclick="document.getElementById('coverpickEdit').click()">Choose a cover image&hellip;</button>
+      <img id="coverPreviewEdit" class="cover-preview" style="display:none;">
+      <button type="button" class="cancel" id="coverRemoveBtnEdit" style="display:none;margin-top:8px;width:100%;" onclick="removeCover('edit')">Remove cover</button>
+    </div>
     <div class="row">
       <button class="cancel" onclick="closeEdit()">Cancel</button>
       <button class="save" onclick="saveEdit()">Save changes</button>
