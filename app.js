@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 const APP_VERSION_DATE = '2026-09-26';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -543,7 +543,7 @@ async function mergeImportedItems(items){
         id, title: it.title || 'Untitled', category: it.category || 'Uncategorized',
         type: it.type, content, mime: it.mime,
         addedAt: it.addedAt || Date.now(), progress: it.progress || null,
-        bookmarks: it.bookmarks || [], cover: it.cover || null
+        bookmarks: it.bookmarks || [], cover: isValidCoverDataUrl(it.cover) ? it.cover : null
       };
       try{
         await put(record);
@@ -712,7 +712,13 @@ function resizeCoverImage(file, maxDim, quality){
       }
       const canvas = document.createElement('canvas');
       canvas.width = width; canvas.height = height;
-      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      const ctx = canvas.getContext('2d');
+      // JPEG has no alpha channel — an un-filled canvas defaults to
+      // transparent-black, so a transparent PNG cover would otherwise come
+      // out with a solid black background once flattened to JPEG.
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
       URL.revokeObjectURL(url);
       resolve(canvas.toDataURL('image/jpeg', quality));
     };
@@ -794,7 +800,7 @@ async function render(){
         row.dataset.audioId = it.id;
         if(shelfPlayingId === it.id) row.classList.add('playing');
         row.innerHTML = `<button class="inline-play">${shelfPlayingId===it.id && shelfAudioEl && !shelfAudioEl.paused ? '&#10074;&#10074;' : '&#9658;'}</button>
-          ${it.cover ? `<img class="cover-thumb" src="${it.cover}">` : ''}
+          ${it.cover ? `<img class="cover-thumb" src="${escapeHtml(it.cover)}">` : ''}
           <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
           <div class="sub">${TYPE_LABEL[it.type]}</div>
           <div class="inline-bar"><div class="inline-bar-fill"></div></div>
@@ -805,7 +811,7 @@ async function render(){
         row.onclick = ()=>toggleShelfPlay(it.id);
       } else {
         row.onclick = ()=>openReader(it.id);
-        row.innerHTML = `${it.cover ? `<img class="cover-thumb" src="${it.cover}">` : ''}
+        row.innerHTML = `${it.cover ? `<img class="cover-thumb" src="${escapeHtml(it.cover)}">` : ''}
           <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
           <div class="sub">${TYPE_LABEL[it.type]}${it.progress ? ' \u00b7 in progress' : ''}</div></div>
           <button class="edit" title="Rename or recategorize">&#9998;</button>
@@ -820,6 +826,9 @@ async function render(){
   if(shelfPlayingId) refreshShelfAudioRowUI();
 }
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function isValidCoverDataUrl(s){
+  return typeof s === 'string' && /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(s);
+}
 
 async function removeItem(id){
   if(!confirm('Remove this from your shelf?')) return;
@@ -892,7 +901,7 @@ async function openReader(id){
       // cover banner above it that no longer leaves room, so switch this
       // one case to a flex column and let the iframe take what's left.
       c.style.display = 'flex'; c.style.flexDirection = 'column';
-      c.innerHTML = `<img class="reader-cover" src="${it.cover}"><iframe class="pdf" style="flex:1;" src="${curBlobUrl}"></iframe>`;
+      c.innerHTML = `<img class="reader-cover" src="${escapeHtml(it.cover)}"><iframe class="pdf" style="flex:1;min-height:0;" src="${curBlobUrl}"></iframe>`;
     } else {
       c.innerHTML = `<iframe class="pdf" src="${curBlobUrl}"></iframe>`;
     }
@@ -916,7 +925,7 @@ async function openReader(id){
     editWrap.id = 'mdEditWrap';
     editWrap.innerHTML = `<textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
       <div class="ebar"><button class="cancel" onclick="cancelEditNote()">Cancel</button>
-      <button class="cancel" onclick="openAudioLinkPicker()">&#127925; Link audio</button>
+      <button class="cancel" onclick="openAudioLinkPicker()">&#127925; Audio</button>
       <button class="save" onclick="saveEditNote()">Save</button></div>`;
     c.appendChild(div);
     c.appendChild(editWrap);
@@ -930,7 +939,7 @@ async function openReader(id){
     curBlobUrl = URL.createObjectURL(it.content);
     c.innerHTML = `
       <div class="avwrap">
-        ${it.cover ? `<img class="disc-cover" src="${it.cover}">` : `<div class="disc">&#9835;</div>`}
+        ${it.cover ? `<img class="disc-cover" src="${escapeHtml(it.cover)}">` : `<div class="disc">&#9835;</div>`}
         <audio id="aud" src="${curBlobUrl}" style="display:none"></audio>
         <div class="actrl">
           <button class="skip" onclick="skip(-10)">&#8634;10</button>

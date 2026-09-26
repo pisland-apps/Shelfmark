@@ -84,6 +84,24 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.6.1** (2026-09-26) — Review/hardening pass over the last few
+  releases, no new features:
+  - **Security fix**: an item's `cover` field was inserted into `<img
+    src="...">` markup unescaped in four places (shelf rows, PDF reader,
+    audio reader). Covers the app generates itself are always safe, but an
+    imported backup file could put arbitrary text there — this was a real
+    HTML-attribute-injection opening via a crafted import. Fixed two ways:
+    imported covers are now validated as an actual `data:image/...;base64,`
+    string (anything else is dropped), and every render site now escapes
+    the value regardless, matching how title/category are already handled.
+  - Fixed transparent PNG covers rendering with a solid black background
+    (JPEG has no alpha channel; the canvas used to resize covers now fills
+    white first before flattening).
+  - Added `min-height:0` to the PDF-with-cover flex layout, defensive
+    against the iframe overflowing its column in some browsers.
+  - Shortened the note editor's "🎵 Link audio" toolbar button to "🎵 Audio"
+    — the 3-button toolbar (Cancel / Audio / Save) was tight on narrow
+    phones and could wrap.
 - **v1.6.0** (2026-09-26) — Optional cover image for notes, PDFs, and
   recordings (not pictures — those already are the cover). Pick one when
   adding an item, or add/change/remove it later from the item's Edit
@@ -97,7 +115,7 @@ most common reason the two look out of sync.
   Included in both encrypted and plain-JSON export/import.
 - **v1.5.6** (2026-09-26) — Markdown notes can now link to an audio item
   already on your shelf (like an Obsidian-style internal link), not just
-  external URLs. In a note, tap **🎵 Link audio** in the edit toolbar, pick
+  external URLs. In a note, tap **🎵 Audio** in the edit toolbar, pick
   a recording, and it inserts `[Title](shelf://<id>)` at your cursor —
   rendered as an inline play button/progress bar right in the note, using
   the same on-shelf player and on-demand decrypt as the shelf list itself
