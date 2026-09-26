@@ -115,6 +115,10 @@
     background:none;border:none;color:var(--ink-soft);font-size:15px;padding:6px;line-height:1;
   }
   .spine .edit:hover{color:var(--ink);}
+  .spine .expand{
+    background:none;border:none;color:var(--ink-soft);font-size:15px;padding:6px;line-height:1;
+  }
+  .spine .expand:hover{color:var(--ink);}
 
   /* inline audio playback directly on the shelf row (no page navigation) */
   .spine.audio-row .meta{display:flex;flex-direction:column;gap:0;}
@@ -232,6 +236,9 @@
   .md-audio-inline .meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:0;}
   .md-audio-inline .title{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .md-audio-inline.playing .inline-play{background:var(--ink);}
+  .md-audio-inline .expand{
+    background:none;border:none;color:var(--ink-soft);font-size:14px;padding:6px;line-height:1;flex-shrink:0;
+  }
   .alink-list{max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-top:4px;}
   .alink-row{
     display:flex;align-items:baseline;justify-content:space-between;gap:10px;width:100%;
@@ -331,6 +338,26 @@
     font-size:14px; padding:6px 10px; border-radius:6px; flex-shrink:0;
   }
   #undoToast button:active{background:rgba(255,255,255,.15);}
+
+  /* ---- persistent mini-player: fixed bottom bar for whatever's playing,
+     visible from the shelf list AND from inside the reader (PDF/note/image)
+     so audio keeps playing — and stays controllable — while you browse
+     elsewhere. Sits above the reader's z-index but below modal overlays,
+     so an Add/Edit/Export sheet still dims it like everything else. ---- */
+  #miniPlayer{
+    position:fixed; left:0; right:0; bottom:0; z-index:15;
+    background:var(--card); border-top:1px solid var(--line);
+    box-shadow:0 -2px 10px rgba(0,0,0,.08);
+    display:none; align-items:center; gap:6px;
+    padding:9px calc(10px + env(safe-area-inset-right,0px)) calc(9px + env(safe-area-inset-bottom,0px)) calc(14px + env(safe-area-inset-left,0px));
+  }
+  #miniPlayer.show{display:flex;}
+  #miniPlayer .mp-info{flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; cursor:pointer;}
+  #miniPlayer .mp-title{font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  #miniPlayer .mp-bar{height:3px; border-radius:2px; background:var(--line); overflow:hidden;}
+  #miniPlayer .mp-bar-fill{height:100%; width:0%; background:var(--audio); border-radius:2px; transition:width .15s linear;}
+  #miniPlayer button{background:none; border:none; color:var(--ink); font-size:19px; padding:8px; flex-shrink:0; line-height:1;}
+  #miniPlayer .mp-close{font-size:20px; color:var(--ink-soft);}
 </style>
 </head>
 <body>
@@ -343,6 +370,15 @@
 <div id="undoToast">
   <span id="undoToastText">Removed from your shelf</span>
   <button onclick="undoDelete()">Undo</button>
+</div>
+
+<div id="miniPlayer">
+  <div class="mp-info" onclick="miniPlayerOpenFull()">
+    <div class="mp-title" id="mpTitle"></div>
+    <div class="mp-bar"><div class="mp-bar-fill" id="mpBarFill"></div></div>
+  </div>
+  <button id="mpPlayBtn" onclick="miniPlayerToggle()" title="Play/pause">&#9658;</button>
+  <button class="mp-close" onclick="miniPlayerClose()" title="Stop">&times;</button>
 </div>
 
 <div id="lockScreen">

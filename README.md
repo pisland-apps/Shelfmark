@@ -84,6 +84,31 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.8.0** (2026-09-26) — Persistent mini-player, plus a real bug this
+  surfaced along the way:
+  - **Found while building this**: the full-page audio player (disc/cover
+    art, ±10s skip, scrub bar, the speed control from v1.7.0) was
+    unreachable dead code — audio items only ever opened through the
+    compact shelf-row/note-widget player (`toggleShelfPlay`), never through
+    `openReader()`, so that whole branch never ran, and it built its own
+    *separate* `<audio>` element that would have played independently
+    alongside the shared one had anything ever reached it.
+  - **Fixed by unifying the two into one.** The full player now reuses the
+    exact same shared audio element as the shelf list and note links —
+    there is only ever one "now playing" state — and is reachable via a new
+    ↗ button on audio shelf rows and on the note-embedded player widget.
+  - **New: a persistent mini-player**, a fixed bar at the bottom of the
+    screen showing title, progress, and play/pause, visible from the shelf
+    list AND from inside the reader (a PDF, a note, an image) — so
+    starting a recording, then opening something else to read, doesn't
+    stop it or lose your controls. Tap the bar to jump to the full player;
+    the × stops playback outright. Hidden specifically when the full
+    player is already open for that exact track, since its controls are
+    right there.
+  - Closing the reader no longer stops playback — previously it force-
+    paused the (separate, actually-unreachable) `<audio>` element; now
+    closing out of the full player leaves the shared track exactly as it
+    was, which is the point of having a mini-player at all.
 - **v1.7.0** (2026-09-26) — Four of the suggestions from the last review,
   the more contained ones:
   - **Search.** A search box under the header filters the shelf by title

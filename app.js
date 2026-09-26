@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const APP_VERSION_DATE = '2026-09-26';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -155,7 +155,7 @@ let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
 // progress bar) instead of opening the full-page reader. One shared <audio>
 // element is reused across tracks; the file is only decrypted when actually
 // played, not eagerly for every audio row.
-let shelfAudioEl = null, shelfPlayingId = null, shelfPlayingCategory = null, shelfAudioBlobUrl = null;
+let shelfAudioEl = null, shelfPlayingId = null, shelfPlayingTitle = null, shelfPlayingCategory = null, shelfAudioBlobUrl = null;
 // Which category headers are collapsed. In-memory only (resets on reload,
 // matching that nothing but library content lives in IndexedDB) — expanded
 // is the default each time the app opens.
@@ -209,10 +209,11 @@ async function onShelfAudioEnded(){
       return;
     }
   }
-  shelfPlayingId = null; shelfPlayingCategory = null;
+  shelfPlayingId = null; shelfPlayingTitle = null; shelfPlayingCategory = null;
   refreshShelfAudioRowUI();
 }
-async function playShelfTrack(id){
+async function playShelfTrack(id, opts){
+  const autoplay = !opts || opts.autoplay !== false;
   const aud = ensureShelfAudio();
   if(shelfPlayingId && shelfPlayingId !== id){
     await saveShelfProgress(shelfPlayingId, aud.currentTime);
@@ -225,11 +226,14 @@ async function playShelfTrack(id){
   }
   shelfAudioBlobUrl = URL.createObjectURL(it.content);
   shelfPlayingId = id;
+  shelfPlayingTitle = it.title;
   shelfPlayingCategory = it.category || 'Uncategorized';
   aud.src = shelfAudioBlobUrl;
+  aud.playbackRate = audioSpeed;
   aud.onloadedmetadata = ()=>{
     if(it.progress && it.progress.time) aud.currentTime = it.progress.time;
-    aud.play();
+    if(autoplay) aud.play();
+    onShelfAudioTimeUpdate(); // paint scrub/time/mini-player right away, don't wait for the first tick
   };
   refreshShelfAudioRowUI();
 }
@@ -244,13 +248,24 @@ async function toggleShelfPlay(id){
 function onShelfAudioTimeUpdate(){
   if(!shelfPlayingId) return;
   const aud = shelfAudioEl;
+  const pct = aud.duration ? (aud.currentTime/aud.duration)*100 : 0;
   document.querySelectorAll(`[data-audio-id="${shelfPlayingId}"]`).forEach(row=>{
-    const pct = aud.duration ? (aud.currentTime/aud.duration)*100 : 0;
     const fill = row.querySelector('.inline-bar-fill');
     if(fill) fill.style.width = pct + '%';
     const timeEl = row.querySelector('.inline-time');
     if(timeEl) timeEl.textContent = fmtTime(aud.currentTime) + ' / ' + fmtTime(aud.duration || 0);
   });
+  // Also keep the full-page audio reader in sync, when it's open and
+  // showing this exact track (it reads the same shared element, not a
+  // separate one, so this is just painting its scrub bar/time label).
+  if(curId === shelfPlayingId && curType === 'audio'){
+    const scrub = document.getElementById('scrub');
+    if(scrub) scrub.value = pct;
+    const atime = document.getElementById('atime');
+    if(atime) atime.textContent = fmtTime(aud.currentTime) + ' / ' + fmtTime(aud.duration || 0);
+  }
+  const mpFill = document.getElementById('mpBarFill');
+  if(mpFill) mpFill.style.width = pct + '%';
   clearTimeout(aud._t);
   aud._t = setTimeout(()=>saveShelfProgress(shelfPlayingId, aud.currentTime), 800);
 }
@@ -265,6 +280,43 @@ function refreshShelfAudioRowUI(){
     const btn = row.querySelector('.inline-play');
     if(btn) btn.innerHTML = (isCurrent && shelfAudioEl && !shelfAudioEl.paused) ? '&#10074;&#10074;' : '&#9658;';
   });
+  const playing = shelfAudioEl && !shelfAudioEl.paused;
+  const readerPlayBtn = document.getElementById('playBtn');
+  if(readerPlayBtn && curId === shelfPlayingId && curType === 'audio'){
+    readerPlayBtn.innerHTML = playing ? '&#10074;&#10074;' : '&#9658;';
+  }
+  updateMiniPlayer();
+}
+
+// ---- Persistent mini-player ----
+// Shows whenever a track is loaded (playing or paused), so playback keeps
+// going — and stays controllable — while browsing anywhere else in the
+// app. Hidden specifically when the full-page audio reader is already open
+// for this exact track, since its own controls make the mini bar redundant
+// right there.
+function updateMiniPlayer(){
+  const mp = document.getElementById('miniPlayer');
+  const readerShowingThisTrack = curId === shelfPlayingId && curType === 'audio'
+    && document.getElementById('reader').classList.contains('open');
+  if(!shelfPlayingId || readerShowingThisTrack){
+    mp.classList.remove('show');
+    return;
+  }
+  mp.classList.add('show');
+  document.getElementById('mpTitle').textContent = shelfPlayingTitle || '';
+  const playing = shelfAudioEl && !shelfAudioEl.paused;
+  document.getElementById('mpPlayBtn').innerHTML = playing ? '&#10074;&#10074;' : '&#9658;';
+}
+function miniPlayerToggle(){ if(shelfPlayingId) toggleShelfPlay(shelfPlayingId); }
+function miniPlayerOpenFull(){ if(shelfPlayingId) openReader(shelfPlayingId); }
+function miniPlayerClose(){
+  if(!shelfPlayingId) return;
+  if(shelfAudioEl){
+    shelfAudioEl.pause();
+    saveShelfProgress(shelfPlayingId, shelfAudioEl.currentTime);
+  }
+  shelfPlayingId = null; shelfPlayingTitle = null; shelfPlayingCategory = null;
+  refreshShelfAudioRowUI(); // also hides the mini bar and resets shelf-row icons
 }
 
 function openDB(){
@@ -821,9 +873,11 @@ async function render(){
           <div class="sub">${TYPE_LABEL[it.type]}</div>
           <div class="inline-bar"><div class="inline-bar-fill"></div></div>
           <div class="inline-time"></div></div>
+          <button class="expand" title="Open full player">&#8599;</button>
           <button class="edit" title="Rename or recategorize">&#9998;</button>
           <button class="del" title="Remove">&times;</button>`;
         row.querySelector('.inline-play').onclick = (e)=>{ e.stopPropagation(); toggleShelfPlay(it.id); };
+        row.querySelector('.expand').onclick = (e)=>{ e.stopPropagation(); openReader(it.id); };
         row.onclick = ()=>toggleShelfPlay(it.id);
       } else {
         row.onclick = ()=>openReader(it.id);
@@ -981,37 +1035,34 @@ async function openReader(id){
     document.getElementById('settingsBtn').style.display = 'flex';
     updateBookmarkUI(it.bookmarks || []);
   } else if(it.type === 'audio'){
-    curBlobUrl = URL.createObjectURL(it.content);
+    // Reuses the SAME shared player as the shelf list and note-embedded
+    // shelf:// links — not a separate <audio> element — so there's only
+    // ever one "now playing" state, and this view, the shelf rows, and the
+    // mini-player all agree. Opening this view for a track that isn't
+    // already loaded loads it paused (autoplay:false) so just looking at
+    // the full player doesn't itself start playback.
+    if(shelfPlayingId !== id) await playShelfTrack(id, {autoplay:false});
+    const aud = shelfAudioEl;
+    aud.playbackRate = audioSpeed;
+    const pct = aud.duration ? (aud.currentTime/aud.duration)*100 : 0;
     c.innerHTML = `
       <div class="avwrap">
         ${it.cover ? `<img class="disc-cover" src="${escapeHtml(it.cover)}">` : `<div class="disc">&#9835;</div>`}
-        <audio id="aud" src="${curBlobUrl}" style="display:none"></audio>
         <div class="actrl">
           <button class="skip" onclick="skip(-10)">&#8634;10</button>
-          <button class="play" id="playBtn" onclick="togglePlay()">&#9658;</button>
+          <button class="play" id="playBtn" onclick="toggleShelfPlay('${id}')">${!aud.paused ? '&#10074;&#10074;' : '&#9658;'}</button>
           <button class="skip" onclick="skip(10)">10&#8635;</button>
         </div>
-        <input type="range" class="scrub" id="scrub" min="0" max="100" value="0">
-        <div class="time" id="atime">0:00</div>
+        <input type="range" class="scrub" id="scrub" min="0" max="100" value="${pct}">
+        <div class="time" id="atime">${fmtTime(aud.currentTime)} / ${fmtTime(aud.duration||0)}</div>
         <button class="speedBtn" id="speedBtn" onclick="cycleSpeed()">${audioSpeed}x</button>
       </div>`;
-    const aud = document.getElementById('aud');
-    aud.playbackRate = audioSpeed;
-    aud.onloadedmetadata = ()=>{ if(it.progress && it.progress.time) aud.currentTime = it.progress.time; };
-    aud.ontimeupdate = ()=>{
-      const pct = aud.duration ? (aud.currentTime/aud.duration)*100 : 0;
-      document.getElementById('scrub').value = pct;
-      document.getElementById('atime').textContent = fmtTime(aud.currentTime) + ' / ' + fmtTime(aud.duration||0);
-      clearTimeout(aud._t); aud._t = setTimeout(()=>saveProgress({time:aud.currentTime}), 800);
-    };
-    aud.onplay = ()=>document.getElementById('playBtn').innerHTML = '&#10074;&#10074;';
-    aud.onpause = ()=>document.getElementById('playBtn').innerHTML = '&#9658;';
     document.getElementById('scrub').oninput = (e)=>{ aud.currentTime = (e.target.value/100)*(aud.duration||0); };
   }
   document.getElementById('reader').classList.add('open');
+  updateMiniPlayer(); // may need to hide now that the reader is showing this track
 }
-function togglePlay(){ const a = document.getElementById('aud'); if(a.paused) a.play(); else a.pause(); }
-function skip(s){ const a = document.getElementById('aud'); a.currentTime = Math.max(0, Math.min((a.duration||0), a.currentTime+s)); }
+function skip(s){ const a = shelfAudioEl; if(!a) return; a.currentTime = Math.max(0, Math.min((a.duration||0), a.currentTime+s)); }
 // Sticks for the rest of this session (not saved across app restarts) —
 // picking a speed once and having it apply to the next recording you open
 // matches how podcast/audiobook apps behave.
@@ -1020,8 +1071,7 @@ let audioSpeed = 1;
 function cycleSpeed(){
   const i = SPEED_STEPS.indexOf(audioSpeed);
   audioSpeed = SPEED_STEPS[(i + 1) % SPEED_STEPS.length];
-  const a = document.getElementById('aud');
-  if(a) a.playbackRate = audioSpeed;
+  if(shelfAudioEl) shelfAudioEl.playbackRate = audioSpeed;
   const btn = document.getElementById('speedBtn');
   if(btn) btn.textContent = audioSpeed + 'x';
 }
@@ -1073,6 +1123,8 @@ function wireInlineAudio(container){
     const id = el.dataset.audioId;
     const btn = el.querySelector('.inline-play');
     if(btn) btn.onclick = (e)=>{ e.stopPropagation(); toggleShelfPlay(id); };
+    const expandBtn = el.querySelector('.expand');
+    if(expandBtn) expandBtn.onclick = (e)=>{ e.stopPropagation(); openReader(id); };
   });
   if(shelfPlayingId) refreshShelfAudioRowUI();
 }
@@ -1176,10 +1228,9 @@ function updateBookmarkUI(bookmarks){
 
 function closeReader(){
   document.getElementById('reader').classList.remove('open');
-  const aud = document.getElementById('aud');
-  if(aud) aud.pause();
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
   curId = null; curType = null;
+  updateMiniPlayer(); // the mini bar may need to reappear now that the reader isn't showing this track
   render();
 }
 
@@ -1208,7 +1259,8 @@ function renderMarkdown(src){
            + `<button class="inline-play">&#9658;</button>`
            + `<div class="meta"><div class="title">${label}</div>`
            + `<div class="inline-bar"><div class="inline-bar-fill"></div></div>`
-           + `<div class="inline-time"></div></div></div>`;
+           + `<div class="inline-time"></div></div>`
+           + `<button class="expand" title="Open full player">&#8599;</button></div>`;
     }
     if(AUDIO_EXT.test(trimmedUrl)){
       return `<div class="md-audio"><div class="md-audio-label">${label}</div>`
