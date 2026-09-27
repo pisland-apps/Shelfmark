@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.18.0';
+const APP_VERSION = '1.19.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -527,8 +527,11 @@ async function buildExportItems(){
   }
   return out;
 }
-async function downloadJSON(obj, filename){
-  const blob = new Blob([JSON.stringify(obj)], {type:'application/json'});
+// Shared by both the whole-shelf JSON export (below) and exporting a single
+// item's own file (exportCurrentItem, in the reader section) — same
+// share-sheet-first-then-anchor-click fallback either way, just handed
+// whatever Blob/mime the caller already has.
+async function downloadBlob(blob, filename){
   // In a standalone, home-screen-installed PWA (iOS especially — this app
   // ships an apple-touch-icon for exactly that use case) there's no browser
   // chrome to catch a synthetic <a download> click, so it silently does
@@ -539,7 +542,7 @@ async function downloadJSON(obj, filename){
   // instead, which does work from an installed PWA, so try that first and
   // only fall back to the old anchor-click for browsers/tabs that don't
   // support sharing files.
-  const file = new File([blob], filename, {type:'application/json'});
+  const file = new File([blob], filename, {type: blob.type || 'application/octet-stream'});
   if(navigator.canShare && navigator.canShare({files:[file]})){
     try{
       await navigator.share({files:[file], title: filename});
@@ -554,6 +557,9 @@ async function downloadJSON(obj, filename){
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
+}
+async function downloadJSON(obj, filename){
+  await downloadBlob(new Blob([JSON.stringify(obj)], {type:'application/json'}), filename);
 }
 
 async function doExport(){
@@ -1373,6 +1379,58 @@ async function openReader(id){
   }
   updateMiniPlayer(); // may need to hide now that the reader is showing this track
 }
+// ---- Export a single item as its own file ----
+// Distinct from the whole-shelf backup (doExport/downloadJSON above): this
+// hands back the note/PDF/picture/recording exactly as it'd look outside
+// Shelfmark — plain markdown text, or the original file bytes — with no
+// encryption and no wrapper JSON, so it can be opened in any other app.
+const MIME_EXT = {
+  'image/jpeg':'.jpg', 'image/png':'.png', 'image/gif':'.gif', 'image/webp':'.webp',
+  'image/svg+xml':'.svg', 'image/bmp':'.bmp', 'image/heic':'.heic',
+  'audio/mpeg':'.mp3', 'audio/mp4':'.m4a', 'audio/x-m4a':'.m4a', 'audio/wav':'.wav',
+  'audio/x-wav':'.wav', 'audio/ogg':'.ogg', 'audio/webm':'.weba', 'audio/aac':'.aac',
+  'audio/flac':'.flac', 'audio/opus':'.opus'
+};
+function extForItem(type, mime){
+  if(type === 'markdown') return '.md';
+  if(type === 'pdf') return '.pdf';
+  const base = mime ? mime.split(';')[0].trim().toLowerCase() : '';
+  const known = MIME_EXT[base];
+  if(known) return known;
+  // Unrecognized but still a real mime subtype (e.g. some odd recorder
+  // output) — a short guess beats no extension at all.
+  if(base.includes('/')) return '.' + base.split('/')[1].replace(/[^a-z0-9]/gi,'').slice(0,5);
+  return '';
+}
+// Strips characters that trip up common filesystems and keeps the name a
+// sane length — the title itself (still shown in the app) is untouched.
+function safeExportFilename(title, ext){
+  const base = (title || 'Untitled').trim().replace(/[\\/:*?"<>|]+/g,'-').slice(0,80) || 'Untitled';
+  return base.toLowerCase().endsWith(ext.toLowerCase()) ? base : base + ext;
+}
+async function exportCurrentItem(){
+  if(!curId) return;
+  const it = await getOne(curId);
+  if(!it){ alert("Couldn't find this item — it may have just been deleted."); return; }
+  const filename = safeExportFilename(it.title, extForItem(it.type, it.mime));
+  try{
+    if(it.type === 'markdown'){
+      // If a note is mid-edit, export exactly what's in the text box rather
+      // than the last-saved version, so nothing just typed goes missing.
+      const editWrap = document.getElementById('mdEditWrap');
+      const isEditing = editWrap && editWrap.style.display !== 'none';
+      const raw = isEditing
+        ? expandImagesForSave(document.getElementById('mdEditArea').value)
+        : it.content;
+      await downloadBlob(new Blob([raw], {type:'text/markdown'}), filename);
+    } else {
+      await downloadBlob(it.content, filename);
+    }
+  }catch(err){
+    alert("Couldn't export this file — please try again.");
+  }
+}
+
 function skip(s){ const a = shelfAudioEl; if(!a) return; a.currentTime = Math.max(0, Math.min((a.duration||0), a.currentTime+s)); }
 // Sticks for the rest of this session (not saved across app restarts) —
 // picking a speed once and having it apply to the next recording you open

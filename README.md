@@ -34,6 +34,11 @@ and stored only in your browser's IndexedDB, on your own device.
   automatically — no separate step to build it — and shown as a jump-to
   outline (the &#9776; button next to the reader's bookmark button), same
   panel style as bookmarks, just generated instead of hand-picked.
+- **Export a single item.** The &#8679; button in the reader (any item type)
+  saves just that note/PDF/picture/recording as its own plain file — a
+  `.md` for a note, the original bytes for everything else — no encryption,
+  no wrapper JSON, so it opens straight up in any other app. Separate from
+  the header's whole-shelf backup export below.
 
 ## Files
 
