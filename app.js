@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.24.0';
+const APP_VERSION = '1.25.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2871,6 +2871,137 @@ function wireTaskCheckboxes(container){
     };
   });
 }
+
+// ---- Command palette (Ctrl+K) ----
+// Header used to carry one icon per action (storage/sort/loop/tags/select/
+// import/export/quick-note) plus Add — enough to wrap to two rows on a
+// narrow phone. This is the replacement: one 🔍 button (or Ctrl+K) opens a
+// fuzzy-searchable list of the same actions, plus a live "jump to #tag"
+// entry per tag on the shelf. The old buttons are still in the DOM (see
+// #legacyHeaderIcons in index.html) just hidden, so every existing
+// toggleX()/showX() function keeps working exactly as before — this only
+// changes how they're reached.
+let cmdPaletteOpen = false;
+let cmdPalActiveIndex = 0;
+let cmdPalFiltered = [];
+let cmdPalTagCommands = [];
+function buildStaticCommands(){
+  const storageBtn = document.getElementById('storageBtn');
+  const storageHint = (storageBtn && storageBtn.style.display !== 'none') ? storageBtn.textContent : '';
+  const THEME_LABEL = {auto:'Auto (match device)', light:'Light', dark:'Dark', sepia:'Sepia'};
+  const themeCmds = ['auto','light','dark','sepia'].map(t=>({
+    id:'theme-'+t, icon:'&#9681;', label:'Theme: '+THEME_LABEL[t],
+    hint: prefs.theme === t ? 'current' : '', action: ()=>setPref('theme', t)
+  }));
+  return [
+    { id:'new-note', icon:'&#128221;', label:'New note', hint:'', action: ()=>quickNewNote() },
+    { id:'add-item', icon:'&#10133;', label:'Add item\u2026', hint:'pdf / note / image / audio', action: ()=>openAdd() },
+    { id:'import', icon:'&#8681;', label:'Import from JSON', hint:'', action: ()=>document.getElementById('importPick').click() },
+    { id:'export', icon:'&#8679;', label:'Export shelf as JSON', hint:'', action: ()=>openExportModal() },
+    { id:'tags', icon:'#', label:'Browse tags', hint:'', action: ()=>openTagsPage() },
+    { id:'select', icon: selectMode ? '&times;' : '&#9745;', label: selectMode ? 'Exit selection mode' : 'Select multiple items', hint:'', action: ()=>toggleSelectMode() },
+    { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
+    { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
+    { id:'storage', icon:'&#128190;', label:'Storage used', hint: storageHint, action: ()=>showStorageDetail() },
+    ...themeCmds
+  ];
+}
+// Tag commands need buildTagIndex(), which decrypts every note to find its
+// tags — the same cost the Tags page already pays once per open, not
+// something worth blocking the palette's own opening on. So the palette
+// opens instantly with just the static commands, and tag entries fade in a
+// moment later once this resolves (re-rendering only if still open).
+async function loadCommandPaletteTags(){
+  let index;
+  try{ index = await buildTagIndex(); } catch(err){ cmdPalTagCommands = []; return; }
+  cmdPalTagCommands = Array.from(index.entries())
+    .map(([key, info])=>({
+      id:'tag-'+key, icon:'#', label:'Jump to #'+info.display,
+      hint: info.items.length + (info.items.length === 1 ? ' note' : ' notes'),
+      action: ()=>openTagsPage(key)
+    }))
+    .sort((a,b)=>a.label.localeCompare(b.label, undefined, {numeric:true, sensitivity:'base'}));
+  if(cmdPaletteOpen) renderCommandPalette();
+}
+function openCommandPalette(){
+  if(!cryptoKey) return; // nothing to search while locked
+  cmdPaletteOpen = true;
+  cmdPalActiveIndex = 0;
+  const input = document.getElementById('cmdPalInput');
+  input.value = '';
+  document.getElementById('cmdPalette').classList.add('open');
+  renderCommandPalette();
+  setTimeout(()=>input.focus(), 0);
+  loadCommandPaletteTags();
+}
+function closeCommandPalette(){
+  cmdPaletteOpen = false;
+  document.getElementById('cmdPalette').classList.remove('open');
+}
+// Subsequence fuzzy match: every character of the query must appear in
+// order somewhere in the target, scored higher for consecutive runs and
+// for matches near the start — enough to let "nn" find "New note" or
+// "drk" find "Theme: Dark" without a real fuzzy-match library.
+function fuzzyScore(query, target){
+  query = query.toLowerCase(); target = target.toLowerCase();
+  let qi = 0, score = 0, lastMatch = -1;
+  for(let ti = 0; ti < target.length && qi < query.length; ti++){
+    if(target[ti] === query[qi]){
+      score += (lastMatch === ti - 1) ? 3 : 1;
+      if(ti === 0) score += 2;
+      lastMatch = ti;
+      qi++;
+    }
+  }
+  return qi === query.length ? score : -1;
+}
+function onCmdPalInput(){ cmdPalActiveIndex = 0; renderCommandPalette(); }
+function renderCommandPalette(){
+  const query = document.getElementById('cmdPalInput').value.trim();
+  const all = buildStaticCommands().concat(cmdPalTagCommands);
+  cmdPalFiltered = !query ? all : all
+    .map(c=>({ c, score: fuzzyScore(query, c.label) }))
+    .filter(x=>x.score >= 0)
+    .sort((a,b)=>b.score - a.score)
+    .map(x=>x.c);
+  if(cmdPalActiveIndex >= cmdPalFiltered.length) cmdPalActiveIndex = 0;
+  const list = document.getElementById('cmdPalList');
+  if(!cmdPalFiltered.length){
+    list.innerHTML = `<div class="cmdpal-empty">No matching command</div>`;
+    return;
+  }
+  list.innerHTML = cmdPalFiltered.map((c,i)=>`
+    <button type="button" class="cmdpal-row${i === cmdPalActiveIndex ? ' active' : ''}" data-i="${i}">
+      <span class="cmdpal-icon">${c.icon}</span>
+      <span class="cmdpal-label">${escapeHtml(c.label)}</span>
+      ${c.hint ? `<span class="cmdpal-hint">${escapeHtml(c.hint)}</span>` : ''}
+    </button>`).join('');
+  list.querySelectorAll('.cmdpal-row').forEach(row=>{
+    row.onclick = ()=>runCommandPaletteItem(Number(row.dataset.i));
+  });
+}
+function runCommandPaletteItem(i){
+  const c = cmdPalFiltered[i];
+  if(!c) return;
+  closeCommandPalette();
+  c.action();
+}
+function onCmdPalKeydown(e){
+  if(e.key === 'Escape'){ e.preventDefault(); closeCommandPalette(); }
+  else if(e.key === 'ArrowDown'){ e.preventDefault(); if(cmdPalFiltered.length){ cmdPalActiveIndex = (cmdPalActiveIndex + 1) % cmdPalFiltered.length; renderCommandPalette(); } }
+  else if(e.key === 'ArrowUp'){ e.preventDefault(); if(cmdPalFiltered.length){ cmdPalActiveIndex = (cmdPalActiveIndex - 1 + cmdPalFiltered.length) % cmdPalFiltered.length; renderCommandPalette(); } }
+  else if(e.key === 'Enter'){ e.preventDefault(); runCommandPaletteItem(cmdPalActiveIndex); }
+}
+// Global Ctrl+K (Cmd+K on Mac) opens the palette from anywhere — the shelf
+// list, a note, the tags page, mid-edit, wherever focus happens to be.
+document.addEventListener('keydown', (e)=>{
+  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'){
+    e.preventDefault();
+    if(!cryptoKey) return;
+    if(cmdPaletteOpen) document.getElementById('cmdPalInput').focus();
+    else openCommandPalette();
+  }
+});
 
 // ---- boot -------------------------------------------------------------------
 (async function init(){

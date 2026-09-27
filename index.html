@@ -219,6 +219,33 @@
   .bmrow .snip{flex:1;cursor:pointer;color:var(--ink);line-height:1.4;}
   .bmrow .rm{background:none;border:none;color:var(--ink-soft);font-size:15px;flex-shrink:0;}
   .bmempty{padding:18px;font-size:13px;color:var(--ink-soft);text-align:center;line-height:1.5;}
+  /* ---- command palette (Ctrl+K) ---- */
+  .cmdpal-overlay{
+    display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.45);
+    padding:calc(60px + env(safe-area-inset-top,0px)) 16px 16px;
+  }
+  .cmdpal-overlay.open{display:block;}
+  .cmdpal-box{
+    max-width:480px;margin:0 auto;background:var(--card);border:1px solid var(--line);
+    border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.25);overflow:hidden;
+    display:flex;flex-direction:column;max-height:70vh;
+  }
+  .cmdpal-input{
+    border:none;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);
+    font-size:16px;font-family:inherit;padding:14px 16px;outline:none;flex-shrink:0;
+  }
+  .cmdpal-list{overflow:auto;flex:1;}
+  .cmdpal-row{
+    display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+    background:none;border:none;border-bottom:1px solid var(--line);
+    padding:11px 16px;font-family:inherit;color:var(--ink);cursor:pointer;
+  }
+  .cmdpal-row:last-child{border-bottom:none;}
+  .cmdpal-row.active,.cmdpal-row:hover{background:var(--paper2);}
+  .cmdpal-icon{flex-shrink:0;width:20px;text-align:center;font-size:15px;}
+  .cmdpal-label{flex:1;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .cmdpal-hint{flex-shrink:0;font-size:11px;color:var(--ink-soft);}
+  .cmdpal-empty{padding:18px 16px;font-size:13px;color:var(--ink-soft);text-align:center;}
   /* outline / table-of-contents panel — reuses .bmpanel/.bmempty chrome;
      rows are indented by heading level (h1=0, h2=1, h3=2) instead of
      carrying a remove button like a bookmark row does. */
@@ -609,15 +636,22 @@
   <div class="bar">
     <div class="brand">Shelfmark<span>your own shelf, added by hand</span></div>
     <div style="display:flex;gap:8px;align-items:center;">
-      <button class="icon-btn" id="storageBtn" onclick="showStorageDetail()" title="Storage used" style="width:auto;padding:0 10px;font-size:11px;font-family:'SFMono-Regular',Consolas,Menlo,monospace;display:none;">&hellip;</button>
-      <button class="icon-btn" id="sortBtn" onclick="toggleSortMode()" title="Sorting items by newest added — tap for A–Z" style="width:auto;padding:0 10px;font-size:12px;">Newest</button>
-      <button class="icon-btn" id="loopBtn" onclick="toggleLoopAudio()" title="Loop audio within a category">&#128257;</button>
-      <button class="icon-btn" onclick="openTagsPage()" title="Browse tags">#</button>
-      <button class="icon-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="Select multiple items">&#9745;</button>
-      <button class="icon-btn" onclick="document.getElementById('importPick').click()" title="Import from JSON">&#8681;</button>
-      <button class="icon-btn" onclick="openExportModal()" title="Export shelf as JSON">&#8679;</button>
+      <button class="icon-btn" onclick="openCommandPalette()" title="Command palette (Ctrl+K)">&#128269;</button>
+      <!-- These used to be individual header icons — with the command palette now
+           covering all of them (plus theme switching and jump-to-tag), they're kept
+           only as the backing elements the same functions already update, not as
+           visible buttons, so two rows of icons don't reappear on narrow phones. -->
+      <div id="legacyHeaderIcons" style="display:none;">
+        <button class="icon-btn" id="storageBtn" onclick="showStorageDetail()" title="Storage used" style="width:auto;padding:0 10px;font-size:11px;font-family:'SFMono-Regular',Consolas,Menlo,monospace;display:none;">&hellip;</button>
+        <button class="icon-btn" id="sortBtn" onclick="toggleSortMode()" title="Sorting items by newest added — tap for A–Z" style="width:auto;padding:0 10px;font-size:12px;">Newest</button>
+        <button class="icon-btn" id="loopBtn" onclick="toggleLoopAudio()" title="Loop audio within a category">&#128257;</button>
+        <button class="icon-btn" onclick="openTagsPage()" title="Browse tags">#</button>
+        <button class="icon-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="Select multiple items">&#9745;</button>
+        <button class="icon-btn" onclick="document.getElementById('importPick').click()" title="Import from JSON">&#8681;</button>
+        <button class="icon-btn" onclick="openExportModal()" title="Export shelf as JSON">&#8679;</button>
+        <button class="icon-btn" onclick="quickNewNote()" title="New blank note — skips the Add panel">&#128221;</button>
+      </div>
       <input type="file" id="importPick" accept="application/json" style="display:none" onchange="onImportFile(event)">
-      <button class="icon-btn" onclick="quickNewNote()" title="New blank note — skips the Add panel">&#128221;</button>
       <button class="add-btn" onclick="openAdd()">+ Add</button>
     </div>
   </div>
@@ -625,6 +659,18 @@
     <input type="search" id="searchInput" placeholder="Search your shelf&hellip;" oninput="onSearchInput()">
   </div>
 </header>
+
+<!-- ---- Command palette: Ctrl+K (or the 🔍 button above) from anywhere in
+     the app. Fuzzy-matches a fixed list of app-wide actions plus one dynamic
+     entry per tag on the shelf (built from buildTagIndex the same way the
+     Tags page is). Replaces the old two-row header icon strip — those
+     buttons above are now hidden and only reachable through here. -->
+<div id="cmdPalette" class="cmdpal-overlay" onclick="if(event.target===this) closeCommandPalette()">
+  <div class="cmdpal-box">
+    <input type="text" id="cmdPalInput" class="cmdpal-input" placeholder="Type a command or #tag…" oninput="onCmdPalInput()" onkeydown="onCmdPalKeydown(event)" autocomplete="off" spellcheck="false">
+    <div id="cmdPalList" class="cmdpal-list"></div>
+  </div>
+</div>
 
 <main>
   <div id="empty" class="empty" style="display:none;">
