@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.10.1';
+const APP_VERSION = '1.10.2';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1108,7 +1108,15 @@ async function openReader(id){
   const c = document.getElementById('rcontent');
   c.className = ''; c.innerHTML = ''; c.style.display = ''; c.style.flexDirection = '';
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
-  if(curPdfDoc){ curPdfDoc.destroy(); curPdfDoc = null; }
+  // PDFDocumentProxy (what getDocument().promise resolves to) has no
+  // destroy() of its own in the pdf.js build vendored here — only its
+  // loadingTask does. Calling curPdfDoc.destroy() directly throws
+  // "curPdfDoc.destroy is not a function", and since that throw happens
+  // before curPdfDoc is ever reset to null, every openReader/closeReader
+  // call afterwards hits the same throw on the same stale doc and aborts
+  // immediately — which is what made the reader look like it could never
+  // open a second PDF once one had been opened and closed.
+  if(curPdfDoc){ curPdfDoc.loadingTask.destroy(); curPdfDoc = null; }
   // Bump the token now and remember it as THIS open's id. Every checkpoint in
   // the pdf branch below re-checks against the live counter before touching
   // shared state (curPdfDoc/curPdfNumPages) or the DOM, so a slow load from
@@ -1168,7 +1176,7 @@ async function openReader(id){
         // and canvas on screen, silently swapping curPdfDoc out from under
         // it and stealing the next render-page token so the real, current
         // open never finishes rendering.
-        doc.destroy();
+        doc.loadingTask.destroy();
         return;
       }
       curPdfDoc = doc;
@@ -1452,7 +1460,7 @@ function updateBookmarkUI(bookmarks){
 function closeReader(){
   document.getElementById('reader').classList.remove('open');
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
-  if(curPdfDoc){ curPdfDoc.destroy(); curPdfDoc = null; }
+  if(curPdfDoc){ curPdfDoc.loadingTask.destroy(); curPdfDoc = null; }
   curPdfRenderToken++; // invalidate any render still in flight for the closed item
   curPdfPage = 1; curPdfNumPages = 0;
   curId = null; curType = null;
