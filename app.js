@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.23.1';
+const APP_VERSION = '1.23.2';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1694,6 +1694,12 @@ function wireParagraphLongPress(container){
       clearTimeout(timer);
       timer = setTimeout(()=>{
         if(moved) return;
+        // A long-press is also how touch devices start a native text
+        // selection, so if one has already kicked in by the time our timer
+        // fires, defer to it instead of popping the edit menu on top of the
+        // selection handles.
+        const sel = window.getSelection();
+        if(sel && sel.toString().length > 0) return;
         paragraphLongPressFired = true;
         setTimeout(()=>{ paragraphLongPressFired = false; }, 800); // fail-safe in case no click follows to reset this
         showParagraphMenu(idx, t.clientX, t.clientY);
