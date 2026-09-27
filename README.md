@@ -54,7 +54,16 @@ icons/               — favicon.svg, icon-192.png, icon-512.png,
       keeps them in sync automatically. Each file has a comment pointing at
       the other as a reminder.)
 - [ ] If you added/renamed/removed any static file, update `PRECACHE_URLS`
-      in `service-worker.js` to match.
+      in `service-worker.js` to match. **Exception**: `lib/pdfjs/` (the
+      vendored PDF renderer, ~5.6MB across 200 files) is deliberately left
+      out of `PRECACHE_URLS` — `cache.addAll()` fails its entire batch if
+      any single URL in it fails, which is too fragile for that many files
+      on a first install over a flaky connection. It's cached the normal
+      way instead: the service worker's existing cache-first/network-
+      fallback/opportunistic-cache logic below picks it up the first time
+      someone actually opens a PDF (while online), and it's fully cached
+      for offline use from then on. This means a *first-ever* PDF open
+      needs a network connection; every one after that doesn't.
 - [ ] Commit and push both files together, never just one.
 
 **Why this matters:** the version badge only tells you what code shipped in
@@ -84,6 +93,46 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v2.0.0** (2026-09-26) — PDF reading progress, which required replacing
+  the PDF viewer entirely:
+  - **The native iframe viewer is gone.** PDFs now render page-by-page onto
+    a `<canvas>` via a vendored copy of Mozilla's pdf.js (6.3.289, Apache-2.0,
+    under `lib/pdfjs/` — cmaps, standard fonts, and wasm codecs included for
+    CJK text and scanned-image PDFs, ~5.6MB total). The iframe gave the
+    browser's own built-in PDF viewer for free, but it also meant the page
+    had no way to read back what page you were on — this is the only way to
+    get real progress tracking.
+  - **Page-based progress**, tracked and saved the same way notes (scroll
+    position) and recordings (playback time) already were — "resume where
+    you left off" now works for PDFs too, and the shelf list shows "page N
+    of M" instead of a generic "in progress".
+  - New toolbar: prev/next, a jump-to-page number field, left/right arrow
+    keys, and a download button for the original file (the iframe's native
+    viewer used to provide download/print for free; the canvas view doesn't,
+    so this replaces at least the download half of that).
+  - Rendering targets the container's width (recomputed on resize/rotation),
+    not a fixed zoom — no pinch-zoom yet, noted as a possible follow-up.
+  - **Integration note for future-me**: pdf.js 6.x ships only as an ES
+    module — app.js stays a classic script (switching it to
+    `type="module"` would silently break every `onclick="..."` handler in
+    the app, since module-scope functions aren't implicit globals), so
+    pdf.js is loaded via a plain `import()` call instead, which works fine
+    from a classic script. `cMapUrl`/`standardFontDataUrl`/`wasmUrl`/
+    `workerSrc` are all built as *absolute* URLs (`PDFJS_BASE` in app.js) —
+    tested empirically (see below) that pdf.js's internal fallback path
+    resolves `workerSrc` relative to pdf.js's own module location, not the
+    page, so a relative path there is a real footgun; an absolute URL sidesteps
+    the question entirely regardless of which internal code path resolves it.
+  - **Tested before shipping**, since this couldn't be visually verified in
+    this environment (no headless browser available, blocked by network
+    policy): vendored pdf.js was exercised in Node against hand-built
+    single- and multi-page test PDFs, with node-canvas standing in for a
+    real `<canvas>` — confirmed correct page counts, correct per-page text
+    extraction, correct viewport scaling math, and actual non-blank pixel
+    output matching the source text, saved and visually inspected as a PNG.
+    That validates the core pdf.js API usage; it doesn't substitute for
+    trying it in a real browser, so treat this as well-tested-but-not-
+    field-proven and flag anything that looks off after deploying.
 - **v1.9.0** (2026-09-26) — Multi-select. Tap the ☑ button in the header
   to enter selection mode: rows show a plain checkmark indicator instead of
   their usual play/edit/delete controls, and a bar at the bottom shows how
