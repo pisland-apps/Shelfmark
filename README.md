@@ -39,6 +39,24 @@ and stored only in your browser's IndexedDB, on your own device.
   `.md` for a note, the original bytes for everything else — no encryption,
   no wrapper JSON, so it opens straight up in any other app. Separate from
   the header's whole-shelf backup export below.
+- **Tap a paragraph to edit it.** Reading a note and tapping (mouse click,
+  or touch long-press for a "Edit this paragraph" menu) a paragraph jumps
+  straight into the source editor with the caret already there, instead of
+  only landing at the top via the pencil button.
+- **Callouts.** A blockquote starting with `[!note]`, `[!warning]`, or
+  `[!idea]` renders as a colored card (any other `[!type]` still gets a
+  generic-accented card) instead of a plain quote — same palette as the
+  PDF/Markdown/Image/Audio type colors used everywhere else.
+- **Undo/Redo in the note editor.** Toolbar buttons (Bold, Heading, image
+  insert, etc.) all bypass the browser's native undo history by setting the
+  textarea's value directly, so this is a small undo/redo stack of the
+  app's own — Ctrl+Z/Ctrl+Shift+Z or the ↩/↪ toolbar buttons, one step per
+  toolbar action, typing grouped into one step per pause.
+- **Command palette.** 🔍 in the header, or Ctrl+K/⌘K from anywhere, opens a
+  fuzzy-searchable list of app-wide actions (new note, import/export,
+  themes, sort/loop toggles, storage) plus a "jump to #tag" entry per tag —
+  see the Changelog's v1.25.0 entry for the full list and why it replaced
+  the old header icon strip.
 
 ## Files
 
@@ -99,6 +117,50 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.25.0** (2026-09-28) — Command palette: a 🔍 button in the header, or
+  **Ctrl+K**/**⌘K** from anywhere in the app, opens a fuzzy-searchable list
+  of app-wide actions — New note, Add item, Import/Export, Browse tags,
+  Select mode, Sort toggle, Audio loop toggle, Storage used, and all four
+  themes (Auto/Light/Dark/Sepia — previously only reachable from inside a
+  note's ⚙ panel). It also lists a "Jump to #tag" entry per tag on the
+  shelf, built the same way the Tags page builds its index. This replaces
+  the old header icon strip: storage/sort/loop/tags/select/import/export/
+  new-note used to be eight separate buttons that wrapped to two rows on a
+  narrow phone; they're now reachable only through the palette (the header
+  is down to 🔍 and **+ Add**). The old buttons are still in the DOM,
+  just hidden with `display:none` on `#legacyHeaderIcons` — several of
+  their onclick handlers touch that specific element directly without a
+  null-check, so hiding was safer than deleting them outright. Worth
+  revisiting at some point: either null-guard those handlers and remove the
+  dead markup, or leave it as-is since it costs nothing at runtime.
+- **v1.24.0** (2026-09-28) — Two additions: (1) **Callouts** — a blockquote
+  whose first line is `[!note]`, `[!warning]`, or `[!idea]` (optionally
+  followed by a title) now renders as a colored card instead of a plain
+  quote, reusing the existing --md/--pdf/--audio accent colors; any other
+  `[!type]` still gets a card (generic icon, --img accent) rather than
+  breaking. (2) **Undo/Redo in the note editor** — every toolbar button
+  (Bold, Heading, image insert, etc.) sets the textarea's `.value` directly,
+  which silently wipes the browser's native undo history, so Ctrl+Z had
+  likely been doing nothing useful for a while. Added a real undo/redo
+  stack instead (typing groups into one step per pause, each toolbar action
+  is its own step) wired to two new toolbar buttons plus Ctrl+Z/Ctrl+Shift+Z.
+- **v1.23.2** (2026-09-28) — The long-press "Edit this paragraph" menu
+  (touch tap-to-edit discoverability, added in v1.23.0) now backs off if a
+  native text selection is already active when its timer fires, instead of
+  popping the menu over top of it.
+- **v1.23.1** (2026-09-27) — Fixed a regression from the v1.23.0 tap-to-edit
+  feature: a mouse drag that selects text still fires a plain `click` on
+  mouseup (since it starts/ends on the same paragraph), so selecting text in
+  reading view to copy it was jumping straight into edit mode instead. The
+  paragraph click handler now checks `window.getSelection()` and backs off
+  when there's an active selection.
+- **v1.17.0 – v1.23.0** — not written up here; this changelog sat unmaintained
+  through this whole range even though the Features section above was kept
+  current for tags, outline, and single-item export. What's known: v1.23.0
+  added the tap-a-paragraph-to-edit / long-press "Edit this paragraph" menu
+  that v1.23.1/v1.23.2 above fix regressions in. The rest of this range
+  (v1.17–v1.22) isn't reconstructable from the code alone with any
+  confidence — there's no git history in this project to diff against.
 - **v1.16.0** (2026-09-27) — Notes can now link to other notes, not just
   audio, with backlinks shown automatically. A new 🔗 button next to the
   existing 🎵 Audio button in the note editor toolbar opens the same picker
