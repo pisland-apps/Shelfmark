@@ -86,6 +86,28 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.11.0** (2026-09-27) — Notes are now a real notepad, not just an
+  import target:
+  - **Start a blank note.** The Add sheet now offers "📝 Start a blank
+    note" alongside "Choose a file…" — creates an empty note item and
+    drops you straight into its editor, no longer requiring an existing
+    `.md`/`.txt` file to import first.
+  - **Insert a picture.** A new 📷 button in the note editor's toolbar
+    picks an image from your device, resizes/compresses it (max 900px,
+    same JPEG approach as item cover images), and inserts it as
+    `![](data:image/...)` right at the cursor — embedded directly in the
+    note's own encrypted text, so it travels with export/import and never
+    breaks even if some other shelf item is later deleted. Renders inline
+    wherever it appears.
+  - **Insert a table.** A new ▦ button drops a ready-to-fill pipe-table
+    template (`| Column 1 | ... |` / `| --- | ... |` / rows) at the
+    cursor; `renderMarkdown()` now recognizes that syntax and renders a
+    real `<table>` (horizontally scrollable on narrow screens) instead of
+    falling through to a plain paragraph.
+  - The editor toolbar is now two rows (🎵/📷/▦ tools, then Cancel/Save)
+    instead of one, since a fourth button in a single row would have been
+    too tight on narrow phones (the same issue v1.6.1 fixed for the old
+    3-button bar).
 - **v1.10.0** (2026-09-27) — PDFs now open in a page-by-page reader
   rendered onto `<canvas>` via a locally-vendored pdf.js, replacing the
   old native `<iframe>` viewer (which offered no reading progress and, on

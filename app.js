@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.10.2';
+const APP_VERSION = '1.11.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -159,7 +159,7 @@ async function unlockApp(){
 // ---- IndexedDB --------------------------------------------------------------
 const TYPE_COLOR = {pdf:'var(--pdf)', markdown:'var(--md)', image:'var(--img)', audio:'var(--audio)'};
 const TYPE_LABEL = {pdf:'PDF', markdown:'Note', image:'Picture', audio:'Recording'};
-let db, pendingFile = null, pendingType = null;
+let db, pendingFile = null, pendingType = null, pendingBlankNote = false;
 let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
 
 // ---- PDF reader (page-by-page canvas render via pdf.js) ----
@@ -701,11 +701,31 @@ function detectType(file){
   return null;
 }
 
+// Starting a blank note skips the file picker entirely — there's nothing to
+// read off disk, so saveItem() below just stores empty markdown content.
+// Picking an actual file afterwards (onFile) cancels this back out, and vice
+// versa, since the two are mutually exclusive ways of filling the Add sheet.
+function chooseBlankNote(){
+  pendingFile = null; pendingType = 'markdown'; pendingBlankNote = true;
+  document.getElementById('fbtn').textContent = 'Choose a file\u2026';
+  document.getElementById('fbtn').classList.remove('has-file');
+  const bnBtn = document.getElementById('blankNoteBtn');
+  bnBtn.textContent = '\u{1F4DD} Blank note selected';
+  bnBtn.classList.add('has-file');
+  const ti = document.getElementById('ttitle');
+  if(!ti.value) ti.value = 'Untitled note';
+  document.getElementById('saveBtn').disabled = false;
+  document.getElementById('coverField').style.display = 'block';
+}
 function onFile(e){
   const f = e.target.files[0];
   if(!f) return;
   const t = detectType(f);
   if(!t){ alert("That file type isn't supported yet — try a PDF, markdown/text note, picture, or audio file."); return; }
+  pendingBlankNote = false;
+  const bnBtn = document.getElementById('blankNoteBtn');
+  bnBtn.textContent = '\u{1F4DD} Start a blank note';
+  bnBtn.classList.remove('has-file');
   pendingFile = f; pendingType = t;
   document.getElementById('fbtn').textContent = f.name;
   document.getElementById('fbtn').classList.add('has-file');
@@ -732,9 +752,12 @@ async function populateCategoryDatalist(datalistId, excludeUncategorized){
 }
 
 async function openAdd(){
-  pendingFile = null; pendingType = null;
+  pendingFile = null; pendingType = null; pendingBlankNote = false;
   document.getElementById('fbtn').textContent = 'Choose a file\u2026';
   document.getElementById('fbtn').classList.remove('has-file');
+  const bnBtn = document.getElementById('blankNoteBtn');
+  bnBtn.textContent = '\u{1F4DD} Start a blank note';
+  bnBtn.classList.remove('has-file');
   document.getElementById('ttitle').value = '';
   document.getElementById('tcat').value = '';
   document.getElementById('saveBtn').disabled = true;
@@ -746,15 +769,16 @@ async function openAdd(){
 function closeAdd(){ document.getElementById('overlay').style.display = 'none'; }
 
 async function saveItem(){
-  if(!pendingFile) return;
-  const title = document.getElementById('ttitle').value.trim() || pendingFile.name;
+  if(!pendingFile && !pendingBlankNote) return;
+  const title = document.getElementById('ttitle').value.trim() || (pendingBlankNote ? 'Untitled note' : pendingFile.name);
   const category = document.getElementById('tcat').value.trim() || 'Uncategorized';
-  let content;
-  if(pendingType === 'markdown'){ content = await pendingFile.text(); }
-  else { content = pendingFile; }
+  let content, mime;
+  if(pendingBlankNote){ content = ''; mime = 'text/markdown'; }
+  else if(pendingType === 'markdown'){ content = await pendingFile.text(); mime = pendingFile.type; }
+  else { content = pendingFile; mime = pendingFile.type; }
   const item = {
     id: Date.now()+'-'+Math.random().toString(36).slice(2),
-    title, category, type: pendingType, content, mime: pendingFile.type,
+    title, category, type: pendingType, content, mime,
     addedAt: Date.now(), progress: null,
     ...(pendingCoverDataUrl ? {cover: pendingCoverDataUrl} : {})
   };
@@ -765,8 +789,13 @@ async function saveItem(){
     else alert("Couldn't save this item — please try again.");
     return; // keep the Add sheet open with the fields intact
   }
+  const wasBlankNote = pendingBlankNote;
   closeAdd();
   render();
+  // A freshly created blank note is pointless to look at unopened — jump
+  // straight into its editor so "start a blank note" acts like a real
+  // "new note" action rather than just adding an empty shelf row.
+  if(wasBlankNote){ await openReader(item.id); startEditNote(); }
 }
 
 // ---- Cover images ----
@@ -1208,9 +1237,17 @@ async function openReader(id){
     const editWrap = document.createElement('div');
     editWrap.id = 'mdEditWrap';
     editWrap.innerHTML = `<textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
-      <div class="ebar"><button class="cancel" onclick="cancelEditNote()">Cancel</button>
-      <button class="cancel" onclick="openAudioLinkPicker()">&#127925; Audio</button>
-      <button class="save" onclick="saveEditNote()">Save</button></div>`;
+      <div class="ebar">
+        <div class="ebar-tools">
+          <button class="tool" onclick="openAudioLinkPicker()" title="Link a recording already on your shelf">&#127925;</button>
+          <button class="tool" onclick="document.getElementById('noteImgPick').click()" title="Insert a picture">&#128247;</button>
+          <button class="tool" onclick="insertTableTemplate()" title="Insert a table">&#9638;</button>
+        </div>
+        <div class="ebar-actions">
+          <button class="cancel" onclick="cancelEditNote()">Cancel</button>
+          <button class="save" onclick="saveEditNote()">Save</button>
+        </div>
+      </div>`;
     c.appendChild(div);
     c.appendChild(editWrap);
     if(it.progress && it.progress.scroll) c.scrollTop = it.progress.scroll;
@@ -1402,6 +1439,50 @@ function insertAudioLink(id, title){
   ta.setSelectionRange(newPos, newPos);
 }
 
+// ---- Inserting a picture into a note ----
+// Embedded directly as a resized/compressed data: URI right in the note's
+// own (encrypted) markdown text — same idea as the item cover image, just
+// bigger, since here it's meant to be read rather than shown as a thumbnail.
+// That keeps a note fully self-contained: it survives export/import and
+// doesn't break if some other shelf item is later deleted or renamed, unlike
+// a shelf://<id> link would.
+async function onNoteImagePick(e){
+  const f = e.target.files[0];
+  e.target.value = '';
+  if(!f) return;
+  let dataUrl;
+  try{ dataUrl = await resizeCoverImage(f, 900, 0.82); }
+  catch(err){ alert("Couldn't use that image \u2014 try a different file."); return; }
+  const ta = document.getElementById('mdEditArea');
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  const md = `![](${dataUrl})\n`;
+  ta.value = ta.value.slice(0, start) + md + ta.value.slice(end);
+  ta.focus();
+  const newPos = start + md.length;
+  ta.setSelectionRange(newPos, newPos);
+}
+
+// ---- Inserting a table template into a note ----
+// Drops a ready-to-edit pipe table at the cursor rather than trying to offer
+// a real table-editing UI in a plain <textarea> — the person fills in / adds
+// rows and columns as plain markdown text, same as they would in Obsidian or
+// any other markdown editor. renderMarkdown() below is what turns this
+// syntax back into an actual <table> in the read view.
+function insertTableTemplate(){
+  const ta = document.getElementById('mdEditArea');
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  const needsLeadingBreak = start > 0 && ta.value[start-1] !== '\n';
+  const template = (needsLeadingBreak ? '\n\n' : '')
+    + '| Column 1 | Column 2 | Column 3 |\n'
+    + '| --- | --- | --- |\n'
+    + '| Row 1 | Row 1 | Row 1 |\n'
+    + '| Row 2 | Row 2 | Row 2 |\n\n';
+  ta.value = ta.value.slice(0, start) + template + ta.value.slice(end);
+  ta.focus();
+  const newPos = start + template.length;
+  ta.setSelectionRange(newPos, newPos);
+}
+
 let bmPanelOpen = false;
 function toggleBookmarkPanel(){
   settingsPanelOpen = false;
@@ -1468,6 +1549,33 @@ function closeReader(){
   render();
 }
 
+// A block is a pipe table when its first line contains at least one `|` and
+// its second line is a separator row made only of `|`, `-`, `:` and
+// whitespace (with at least one dash) — the standard GFM-style table syntax
+// that insertTableTemplate() inserts. Deliberately loose (doesn't check
+// column counts line-to-line) to stay "minimal", matching the rest of this
+// renderer.
+function looksLikeTable(block){
+  const lines = block.split('\n').filter(l=>l.trim());
+  if(lines.length < 2) return false;
+  if(!lines[0].includes('|')) return false;
+  return /^[\s|:-]+$/.test(lines[1]) && lines[1].includes('-');
+}
+function splitTableRow(line){
+  const cells = line.split('|');
+  if(cells.length && cells[0].trim() === '') cells.shift();
+  if(cells.length && cells[cells.length-1].trim() === '') cells.pop();
+  return cells.map(c=>c.trim());
+}
+function tableToHtml(block){
+  const lines = block.split('\n').filter(l=>l.trim());
+  const header = splitTableRow(lines[0]);
+  const rows = lines.slice(2).map(splitTableRow);
+  const thead = `<tr>${header.map(h=>`<th>${h}</th>`).join('')}</tr>`;
+  const tbody = rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('');
+  return `<div class="md-table-wrap"><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+}
+
 // minimal markdown renderer
 function renderMarkdown(src){
   let s = escapeHtml(src);
@@ -1482,6 +1590,12 @@ function renderMarkdown(src){
   // the same on-shelf player/decrypt-on-play code path as the shelf list
   // (wireInlineAudio() attaches its click handler once this HTML is in the
   // DOM — see openReader/saveEditNote).
+  // Images: `![alt](url)` — almost always a data: URI inserted by the
+  // "insert picture" toolbar button (see onNoteImagePick), but any image URL
+  // works. Must run BEFORE the plain-link pass below, since a leftover
+  // `[alt](url)` after stripping the leading `!` would otherwise also match
+  // the link regex and get turned into a stray `!<a>...</a>`.
+  s = s.replace(/!\[(.*?)\]\((.+?)\)/g,(_,alt,url)=>`<img class="md-img" src="${url.trim()}" alt="${alt}">`);
   const AUDIO_EXT = /\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|weba)(\?.*)?$/i;
   const SHELF_LINK = /^shelf:\/\/(.+)$/;
   s = s.replace(/\[(.+?)\]\((.+?)\)/g,(_,label,url)=>{
@@ -1506,6 +1620,8 @@ function renderMarkdown(src){
     let html;
     if(/^<h[123]|^<pre/.test(block)) html = block;
     else if(/^<div class="md-audio/.test(block)) html = block;
+    else if(/^<img class="md-img"/.test(block)) html = block;
+    else if(looksLikeTable(block)) html = tableToHtml(block);
     else if(/^\s*&gt;/.test(block) && block.split('\n').every(l=>!l.trim() || /^\s*&gt;/.test(l))){
       const inner = block.split('\n').filter(l=>l.trim()).map(l=>l.replace(/^\s*&gt;\s?/,'')).join('<br>');
       html = `<blockquote>${inner}</blockquote>`;
