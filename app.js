@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.14.0';
+const APP_VERSION = '1.15.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -726,18 +726,45 @@ function detectType(file){
 }
 
 // Starting a blank note skips the file picker entirely — there's nothing to
-// read off disk, so saveItem() below just stores empty markdown content.
-// Picking an actual file afterwards (onFile) cancels this back out, and vice
-// versa, since the two are mutually exclusive ways of filling the Add sheet.
-function chooseBlankNote(){
-  pendingFile = null; pendingType = 'markdown'; pendingBlankNote = true;
+// read off disk, so saveItem() below just stores whatever content the
+// chosen template provides (empty for "Blank"). Picking an actual file
+// afterwards (onFile) cancels this back out, and vice versa, since the two
+// are mutually exclusive ways of filling the Add sheet.
+// Each template supplies a starting title and a markdown skeleton — picking
+// one is just a head start, everything stays freely editable afterwards.
+const NOTE_TEMPLATES = {
+  blank: {
+    title: ()=> 'Untitled note',
+    content: ()=> ''
+  },
+  diary: {
+    title: ()=> new Date().toLocaleDateString(undefined, {weekday:'long', year:'numeric', month:'long', day:'numeric'}),
+    content: ()=> `## ${new Date().toLocaleDateString(undefined, {weekday:'long', year:'numeric', month:'long', day:'numeric'})}\n\n`
+  },
+  meeting: {
+    title: ()=> 'Meeting notes \u2013 ' + new Date().toLocaleDateString(),
+    content: ()=> '## Attendees\n- \n\n## Agenda\n- \n\n## Notes\n\n\n## Action items\n- [ ] \n'
+  },
+  todo: {
+    title: ()=> 'To-do list',
+    content: ()=> '- [ ] \n- [ ] \n- [ ] \n'
+  }
+};
+let pendingNoteTemplate = null; // key into NOTE_TEMPLATES, read by saveItem()
+let lastAutoTitle = null; // last title we auto-filled, so switching templates
+                          // can safely overwrite it but a title the person
+                          // actually typed themselves is never clobbered
+function chooseNoteTemplate(key){
+  const tpl = NOTE_TEMPLATES[key];
+  if(!tpl) return;
+  pendingFile = null; pendingType = 'markdown'; pendingBlankNote = true; pendingNoteTemplate = key;
   document.getElementById('fbtn').textContent = 'Choose a file\u2026';
   document.getElementById('fbtn').classList.remove('has-file');
-  const bnBtn = document.getElementById('blankNoteBtn');
-  bnBtn.textContent = '\u{1F4DD} Blank note selected';
-  bnBtn.classList.add('has-file');
+  document.querySelectorAll('#tplGrid .tpl-btn').forEach(b=>b.classList.toggle('active', b.dataset.tpl === key));
   const ti = document.getElementById('ttitle');
-  if(!ti.value) ti.value = 'Untitled note';
+  const newTitle = tpl.title();
+  if(!ti.value.trim() || ti.value === lastAutoTitle) ti.value = newTitle;
+  lastAutoTitle = newTitle;
   document.getElementById('saveBtn').disabled = false;
   document.getElementById('coverField').style.display = 'block';
 }
@@ -746,10 +773,8 @@ function onFile(e){
   if(!f) return;
   const t = detectType(f);
   if(!t){ alert("That file type isn't supported yet — try a PDF, markdown/text note, picture, or audio file."); return; }
-  pendingBlankNote = false;
-  const bnBtn = document.getElementById('blankNoteBtn');
-  bnBtn.textContent = '\u{1F4DD} Start a blank note';
-  bnBtn.classList.remove('has-file');
+  pendingBlankNote = false; pendingNoteTemplate = null;
+  document.querySelectorAll('#tplGrid .tpl-btn').forEach(b=>b.classList.remove('active'));
   pendingFile = f; pendingType = t;
   document.getElementById('fbtn').textContent = f.name;
   document.getElementById('fbtn').classList.add('has-file');
@@ -776,12 +801,10 @@ async function populateCategoryDatalist(datalistId, excludeUncategorized){
 }
 
 async function openAdd(){
-  pendingFile = null; pendingType = null; pendingBlankNote = false;
+  pendingFile = null; pendingType = null; pendingBlankNote = false; pendingNoteTemplate = null; lastAutoTitle = null;
   document.getElementById('fbtn').textContent = 'Choose a file\u2026';
   document.getElementById('fbtn').classList.remove('has-file');
-  const bnBtn = document.getElementById('blankNoteBtn');
-  bnBtn.textContent = '\u{1F4DD} Start a blank note';
-  bnBtn.classList.remove('has-file');
+  document.querySelectorAll('#tplGrid .tpl-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('ttitle').value = '';
   document.getElementById('tcat').value = '';
   document.getElementById('saveBtn').disabled = true;
@@ -797,7 +820,10 @@ async function saveItem(){
   const title = document.getElementById('ttitle').value.trim() || (pendingBlankNote ? 'Untitled note' : pendingFile.name);
   const category = document.getElementById('tcat').value.trim() || 'Uncategorized';
   let content, mime;
-  if(pendingBlankNote){ content = ''; mime = 'text/markdown'; }
+  if(pendingBlankNote){
+    const tpl = NOTE_TEMPLATES[pendingNoteTemplate] || NOTE_TEMPLATES.blank;
+    content = tpl.content(); mime = 'text/markdown';
+  }
   else if(pendingType === 'markdown'){ content = await pendingFile.text(); mime = pendingFile.type; }
   else { content = pendingFile; mime = pendingFile.type; }
   const item = {
@@ -820,6 +846,31 @@ async function saveItem(){
   // straight into its editor so "start a blank note" acts like a real
   // "new note" action rather than just adding an empty shelf row.
   if(wasBlankNote){ await openReader(item.id); startEditNote(); }
+}
+
+// ---- Quick "new note" shortcut ----
+// The header's 📝 button next to "+ Add" — creates a blank untitled note in
+// one tap and drops straight into its editor, bypassing the full Add sheet
+// (title/category/template/cover fields) entirely for the common case of
+// "I just want to jot something down right now". The note can still be
+// retitled and re-categorized afterwards from the note's own edit view like
+// any other item.
+async function quickNewNote(){
+  const item = {
+    id: Date.now()+'-'+Math.random().toString(36).slice(2),
+    title: 'Untitled note', category: 'Uncategorized', type: 'markdown',
+    content: '', mime: 'text/markdown',
+    addedAt: Date.now(), progress: null
+  };
+  try{
+    await put(item);
+  }catch(err){
+    alert(isQuotaError(err) ? "Your device's storage is full, so this couldn't be saved. Free up space, remove a few items from your shelf, or export a backup and move it elsewhere — then try again." : "Couldn't create a new note — please try again.");
+    return;
+  }
+  render();
+  await openReader(item.id);
+  startEditNote();
 }
 
 // ---- Cover images ----

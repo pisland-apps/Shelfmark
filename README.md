@@ -86,6 +86,17 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.15.0** (2026-09-27) — Two new ways to start a note. (1) The Add sheet's
+  "Start a blank note" button is now a 2×2 grid of starting templates —
+  **Blank**, **Diary** (auto-titled with today's date, a `##` date heading
+  already in place), **Meeting notes** (Attendees / Agenda / Notes / Action
+  items skeleton), and **To-do list** (three empty checklist lines) — picking
+  one pre-fills the title and drops the matching Markdown skeleton into the
+  new note; everything stays freely editable afterwards, so this is just a
+  head start, not a locked structure. (2) A new 📝 button next to "+ Add" in
+  the header creates a blank untitled note in one tap and jumps straight into
+  its editor, skipping the Add sheet entirely (no title/category/template
+  step) for the common case of just wanting to jot something down right now.
 - **v1.14.0** (2026-09-27) — Three note-editor conveniences: (1) pasting an
   image straight from the clipboard (Ctrl+V on desktop, or the long-press
   "Paste" menu on mobile — e.g. a screenshot that was never saved to a file)

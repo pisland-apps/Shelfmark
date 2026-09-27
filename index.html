@@ -157,6 +157,13 @@
   }
   .filebtn.has-file{color:var(--ink);border-style:solid;}
   .or-divider{text-align:center;font-size:12px;color:var(--ink-soft);margin:8px 0;}
+  .tpl-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;}
+  .tpl-btn{
+    padding:12px 8px;border:1px dashed var(--line);border-radius:8px;
+    text-align:center;color:var(--ink-soft);font-size:13px;background:transparent;
+    font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px;
+  }
+  .tpl-btn.active{color:var(--ink);border-style:solid;border-color:var(--ink);background:var(--card);font-weight:600;}
   .row{display:flex;gap:10px;margin-top:20px;}
   .row button{flex:1;padding:12px;border-radius:8px;border:none;font-size:14px;font-weight:500;}
   .cancel{background:transparent;border:1px solid var(--line) !important;color:var(--ink);}
@@ -480,6 +487,7 @@
       <button class="icon-btn" onclick="document.getElementById('importPick').click()" title="Import from JSON">&#8681;</button>
       <button class="icon-btn" onclick="openExportModal()" title="Export shelf as JSON">&#8679;</button>
       <input type="file" id="importPick" accept="application/json" style="display:none" onchange="onImportFile(event)">
+      <button class="icon-btn" onclick="quickNewNote()" title="New blank note — skips the Add panel">&#128221;</button>
       <button class="add-btn" onclick="openAdd()">+ Add</button>
     </div>
   </div>
@@ -505,8 +513,13 @@
     <label for="fpick">File</label>
     <input id="fpick" type="file" accept=".pdf,.md,.markdown,.txt,image/*,audio/*" style="display:none" onchange="onFile(event)">
     <button class="filebtn" id="fbtn" onclick="document.getElementById('fpick').click()">Choose a file&hellip;</button>
-    <div class="or-divider">or</div>
-    <button type="button" class="filebtn" id="blankNoteBtn" onclick="chooseBlankNote()">&#128221; Start a blank note</button>
+    <div class="or-divider">or start a new note</div>
+    <div class="tpl-grid" id="tplGrid">
+      <button type="button" class="tpl-btn" data-tpl="blank" onclick="chooseNoteTemplate('blank')">&#128221; Blank</button>
+      <button type="button" class="tpl-btn" data-tpl="diary" onclick="chooseNoteTemplate('diary')">&#128197; Diary</button>
+      <button type="button" class="tpl-btn" data-tpl="meeting" onclick="chooseNoteTemplate('meeting')">&#128203; Meeting notes</button>
+      <button type="button" class="tpl-btn" data-tpl="todo" onclick="chooseNoteTemplate('todo')">&#9745; To-do list</button>
+    </div>
     <label for="ttitle">Title</label>
     <input id="ttitle" type="text" placeholder="Untitled">
     <label for="tcat">Category</label>
