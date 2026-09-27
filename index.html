@@ -212,6 +212,18 @@
   .bmrow .snip{flex:1;cursor:pointer;color:var(--ink);line-height:1.4;}
   .bmrow .rm{background:none;border:none;color:var(--ink-soft);font-size:15px;flex-shrink:0;}
   .bmempty{padding:18px;font-size:13px;color:var(--ink-soft);text-align:center;line-height:1.5;}
+  /* outline / table-of-contents panel — reuses .bmpanel/.bmempty chrome;
+     rows are indented by heading level (h1=0, h2=1, h3=2) instead of
+     carrying a remove button like a bookmark row does. */
+  .outline-row{
+    display:block;width:100%;text-align:left;background:none;border:none;
+    padding:10px 13px;border-bottom:1px solid var(--line);font-size:13px;
+    color:var(--ink);font-family:inherit;line-height:1.4;cursor:pointer;
+  }
+  .outline-row:last-child{border-bottom:none;}
+  .outline-row[data-level="1"]{font-weight:600;}
+  .outline-row[data-level="2"]{padding-left:26px;}
+  .outline-row[data-level="3"]{padding-left:39px;color:var(--ink-soft);}
   .stitle{font-family:'Lora',serif;font-size:12px;color:var(--ink-soft);padding:12px 13px 6px;}
   .bmpanel .seg{padding:0 13px 8px;}
   .mdbody{max-width:640px;margin:0 auto;font-family:var(--read-font);font-size:var(--read-size);line-height:1.75;padding-left:26px;}
@@ -671,6 +683,7 @@
     <div class="rtitle" id="rtitle"></div>
     <button class="bmbtn" id="settingsBtn" onclick="toggleSettingsPanel()" style="display:none;" title="Reading settings">&#9881;</button>
     <button class="bmbtn" id="editNoteBtn" onclick="startEditNote()" style="display:none;" title="Edit this note">&#9998;</button>
+    <button class="bmbtn" id="outlineBtn" onclick="toggleOutlinePanel()" style="display:none;" title="Table of contents">&#9776;</button>
     <button class="bmbtn" id="bmBtn" onclick="toggleBookmarkPanel()" style="display:none;">&#128278;<span id="bmCount"></span></button>
   </div>
   <div id="settingsPanel" class="bmpanel" style="display:none;">
@@ -697,6 +710,7 @@
     </div>
   </div>
   <div id="bmPanel" class="bmpanel" style="display:none;"></div>
+  <div id="outlinePanel" class="bmpanel" style="display:none;"></div>
   <div id="rcontent"></div>
 </div>
 

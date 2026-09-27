@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.18.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -711,6 +711,8 @@ function refreshSettingsUI(){
 function toggleSettingsPanel(){
   bmPanelOpen = false;
   document.getElementById('bmPanel').style.display = 'none';
+  outlinePanelOpen = false;
+  document.getElementById('outlinePanel').style.display = 'none';
   settingsPanelOpen = !settingsPanelOpen;
   document.getElementById('settingsPanel').style.display = settingsPanelOpen ? 'block' : 'none';
   if(settingsPanelOpen) refreshSettingsUI();
@@ -1205,10 +1207,13 @@ async function openReader(id){
   document.getElementById('bmBtn').style.display = 'none';
   document.getElementById('editNoteBtn').style.display = 'none';
   document.getElementById('settingsBtn').style.display = 'none';
+  document.getElementById('outlineBtn').style.display = 'none';
   settingsPanelOpen = false;
   document.getElementById('settingsPanel').style.display = 'none';
   bmPanelOpen = false;
   document.getElementById('bmPanel').style.display = 'none';
+  outlinePanelOpen = false;
+  document.getElementById('outlinePanel').style.display = 'none';
   const c = document.getElementById('rcontent');
   c.className = ''; c.innerHTML = ''; c.style.display = ''; c.style.flexDirection = '';
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
@@ -1340,6 +1345,7 @@ async function openReader(id){
     document.getElementById('editNoteBtn').style.display = 'flex';
     document.getElementById('settingsBtn').style.display = 'flex';
     updateBookmarkUI(it.bookmarks || []);
+    updateOutlineUI(buildOutline(div));
   } else if(it.type === 'audio'){
     // Reuses the SAME shared player as the shelf list and note-embedded
     // shelf:// links — not a separate <audio> element — so there's only
@@ -1440,6 +1446,7 @@ function startEditNote(){
   document.getElementById('mdView').style.display = 'none';
   document.getElementById('mdEditWrap').style.display = 'flex';
   document.getElementById('bmBtn').style.display = 'none';
+  document.getElementById('outlineBtn').style.display = 'none';
   document.getElementById('editNoteBtn').classList.add('active');
   document.getElementById('mdEditArea').focus();
 }
@@ -1448,6 +1455,7 @@ function cancelEditNote(){
   document.getElementById('mdView').style.display = 'block';
   document.getElementById('bmBtn').style.display = 'flex';
   document.getElementById('editNoteBtn').classList.remove('active');
+  updateOutlineUI(buildOutline(document.getElementById('mdView')));
 }
 async function saveEditNote(){
   if(!curId) return;
@@ -1468,6 +1476,7 @@ async function saveEditNote(){
   await renderBacklinks(curId, mdView); // link targets may have changed
   const it = await getOne(curId);
   updateBookmarkUI(it.bookmarks || []);
+  updateOutlineUI(buildOutline(mdView));
   cancelEditNote();
 }
 
@@ -1905,6 +1914,8 @@ let bmPanelOpen = false;
 function toggleBookmarkPanel(){
   settingsPanelOpen = false;
   document.getElementById('settingsPanel').style.display = 'none';
+  outlinePanelOpen = false;
+  document.getElementById('outlinePanel').style.display = 'none';
   bmPanelOpen = !bmPanelOpen;
   document.getElementById('bmPanel').style.display = bmPanelOpen ? 'block' : 'none';
 }
@@ -1954,6 +1965,57 @@ function updateBookmarkUI(bookmarks){
       <div class="snip" onclick="jumpBookmark(${b.idx})">${escapeHtml(b.snippet)}</div>
       <button class="rm" onclick="event.stopPropagation();deleteBookmark(${b.idx})" title="Remove bookmark">&times;</button>
     </div>`).join('');
+}
+
+// ---- Outline / table of contents ----
+// Auto-generated from a note's own #/##/### headings — nothing is stored;
+// it's rebuilt from the live rendered DOM every time the note (re)renders,
+// the same "derive it, don't persist it" approach the Tags feature uses.
+// Reuses the bookmark panel's look (.bmpanel/.bmrow chrome) but each row
+// jumps to a heading's .mdblock instead of a saved spot, and there's no
+// per-row remove button since there's nothing to delete — the note's own
+// headings ARE the outline.
+let outlinePanelOpen = false;
+function toggleOutlinePanel(){
+  settingsPanelOpen = false;
+  document.getElementById('settingsPanel').style.display = 'none';
+  bmPanelOpen = false;
+  document.getElementById('bmPanel').style.display = 'none';
+  outlinePanelOpen = !outlinePanelOpen;
+  document.getElementById('outlinePanel').style.display = outlinePanelOpen ? 'block' : 'none';
+}
+// container is the rendered .mdbody element — h1/h2/h3 tags only ever
+// appear as the very first thing in whatever .mdblock they belong to (see
+// renderMarkdown's block classification), so each heading's own block
+// carries the data-idx that jumpBookmark's scroll-to logic already uses.
+function buildOutline(container){
+  const outline = [];
+  container.querySelectorAll('h1, h2, h3').forEach(h=>{
+    const block = h.closest('.mdblock');
+    if(!block) return;
+    outline.push({ idx: Number(block.dataset.idx), level: Number(h.tagName[1]), text: h.textContent.trim() });
+  });
+  return outline;
+}
+function jumpOutline(idx){
+  const el = document.querySelector(`.mdblock[data-idx="${idx}"]`);
+  if(el) el.scrollIntoView({block:'center', behavior:'smooth'});
+  outlinePanelOpen = false;
+  document.getElementById('outlinePanel').style.display = 'none';
+}
+function updateOutlineUI(outline){
+  const btn = document.getElementById('outlineBtn');
+  const panel = document.getElementById('outlinePanel');
+  if(!outline.length){
+    btn.style.display = 'none';
+    panel.style.display = 'none';
+    outlinePanelOpen = false;
+    return;
+  }
+  btn.style.display = 'flex';
+  panel.innerHTML = outline.map(o=>
+    `<button type="button" class="outline-row" data-level="${o.level}" onclick="jumpOutline(${o.idx})">${escapeHtml(o.text) || '(untitled heading)'}</button>`
+  ).join('');
 }
 
 function closeReader(){
@@ -2149,6 +2211,7 @@ async function toggleTaskCheckbox(blockIdx, lineIdx){
     wireTagPills(mdView);
     wireTaskCheckboxes(mdView);
     await renderBacklinks(curId, mdView);
+    updateOutlineUI(buildOutline(mdView));
   }
 }
 function wireTaskCheckboxes(container){
