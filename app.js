@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.13.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -161,6 +161,30 @@ const TYPE_COLOR = {pdf:'var(--pdf)', markdown:'var(--md)', image:'var(--img)', 
 const TYPE_LABEL = {pdf:'PDF', markdown:'Note', image:'Picture', audio:'Recording'};
 let db, pendingFile = null, pendingType = null, pendingBlankNote = false;
 let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
+// Maps this edit session's `img:N` placeholders (what actually shows in the
+// textarea) back to the real `data:image/...;base64,...` URI each one
+// stands in for. Rebuilt every time the editor opens (collapseImagesForEdit)
+// and consumed once, on Save (expandImagesForSave) — the stored note content
+// itself is untouched: it's still one plain markdown string with the real
+// data URIs inline, exactly as before. Only the on-screen textarea is
+// decluttered, so export/import/rendering all stay the same format.
+let curNoteImageRefs = [];
+function collapseImagesForEdit(text){
+  curNoteImageRefs = [];
+  return text.replace(/!\[(.*?)\]\((data:[^)]+)\)/g, (_, alt, dataUri)=>{
+    curNoteImageRefs.push(dataUri);
+    return `![${alt || 'image ' + curNoteImageRefs.length}](img:${curNoteImageRefs.length})`;
+  });
+}
+function expandImagesForSave(text){
+  return text.replace(/!\[(.*?)\]\(img:(\d+)\)/g, (whole, alt, n)=>{
+    const dataUri = curNoteImageRefs[Number(n) - 1];
+    // If the placeholder's number doesn't match anything (typed by hand, or
+    // its image was never actually inserted this session), leave the text
+    // exactly as written rather than guessing.
+    return dataUri ? `![${alt}](${dataUri})` : whole;
+  });
+}
 
 // ---- PDF reader (page-by-page canvas render via pdf.js) ----
 // curPdfDoc is the live pdf.js document for whatever's open in the reader;
@@ -1352,7 +1376,7 @@ async function saveProgress(p){
 }
 
 function startEditNote(){
-  document.getElementById('mdEditArea').value = curNoteRaw;
+  document.getElementById('mdEditArea').value = collapseImagesForEdit(curNoteRaw);
   document.getElementById('mdView').style.display = 'none';
   document.getElementById('mdEditWrap').style.display = 'flex';
   document.getElementById('bmBtn').style.display = 'none';
@@ -1367,7 +1391,7 @@ function cancelEditNote(){
 }
 async function saveEditNote(){
   if(!curId) return;
-  const text = document.getElementById('mdEditArea').value;
+  const text = expandImagesForSave(document.getElementById('mdEditArea').value);
   try{
     await putContentOnly(curId, 'markdown', text);
   }catch(err){
@@ -1472,7 +1496,10 @@ async function copyCodeBlock(btn){
 // bigger, since here it's meant to be read rather than shown as a thumbnail.
 // That keeps a note fully self-contained: it survives export/import and
 // doesn't break if some other shelf item is later deleted or renamed, unlike
-// a shelf://<id> link would.
+// a shelf://<id> link would. The full data URI never actually appears in the
+// textarea itself, though — it's added to curNoteImageRefs and only a short
+// `img:N` placeholder is inserted; see collapseImagesForEdit/
+// expandImagesForSave above for how that round-trips through Save.
 async function onNoteImagePick(e){
   const f = e.target.files[0];
   e.target.value = '';
@@ -1480,9 +1507,10 @@ async function onNoteImagePick(e){
   let dataUrl;
   try{ dataUrl = await resizeCoverImage(f, 900, 0.82); }
   catch(err){ alert("Couldn't use that image \u2014 try a different file."); return; }
+  curNoteImageRefs.push(dataUrl);
   const ta = document.getElementById('mdEditArea');
   const start = ta.selectionStart, end = ta.selectionEnd;
-  const md = `![](${dataUrl})\n`;
+  const md = `![image ${curNoteImageRefs.length}](img:${curNoteImageRefs.length})\n`;
   ta.value = ta.value.slice(0, start) + md + ta.value.slice(end);
   ta.focus();
   const newPos = start + md.length;

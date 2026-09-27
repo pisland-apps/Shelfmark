@@ -86,6 +86,17 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.13.0** (2026-09-27) — The note editor no longer shows a giant wall of
+  base64 text for an inserted picture. Opening a note for editing now
+  collapses every `![alt](data:image/...;base64,...)` down to a short
+  `![alt](img:1)` placeholder in the textarea; Save silently expands each
+  placeholder back to its real image data before the note is stored — the
+  saved content is byte-for-byte the same full markdown as before (still one
+  plain string, still exports/imports the same way), only what you actually
+  *see and edit* changed. New images inserted via the 📷 button during that
+  same edit session get a placeholder too, instead of dumping their data URI
+  straight into the textarea. Deleting a placeholder line and saving removes
+  that image from the note, same as deleting any other line would.
 - **v1.12.0** (2026-09-27) — Fenced code blocks are now a proper Obsidian-
   style widget instead of a plain `<pre>`: write ```` ```js ```` (any language
   tag, or none) and the note reader shows a small bar above the code with
