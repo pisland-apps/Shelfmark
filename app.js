@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.25.0';
+const APP_VERSION = '1.26.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1403,6 +1403,7 @@ async function openReader(id){
           <button class="tool" onclick="insertTimestamp()" title="Insert date/time">&#128197;</button>
           <button class="tool" onclick="openAudioLinkPicker()" title="Link a recording already on your shelf">&#127925;</button>
           <button class="tool" onclick="openNoteLinkPicker()" title="Link another note already on your shelf">&#128279;</button>
+          <button class="tool" onclick="openPdfLinkPicker()" title="Link a PDF already on your shelf">&#128196;</button>
           <button class="tool" onclick="document.getElementById('noteImgPick').click()" title="Insert a picture">&#128247;</button>
           <button class="tool" onclick="insertTableTemplate()" title="Insert a table">&#9638;</button>
         </div>
@@ -2084,26 +2085,32 @@ async function renderTagsPage(){
 // ---- Linking a note to an audio item, or to another note, already on
 // the shelf ----
 // Inserts a `[Title](shelf://<id>)` link at the note editor's cursor; render
-// turns that into an inline player (audio target) or a note-jump widget
-// (note target) rather than a plain outgoing link. Shares one overlay/list
-// markup between both kinds — only the picker's title and the item filter
-// differ.
+// turns that into an inline player (audio target), a note-jump widget (note
+// target), or a PDF-jump widget (pdf target, v1.26.0) rather than a plain
+// outgoing link. Shares one overlay/list markup between all three kinds —
+// only the picker's title and the item filter differ.
 let mdLinkCursor = null;
 async function openAudioLinkPicker(){ return openLinkPicker('audio'); }
 async function openNoteLinkPicker(){ return openLinkPicker('markdown'); }
+async function openPdfLinkPicker(){ return openLinkPicker('pdf'); }
+const LINK_PICKER_LABELS = {
+  audio: { title: 'Link a recording', empty: 'No recordings' },
+  markdown: { title: 'Link a note', empty: 'No other notes' },
+  pdf: { title: 'Link a PDF', empty: 'No PDFs' },
+};
 async function openLinkPicker(kind){
   const ta = document.getElementById('mdEditArea');
   mdLinkCursor = { start: ta.selectionStart, end: ta.selectionEnd };
   // A note can't usefully link to itself, so it's excluded from its own
-  // note-link picker (there's nothing wrong with the audio picker ever
+  // note-link picker (there's nothing wrong with the audio/pdf pickers ever
   // matching curId — an item can't be both types at once).
   const items = (await getAll()).filter(it=>it.type === kind && it.id !== curId);
   const list = document.getElementById('audioLinkList');
   const titleEl = document.getElementById('audioLinkTitle');
-  if(titleEl) titleEl.textContent = kind === 'audio' ? 'Link a recording' : 'Link a note';
+  const labels = LINK_PICKER_LABELS[kind] || LINK_PICKER_LABELS.markdown;
+  if(titleEl) titleEl.textContent = labels.title;
   if(!items.length){
-    const emptyLabel = kind === 'audio' ? 'No recordings' : 'No other notes';
-    list.innerHTML = `<div class="alink-empty">${emptyLabel} on your shelf yet — add one first, then come back here to link it into this note.</div>`;
+    list.innerHTML = `<div class="alink-empty">${labels.empty} on your shelf yet — add one first, then come back here to link it into this note.</div>`;
   } else {
     items.sort((a,b)=>(a.category||'').localeCompare(b.category||'') || a.title.localeCompare(b.title, undefined, {numeric:true, sensitivity:'base'}));
     list.innerHTML = items.map(it=>`
@@ -2654,11 +2661,21 @@ function tableToHtml(block){
 // a shelf://<id> link's target type apart at render time — renderMarkdown
 // itself never touches IndexedDB, so callers that want shelf:// links to
 // render correctly must build and pass this first. An id missing from the
-// map (deleted item, or map omitted entirely) falls back to the original
-// audio-widget look, since every shelf:// link was necessarily audio before
-// note-to-note linking existed — the click handler wired in later
-// (wireNoteLinks/wireInlineAudio) is what actually reports "no longer on
-// your shelf" once the user taps it.
+// map (deleted item, or map omitted entirely) renders as the generic jump
+// widget rather than an audio player, since a dead link can't play anything
+// anyway — the click handler wired in later (wireNoteLinks/wireInlineAudio)
+// is what actually reports "no longer on your shelf" once the user taps it.
+// Icon shown on a generic (non-audio) shelf://<id> jump widget, matched to
+// the type colors/emoji used elsewhere in the app (shelf rows, Add sheet).
+// 'markdown' keeps the pre-v1.26.0 look (a plain note-link always rendered
+// this way); 'pdf' is new in v1.26.0; anything else (e.g. 'image', or a
+// deleted item linkTypes has no entry for) falls back to the note glyph
+// rather than guessing — it's still a working jump widget either way, since
+// openNoteLink()/openReader() don't care what the icon looked like.
+function shelfLinkIcon(type){
+  if(type === 'pdf') return '&#128196;';
+  return '&#128220;';
+}
 function renderMarkdown(src, linkTypes){
   linkTypes = linkTypes || {};
   let s = escapeHtml(src);
@@ -2716,8 +2733,8 @@ function renderMarkdown(src, linkTypes){
            + `<div class="inline-time"></div></div>`
            + `<button class="expand" title="Open full player">&#8599;</button></div>`;
     }
-    return `<div class="md-note-link" data-note-id="${match.id}">`
-         + `<span class="note-link-icon">&#128220;</span>`
+    return `<div class="md-note-link${match.type === 'pdf' ? ' pdf-target' : ''}" data-note-id="${match.id}">`
+         + `<span class="note-link-icon">${shelfLinkIcon(match.type)}</span>`
          + `<span class="note-link-title">${label}</span>`
          + `<span class="note-link-go">&#8594;</span></div>`;
   });
@@ -2741,9 +2758,16 @@ function renderMarkdown(src, linkTypes){
     const shelfMatch = trimmedUrl.match(SHELF_LINK);
     if(shelfMatch){
       const id = shelfMatch[1];
-      if(linkTypes[id] === 'markdown'){
-        return `<div class="md-note-link" data-note-id="${id}">`
-             + `<span class="note-link-icon">&#128220;</span>`
+      // Only an audio target gets the inline player widget; everything else
+      // (markdown, pdf, image, or an id missing from linkTypes entirely —
+      // most likely a deleted item) gets the generic jump widget instead.
+      // Before v1.26.0 this branched on `linkTypes[id] === 'markdown'` only,
+      // so a shelf://<id> link to a PDF (or an image) fell through to the
+      // audio-inline branch below and rendered a play button that could
+      // never actually play anything.
+      if(linkTypes[id] !== 'audio'){
+        return `<div class="md-note-link${linkTypes[id] === 'pdf' ? ' pdf-target' : ''}" data-note-id="${id}">`
+             + `<span class="note-link-icon">${shelfLinkIcon(linkTypes[id])}</span>`
              + `<span class="note-link-title">${label}</span>`
              + `<span class="note-link-go">&#8594;</span></div>`;
       }

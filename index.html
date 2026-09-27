@@ -377,15 +377,18 @@
   .md-audio-inline .expand{
     background:none;border:none;color:var(--ink-soft);font-size:14px;padding:6px;line-height:1;flex-shrink:0;
   }
-  /* note-to-note link widget (shelf://<id> pointing at another markdown
-     item) — same shelf://<id> syntax as the audio inline player above, but
-     renderMarkdown tells the two apart via the linkTypes map and picks this
-     look for a markdown target instead */
+  /* Generic "jump to another shelf item" widget (shelf://<id> pointing at
+     a markdown note or, since v1.26.0, a PDF) — same shelf://<id> syntax as
+     the audio inline player above, but renderMarkdown tells them apart via
+     the linkTypes map and picks this look for any non-audio target. Colored
+     with the target's own type accent (--md for a note, --pdf for a PDF) so
+     it reads at a glance which kind of item tapping it will open. */
   .md-note-link{
     display:flex;align-items:center;gap:10px;margin:14px 0;padding:10px 12px;
     border:1px solid var(--line);border-radius:10px;background:var(--card);
     cursor:pointer;color:var(--md);
   }
+  .md-note-link.pdf-target{color:var(--pdf);}
   .md-note-link:active{background:var(--line);}
   .md-note-link .note-link-icon{font-size:15px;flex-shrink:0;}
   .md-note-link .note-link-title{flex:1;min-width:0;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}

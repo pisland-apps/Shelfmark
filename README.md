@@ -7,6 +7,12 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Note → PDF links.** The 📄 button in the note editor toolbar (next to
+  🎵 Audio and 🔗 Note) links to a PDF already on your shelf the same way —
+  inserts `[Title](shelf://<id>)`, and the note reader shows it as a small
+  tappable jump widget (PDF-red accent, matching the app's type colors)
+  instead of a plain link. This is the last of the three `shelf://` target
+  types (audio, note, now PDF); see the Changelog's v1.26.0 entry.
 - **Full-screen lock screen.** On first run you set a passcode (no
   recovery — there's nothing to reset server-side, so write it down). On
   every later visit you must enter it before the shelf is shown.
@@ -117,6 +123,33 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.26.0** (2026-09-28) — Note → PDF links, the last of the three
+  `shelf://` target types (v1.5.6 added note→audio, v1.16.0 added
+  note→note). A new 📄 toolbar button in the note editor opens the same
+  picker/overlay as 🎵 Audio and 🔗 Note, filtered to PDFs, and inserts
+  `[Title](shelf://<id>)` exactly the same way. Rendering and click-through
+  needed no new plumbing — `openNoteLink()`/`wireNoteLinks()` were already
+  type-agnostic (added generically back in v1.16.0), so they open a linked
+  PDF via `openReader()` just like a linked note. What did need fixing:
+  `renderMarkdown`'s `[label](shelf://id)` branch only special-cased
+  `linkTypes[id] === 'markdown'`, so a link to a PDF (or an image) fell
+  through to the audio-inline branch and rendered a play button that could
+  never play anything — a latent bug since note-to-note linking shipped,
+  just never hit because nothing could create a PDF/image shelf-link
+  before now. Fixed by branching on `!== 'audio'` instead, so every
+  non-audio target gets the generic jump widget. That widget is now colored
+  by the target's own type accent (`--md` for a note, `--pdf` for a PDF)
+  instead of always the note-green, so a glance at the link tells you which
+  kind of item it opens. No page-jump — linking to a PDF opens it at
+  wherever its own saved reading-progress last left off (same as opening it
+  from the shelf), same as a note-to-note link opens at the top of the note
+  rather than a specific paragraph. Backlinks ("Linked from…") are
+  unchanged and still note-only in both directions: `renderBacklinks` would
+  happily find a note that links to a PDF (it matches `shelf://<id>` in raw
+  note text regardless of what the id points at), but it's only ever
+  called when opening/saving a *note*, never from the PDF reader — so a
+  PDF's own "who links here" list still doesn't exist. Same gap the audio
+  reader already has today; out of scope for this change.
 - **v1.25.0** (2026-09-28) — Command palette: a 🔍 button in the header, or
   **Ctrl+K**/**⌘K** from anywhere in the app, opens a fuzzy-searchable list
   of app-wide actions — New note, Add item, Import/Export, Browse tags,
