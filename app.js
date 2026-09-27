@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.17.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1309,6 +1309,7 @@ async function openReader(id){
     div.innerHTML = renderMarkdown(it.content, await buildLinkTypeMap());
     wireInlineAudio(div);
     wireNoteLinks(div);
+    wireTagPills(div);
     wireTaskCheckboxes(div);
     await renderBacklinks(id, div);
     const editWrap = document.createElement('div');
@@ -1462,6 +1463,7 @@ async function saveEditNote(){
   mdView.innerHTML = renderMarkdown(text, await buildLinkTypeMap());
   wireInlineAudio(mdView);
   wireNoteLinks(mdView);
+  wireTagPills(mdView);
   wireTaskCheckboxes(mdView);
   await renderBacklinks(curId, mdView); // link targets may have changed
   const it = await getOne(curId);
@@ -1513,6 +1515,137 @@ async function buildLinkTypeMap(){
   const map = {};
   items.forEach(it=>{ map[it.id] = it.type; });
   return map;
+}
+
+// ---- Hashtags (#tag) and the Tags browse page ----
+// Tags live inline in a note's own markdown text (typed as "#word") rather
+// than as a separate field — they coexist with "category" (one category per
+// item, set from the Add/Edit sheet) but a note can carry any number of
+// tags at once, added or removed just by editing its text. Nothing extra is
+// stored: tags are parsed back out of the note content every time they're
+// needed, the same way renderBacklinks() re-scans every note's content
+// rather than keeping a separate index that could drift out of sync.
+//
+// Matched syntax: "#" immediately followed by a letter/digit/underscore
+// (Unicode-aware, so "#工作" and "#idea" both work), then more of the same
+// plus hyphens, up to 50 chars. The lookbehind excludes a "#" that's part of
+// a heading ("# Title" / "## Title" — headings always have a space or
+// another "#" right after, which the lookbehind/match already rule out) or
+// sitting inside a word or URL fragment ("page#section", "C#") by requiring
+// the character immediately before "#" to be neither a word character nor
+// "/" nor another "#".
+const TAG_RE = /(?<![\w/#])#([\p{L}\p{N}_][\p{L}\p{N}_-]{0,49})/gu;
+// Strips fenced and inline code out of the raw text before tag-matching, so
+// a "#" typed inside a code sample (e.g. a shell flag or C# in a snippet)
+// is never picked up as a tag. Only used for extraction — never written
+// back, and never shown to the user.
+function stripCodeForTags(raw){
+  return raw.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`]*`/g, ' ');
+}
+// Every distinct tag in one note, de-duplicated case-insensitively (so
+// "#Idea" and "#idea" count as the same tag) — the first-seen casing is
+// kept only for display; grouping/lookup always uses the lowercase form.
+function extractTags(raw){
+  const seen = new Map(); // lowercase -> original casing, in first-seen order
+  const stripped = stripCodeForTags(raw || '');
+  TAG_RE.lastIndex = 0;
+  let m;
+  while((m = TAG_RE.exec(stripped))){
+    const key = m[1].toLowerCase();
+    if(!seen.has(key)) seen.set(key, m[1]);
+  }
+  return seen;
+}
+// Scans every note on the shelf and groups them by tag — necessarily
+// decrypts each note's content (tags aren't in the unencrypted-per-item
+// metadata), same trade-off renderBacklinks already makes: too slow to do
+// on every keystroke, fine to do once when the Tags page is opened.
+async function buildTagIndex(){
+  const metas = (await getAll()).filter(m=>m.type==='markdown');
+  const index = new Map(); // lowercase tag -> {display, items:[{id,title,category}]}
+  for(const m of metas){
+    let full;
+    try{ full = await getOne(m.id); } catch(err){ continue; } // skip unreadable/corrupt entries
+    if(!full || !full.content) continue;
+    for(const [key, display] of extractTags(full.content)){
+      if(!index.has(key)) index.set(key, { display, items: [] });
+      index.get(key).items.push({ id: full.id, title: full.title, category: full.category });
+    }
+  }
+  return index;
+}
+// Turns "#tag" runs inside already-HTML-escaped, already-code-converted
+// markdown into tappable pills. Must run AFTER the inline-code (`` ` ``)
+// pass above so it can skip over already-produced <code> spans wholesale —
+// splitting on them and only transforming the text between is the same
+// "don't touch what's already code" approach the fenced-code placeholder
+// swap uses further up in renderMarkdown.
+function convertHashtags(html){
+  return html.split(/(<code>[\s\S]*?<\/code>)/).map(part=>{
+    if(part.startsWith('<code>')) return part;
+    return part.replace(TAG_RE, (whole, tag)=>
+      `<button type="button" class="tag-pill" data-tag="${escapeHtml(tag.toLowerCase())}">#${escapeHtml(tag)}</button>`);
+  }).join('');
+}
+// Wires up every tag pill inside a just-rendered note (mirrors
+// wireInlineAudio/wireNoteLinks above) — tapping one jumps straight to the
+// Tags page, already filtered to that tag.
+function wireTagPills(container){
+  container.querySelectorAll('.tag-pill').forEach(el=>{
+    el.onclick = (e)=>{ e.stopPropagation(); openTagsPage(el.dataset.tag); };
+  });
+}
+
+let tagsPageTag = null; // null = showing the full tag list; a lowercase tag = showing its notes
+async function openTagsPage(tag){
+  tagsPageTag = tag || null;
+  document.getElementById('tagsPage').classList.add('open');
+  await renderTagsPage();
+}
+function closeTagsPage(){
+  document.getElementById('tagsPage').classList.remove('open');
+}
+async function renderTagsPage(){
+  const index = await buildTagIndex();
+  const titleEl = document.getElementById('tagsPageTitle');
+  const body = document.getElementById('tagsPageBody');
+
+  if(!tagsPageTag){
+    titleEl.textContent = 'Tags';
+    if(!index.size){
+      body.innerHTML = `<div class="empty"><div class="serif">No tags yet</div>
+        <div>Type "#" followed by a word anywhere in a note to tag it — tagged notes will show up here.</div></div>`;
+      return;
+    }
+    const entries = [...index.entries()].sort((a,b)=>
+      b[1].items.length - a[1].items.length || a[0].localeCompare(b[0]));
+    body.innerHTML = `<div class="tag-cloud">` + entries.map(([key, v])=>
+      `<button type="button" class="tag-chip" data-tag="${escapeHtml(key)}">#${escapeHtml(v.display)}<span class="tag-count">${v.items.length}</span></button>`
+    ).join('') + `</div>`;
+    body.querySelectorAll('.tag-chip').forEach(btn=>{
+      btn.onclick = ()=>{ tagsPageTag = btn.dataset.tag; renderTagsPage(); };
+    });
+    return;
+  }
+
+  const entry = index.get(tagsPageTag);
+  titleEl.textContent = '#' + (entry ? entry.display : tagsPageTag);
+  const backBtnHtml = `<button type="button" class="tag-back" id="tagBackBtn">&larr; All tags</button>`;
+  if(!entry || !entry.items.length){
+    body.innerHTML = backBtnHtml + `<div class="empty"><div class="serif">No notes with this tag anymore</div></div>`;
+  } else {
+    const items = entry.items.slice().sort((a,b)=>a.title.localeCompare(b.title, undefined, {numeric:true, sensitivity:'base'}));
+    body.innerHTML = backBtnHtml + `<div class="shelf">` + items.map(it=>
+      `<div class="spine tag-result-row" data-id="${escapeHtml(it.id)}" style="--t:var(--md);">
+        <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
+        <div class="sub">${escapeHtml(it.category || 'Uncategorized')}</div></div>
+      </div>`
+    ).join('') + `</div>`;
+    body.querySelectorAll('.tag-result-row').forEach(row=>{
+      row.onclick = ()=>{ closeTagsPage(); openReader(row.dataset.id); };
+    });
+  }
+  document.getElementById('tagBackBtn').onclick = ()=>{ tagsPageTag = null; renderTagsPage(); };
 }
 
 // ---- Linking a note to an audio item, or to another note, already on
@@ -1895,6 +2028,12 @@ function renderMarkdown(src, linkTypes){
   s = s.replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>');
   s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
   s = s.replace(/`([^`]+)`/g,'<code>$1</code>');
+  // #tags: converted to tappable pills right after inline code above (so a
+  // "#" typed inside a code span, e.g. `C#`, is skipped) and before the
+  // image/link passes below (so a tag never gets mixed up with `[label](url)`
+  // syntax — see convertHashtags for why splitting on <code> spans is safe
+  // here even though fenced code is still just placeholder tokens).
+  s = convertHashtags(s);
   // Two special link targets get their own inline widget instead of a plain
   // <a>: an audio-file URL plays via a native <audio> element (fetches live
   // over the network — the one place in Shelfmark that does); a shelf://<id>
@@ -2007,6 +2146,7 @@ async function toggleTaskCheckbox(blockIdx, lineIdx){
     mdView.innerHTML = renderMarkdown(newText, await buildLinkTypeMap());
     wireInlineAudio(mdView);
     wireNoteLinks(mdView);
+    wireTagPills(mdView);
     wireTaskCheckboxes(mdView);
     await renderBacklinks(curId, mdView);
   }

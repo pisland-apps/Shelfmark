@@ -181,6 +181,25 @@
   .rtitle{flex:1;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   #rcontent{flex:1;overflow:auto;padding:24px;}
   #rcontent.pad0{padding:0;}
+  /* ---- tags page: same full-screen-overlay pattern as #reader, reusing
+     its .rbar/.back/.rtitle chrome ---- */
+  #tagsPage{position:fixed;inset:0;background:var(--paper);display:none;flex-direction:column;z-index:10;}
+  #tagsPage.open{display:flex;}
+  #tagsPageBody{flex:1;overflow:auto;max-width:640px;width:100%;margin:0 auto;padding:20px;box-sizing:border-box;}
+  .tag-cloud{display:flex;flex-wrap:wrap;gap:8px;}
+  .tag-chip{
+    padding:8px 14px;border-radius:20px;border:1px solid var(--line);background:var(--card);
+    color:var(--ink);font-size:13px;display:flex;align-items:center;gap:6px;
+  }
+  .tag-chip:active{background:var(--line);}
+  .tag-count{font-size:11px;color:var(--ink-soft);background:var(--paper);border-radius:10px;padding:1px 6px;}
+  .tag-back{background:none;border:none;color:var(--md);font-size:14px;padding:0 0 16px;text-align:left;font-family:inherit;}
+  .tag-result-row{cursor:pointer;}
+  /* inline #tag pill inside rendered note text */
+  .tag-pill{
+    display:inline;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:1px 8px;margin:0 1px;font-size:0.92em;color:var(--md);cursor:pointer;font-family:inherit;
+  }
   .bmbtn{background:none;border:none;color:var(--ink-soft);font-size:16px;display:flex;align-items:center;gap:3px;padding:6px;flex-shrink:0;}
   .bmbtn.active{color:var(--audio);}
   .bmpanel{
@@ -506,6 +525,7 @@
       <button class="icon-btn" id="storageBtn" onclick="showStorageDetail()" title="Storage used" style="width:auto;padding:0 10px;font-size:11px;font-family:'SFMono-Regular',Consolas,Menlo,monospace;display:none;">&hellip;</button>
       <button class="icon-btn" id="sortBtn" onclick="toggleSortMode()" title="Sorting items by newest added — tap for A–Z" style="width:auto;padding:0 10px;font-size:12px;">Newest</button>
       <button class="icon-btn" id="loopBtn" onclick="toggleLoopAudio()" title="Loop audio within a category">&#128257;</button>
+      <button class="icon-btn" onclick="openTagsPage()" title="Browse tags">#</button>
       <button class="icon-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="Select multiple items">&#9745;</button>
       <button class="icon-btn" onclick="document.getElementById('importPick').click()" title="Import from JSON">&#8681;</button>
       <button class="icon-btn" onclick="openExportModal()" title="Export shelf as JSON">&#8679;</button>
@@ -678,6 +698,14 @@
   </div>
   <div id="bmPanel" class="bmpanel" style="display:none;"></div>
   <div id="rcontent"></div>
+</div>
+
+<div id="tagsPage">
+  <div class="rbar">
+    <button class="back" onclick="closeTagsPage()">&larr; Shelf</button>
+    <div class="rtitle" id="tagsPageTitle">Tags</div>
+  </div>
+  <div id="tagsPageBody"></div>
 </div>
 
 <script src="app.js"></script>

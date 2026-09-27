@@ -26,6 +26,10 @@ and stored only in your browser's IndexedDB, on your own device.
   before.
 - **Version badge.** Bottom-right corner, visible even on the lock screen
   before you type a passcode. See "Versioning" below.
+- **#Tags, alongside categories.** Type `#word` anywhere in a note's text to
+  tag it — a note can carry any number of tags, on top of its one category.
+  The header's `#` button opens a Tags page: a cloud of every tag in use,
+  tap one to see the notes that carry it.
 
 ## Files
 
