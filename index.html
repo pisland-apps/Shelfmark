@@ -326,6 +326,27 @@
   .md-note-link .note-link-icon{font-size:15px;flex-shrink:0;}
   .md-note-link .note-link-title{flex:1;min-width:0;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .md-note-link .note-link-go{flex-shrink:0;font-size:14px;color:var(--ink-soft);}
+  /* [[Wiki link]] to a title that doesn't (or no longer) match anything on
+     the shelf — shown inline, dashed, in the pdf-red accent so it reads as
+     "broken" without needing a whole separate widget like .md-note-link */
+  .wiki-link-missing{
+    color:var(--pdf);border-bottom:1px dashed var(--pdf);cursor:help;
+  }
+  /* [[ ]] autocomplete dropdown while typing in the note editor — positioned
+     absolutely under the caret by positionWikiAutocomplete(), so it has no
+     fixed home in the normal document flow */
+  .wiki-ac{
+    position:fixed;z-index:50;background:var(--card);border:1px solid var(--line);
+    border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.2);overflow:hidden;
+    max-height:220px;overflow-y:auto;
+  }
+  .wiki-ac-row{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:8px 12px;cursor:pointer;font-size:13px;
+  }
+  .wiki-ac-row.active,.wiki-ac-row:hover{background:var(--paper2);}
+  .wiki-ac-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .wiki-ac-cat{flex-shrink:0;color:var(--ink-soft);font-size:11px;}
   /* "Linked from" backlinks list appended under a note's body — every other
      note whose raw markdown contains a shelf://<thisNoteId> link */
   .backlinks-section{margin:28px 0 8px;padding-top:16px;border-top:1px solid var(--line);}

@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.20.0';
+const APP_VERSION = '1.21.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1401,6 +1401,9 @@ async function openReader(id){
     c.appendChild(div);
     c.appendChild(editWrap);
     document.getElementById('mdEditArea').addEventListener('paste', onNoteEditPaste);
+    document.getElementById('mdEditArea').addEventListener('input', onNoteEditInput);
+    document.getElementById('mdEditArea').addEventListener('keydown', onNoteEditKeydown);
+    document.getElementById('mdEditArea').addEventListener('blur', closeWikiAutocomplete);
     if(it.progress && it.progress.scroll) c.scrollTop = it.progress.scroll;
     c.onscroll = ()=>{ clearTimeout(c._t); c._t = setTimeout(()=>saveProgress({scroll:c.scrollTop}), 400); };
     document.getElementById('bmBtn').style.display = 'flex';
@@ -1602,6 +1605,7 @@ function startEditNote(){
   document.getElementById('mdEditArea').focus();
 }
 function cancelEditNote(){
+  closeWikiAutocomplete();
   document.getElementById('mdEditWrap').style.display = 'none';
   document.getElementById('mdView').style.display = 'block';
   document.getElementById('bmBtn').style.display = 'flex';
@@ -1656,11 +1660,14 @@ function wireNoteLinks(container){
     el.onclick = (e)=>{ e.stopPropagation(); openNoteLink(id); };
   });
 }
+// Used both by shelf://<id> note-links (v1.16.0, markdown targets only) and
+// by [[Wiki links]] (any target type — see renderMarkdown) sharing the same
+// .md-note-link widget: type-agnostic existence check, then just open it.
 async function openNoteLink(id){
   const items = await getAll();
   const target = items.find(it=>it.id === id);
-  if(!target || target.type !== 'markdown'){
-    alert("This linked note isn't on your shelf anymore — it may have been deleted.");
+  if(!target){
+    alert("This linked item isn't on your shelf anymore — it may have been deleted.");
     return;
   }
   openReader(id);
@@ -1670,10 +1677,25 @@ async function openNoteLink(id){
 // touches encrypted file content) — renderMarkdown uses this to tell a
 // shelf://<id> link's target type apart so it can render an audio widget
 // vs. a note-link widget without decrypting anything itself.
+// Also carries a title -> item index (as a non-enumerable-looking extra
+// property, __byTitle) for [[Wiki links]] below — same getAll() call, no
+// extra IndexedDB round trip, and every existing map[id] lookup is
+// unaffected since no real item id is ever the literal string "__byTitle".
+// Keyed by the ESCAPED, lowercased title (same escapeHtml() the renderer
+// already ran on the raw source), so a title containing &, <, >, or quotes
+// still matches what a [[Wiki link]] typed against that title looks like
+// post-escape. First item wins on a duplicate title, same "first match"
+// ambiguity Obsidian itself has.
 async function buildLinkTypeMap(){
   const items = await getAll();
   const map = {};
-  items.forEach(it=>{ map[it.id] = it.type; });
+  const byTitle = new Map();
+  items.forEach(it=>{
+    map[it.id] = it.type;
+    const key = escapeHtml((it.title||'').trim()).toLowerCase();
+    if(key && !byTitle.has(key)) byTitle.set(key, it);
+  });
+  map.__byTitle = byTitle;
   return map;
 }
 
@@ -1862,7 +1884,133 @@ function insertShelfLink(id, title){
   ta.setSelectionRange(newPos, newPos);
 }
 
-// ---- Backlinks ("which notes link to me") ----
+// ---- [[Wiki link]] autocomplete ----
+// Triggered by typing "[[" in the note editor: a small dropdown of matching
+// item titles appears, filtered as you keep typing, navigable with
+// Arrow/Enter/Tab/Escape. Distinct from the 🔗 picker above (openLinkPicker)
+// — that inserts a `[Title](shelf://<id>)` link via button + full-list
+// overlay; this is the lighter, type-to-filter Obsidian-style flow that
+// resolves by title at render time (see renderMarkdown) rather than
+// freezing to an id the moment it's inserted.
+let wikiAC = { open:false, start:-1, items:[], activeIndex:0 };
+let wikiACToken = 0;
+function closeWikiAutocomplete(){
+  wikiACToken++; // invalidate any in-flight query, so it can't land after this
+  wikiAC.open = false;
+  const el = document.getElementById('wikiAutocomplete');
+  if(el) el.remove();
+}
+async function updateWikiAutocomplete(){
+  const ta = document.getElementById('mdEditArea');
+  if(!ta) return;
+  const pos = ta.selectionStart;
+  const value = ta.value;
+  // Only the current line, only up to the caret — an already-closed [[..]]
+  // earlier in the line (or note) has both brackets and so can't satisfy
+  // this pattern, meaning it can never re-open the dropdown.
+  const lineStart = value.lastIndexOf('\n', pos-1) + 1;
+  const beforeCaret = value.slice(lineStart, pos);
+  const m = beforeCaret.match(/\[\[([^\[\]|]*)$/);
+  if(!m){ closeWikiAutocomplete(); return; }
+  const query = m[1].toLowerCase();
+  const start = lineStart + (beforeCaret.length - m[0].length);
+  const myToken = ++wikiACToken;
+  const items = (await getAll())
+    .filter(it => it.title && it.title.toLowerCase().includes(query))
+    .sort((a,b)=>{
+      const aStarts = a.title.toLowerCase().startsWith(query), bStarts = b.title.toLowerCase().startsWith(query);
+      if(aStarts !== bStarts) return aStarts ? -1 : 1;
+      return a.title.localeCompare(b.title, undefined, {numeric:true, sensitivity:'base'});
+    })
+    .slice(0, 8);
+  // A faster, later keystroke (or a blur/close) may have already moved on
+  // while getAll() was resolving — drop this stale result rather than
+  // showing it after the fact.
+  if(myToken !== wikiACToken) return;
+  if(document.getElementById('mdEditArea') !== ta) return;
+  wikiAC = { open:true, start, items, activeIndex:0 };
+  renderWikiAutocomplete();
+}
+function renderWikiAutocomplete(){
+  const ta = document.getElementById('mdEditArea');
+  let el = document.getElementById('wikiAutocomplete');
+  if(!wikiAC.open || !wikiAC.items.length){ if(el) el.remove(); return; }
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'wikiAutocomplete';
+    el.className = 'wiki-ac';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = wikiAC.items.map((it,i)=>`
+    <div class="wiki-ac-row${i===wikiAC.activeIndex ? ' active' : ''}" data-i="${i}">
+      <span class="wiki-ac-title">${escapeHtml(it.title)}</span>
+      <span class="wiki-ac-cat">${escapeHtml(it.category || 'Uncategorized')}</span>
+    </div>`).join('');
+  el.querySelectorAll('.wiki-ac-row').forEach(row=>{
+    // mousedown (not click) + preventDefault so picking a row never blurs
+    // the textarea first — a blur would otherwise close this dropdown out
+    // from under the click before it registers.
+    row.onmousedown = (e)=>{ e.preventDefault(); selectWikiAutocomplete(Number(row.dataset.i)); };
+  });
+  positionWikiAutocomplete(ta, el);
+}
+// Mirrors the textarea's own text-affecting styles into a hidden div holding
+// the text up to the caret, then reads that div's trailing span's offset —
+// the standard "textarea caret coordinates" trick, since neither the DOM nor
+// CSS otherwise exposes where a caret actually sits inside a <textarea>.
+function caretPixelPosition(ta, pos){
+  const div = document.createElement('div');
+  const cs = window.getComputedStyle(ta);
+  ['boxSizing','width','fontFamily','fontSize','fontWeight','lineHeight','letterSpacing',
+   'paddingTop','paddingRight','paddingBottom','paddingLeft','borderTopWidth','borderLeftWidth',
+   'whiteSpace','wordWrap'].forEach(p=>{ div.style[p] = cs[p]; });
+  div.style.whiteSpace = 'pre-wrap';
+  div.style.wordWrap = 'break-word';
+  div.style.position = 'absolute';
+  div.style.visibility = 'hidden';
+  div.style.height = 'auto';
+  document.body.appendChild(div);
+  div.textContent = ta.value.slice(0, pos);
+  const span = document.createElement('span');
+  span.textContent = ta.value.slice(pos) || '.';
+  div.appendChild(span);
+  const top = span.offsetTop, left = span.offsetLeft;
+  document.body.removeChild(div);
+  return { top, left, lineHeight: parseInt(cs.lineHeight) || 20 };
+}
+function positionWikiAutocomplete(ta, el){
+  const rect = ta.getBoundingClientRect();
+  const caret = caretPixelPosition(ta, wikiAC.start);
+  const top = rect.top - ta.scrollTop + caret.top + caret.lineHeight + 4;
+  const left = rect.left - ta.scrollLeft + caret.left;
+  el.style.top = Math.min(top, window.innerHeight - 60) + 'px';
+  el.style.left = Math.min(left, window.innerWidth - 240) + 'px';
+  el.style.width = '220px';
+}
+function selectWikiAutocomplete(i){
+  const item = wikiAC.items[i];
+  if(!item) return;
+  const ta = document.getElementById('mdEditArea');
+  const pos = ta.selectionStart;
+  const before = ta.value.slice(0, wikiAC.start);
+  const after = ta.value.slice(pos);
+  const insertion = `[[${item.title.replace(/[[\]]/g,'')}]]`;
+  ta.value = before + insertion + after;
+  const newPos = before.length + insertion.length;
+  ta.focus();
+  ta.setSelectionRange(newPos, newPos);
+  closeWikiAutocomplete();
+}
+function onNoteEditInput(){ updateWikiAutocomplete(); }
+function onNoteEditKeydown(e){
+  if(!wikiAC.open || !wikiAC.items.length) return;
+  if(e.key === 'ArrowDown'){ e.preventDefault(); wikiAC.activeIndex = (wikiAC.activeIndex+1) % wikiAC.items.length; renderWikiAutocomplete(); }
+  else if(e.key === 'ArrowUp'){ e.preventDefault(); wikiAC.activeIndex = (wikiAC.activeIndex-1+wikiAC.items.length) % wikiAC.items.length; renderWikiAutocomplete(); }
+  else if(e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); selectWikiAutocomplete(wikiAC.activeIndex); }
+  else if(e.key === 'Escape'){ e.preventDefault(); closeWikiAutocomplete(); }
+}
+
+
 // Scans every OTHER note's raw markdown for a shelf://<thisId> reference and
 // lists whoever links here, appended under the note body. This has to
 // decrypt every other note's content to search it — the same cost the
@@ -2200,6 +2348,7 @@ function updateOutlineUI(outline){
 }
 
 function closeReader(){
+  closeWikiAutocomplete();
   document.getElementById('reader').classList.remove('open');
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
   if(curPdfDoc){ curPdfDoc.loadingTask.destroy(); curPdfDoc = null; }
@@ -2277,6 +2426,38 @@ function renderMarkdown(src, linkTypes){
   // syntax — see convertHashtags for why splitting on <code> spans is safe
   // here even though fenced code is still just placeholder tokens).
   s = convertHashtags(s);
+  // [[Wiki links]] — Obsidian-style: link by the OTHER item's exact title
+  // (case-insensitive), not its id, with an optional [[Title|Alias]] display
+  // override. Resolved fresh against linkTypes.__byTitle on every render, so
+  // — unlike a `[Title](shelf://<id>)` link, which is frozen to that id the
+  // moment it's inserted — renaming the TARGET item never breaks it; only
+  // renaming/deleting the title the link itself refers to does, and that's
+  // shown as a distinct "missing" pill rather than silently looking fine.
+  // Must run before the `[label](url)` pass below only as a precaution —
+  // `[[Title]]` has no trailing `(url)` so that regex was never actually
+  // going to match it, but resolving wiki-links to real widget HTML first
+  // keeps the two passes clearly separated.
+  s = s.replace(/\[\[([^\[\]]+)\]\]/g, (_, inner)=>{
+    const bar = inner.indexOf('|');
+    const rawTitle = (bar === -1 ? inner : inner.slice(0, bar)).trim();
+    const label = (bar === -1 ? inner : inner.slice(bar+1)).trim();
+    const match = linkTypes.__byTitle && linkTypes.__byTitle.get(rawTitle.toLowerCase());
+    if(!match){
+      return `<span class="wiki-link-missing" title="No item titled &quot;${rawTitle}&quot; on your shelf">[[${label}]]</span>`;
+    }
+    if(match.type === 'audio'){
+      return `<div class="md-audio-inline" data-audio-id="${match.id}">`
+           + `<button class="inline-play">&#9658;</button>`
+           + `<div class="meta"><div class="title">${label}</div>`
+           + `<div class="inline-bar"><div class="inline-bar-fill"></div></div>`
+           + `<div class="inline-time"></div></div>`
+           + `<button class="expand" title="Open full player">&#8599;</button></div>`;
+    }
+    return `<div class="md-note-link" data-note-id="${match.id}">`
+         + `<span class="note-link-icon">&#128220;</span>`
+         + `<span class="note-link-title">${label}</span>`
+         + `<span class="note-link-go">&#8594;</span></div>`;
+  });
   // Two special link targets get their own inline widget instead of a plain
   // <a>: an audio-file URL plays via a native <audio> element (fetches live
   // over the network — the one place in Shelfmark that does); a shelf://<id>
