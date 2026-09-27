@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1439,6 +1439,33 @@ function insertAudioLink(id, title){
   ta.setSelectionRange(newPos, newPos);
 }
 
+// ---- Copy button on fenced code blocks ----
+// Reads straight from the rendered <code> element's textContent rather than
+// keeping a separate raw copy anywhere — the browser has already turned any
+// escaped entities (&lt; etc.) back into their literal characters by the
+// time this runs, so it's just the original code, verbatim.
+async function copyCodeBlock(btn){
+  const codeEl = btn.closest('.code-block').querySelector('code');
+  const text = codeEl.textContent;
+  try{
+    await navigator.clipboard.writeText(text);
+  } catch(err){
+    // Clipboard API can be unavailable (e.g. a non-secure context) — fall
+    // back to the old select-and-execCommand trick.
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try{ document.execCommand('copy'); } catch(e2){ /* best-effort only */ }
+    document.body.removeChild(ta);
+  }
+  const original = btn.textContent;
+  btn.textContent = 'Copied!';
+  btn.classList.add('copied');
+  clearTimeout(btn._copyTimer);
+  btn._copyTimer = setTimeout(()=>{ btn.textContent = original; btn.classList.remove('copied'); }, 1500);
+}
+
 // ---- Inserting a picture into a note ----
 // Embedded directly as a resized/compressed data: URI right in the note's
 // own (encrypted) markdown text — same idea as the item cover image, just
@@ -1579,7 +1606,24 @@ function tableToHtml(block){
 // minimal markdown renderer
 function renderMarkdown(src){
   let s = escapeHtml(src);
-  s = s.replace(/```([\s\S]*?)```/g, (_,c)=>`<pre><code>${c.trim()}</code></pre>`);
+  // Fenced code blocks are pulled out into placeholder tokens FIRST, before
+  // any other regex runs, and only spliced back in as real HTML at the very
+  // end (see the `codeBlocks` replace below). Otherwise a snippet containing
+  // "**" or a stray backtick — completely normal in real code — would get
+  // mangled by the bold/italic/inline-code passes that run on the rest of
+  // `s` afterwards. `\u0000` can't appear in normal note text, so it's a
+  // safe marker.
+  const codeBlocks = [];
+  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code)=>{
+    const langLabel = lang ? escapeHtml(lang) : '';
+    codeBlocks.push(
+      `<div class="code-block">`
+      + `<div class="code-bar"><span class="code-lang">${langLabel}</span>`
+      + `<button class="code-copy" onclick="copyCodeBlock(this)">Copy</button></div>`
+      + `<pre><code>${code.trim()}</code></pre></div>`
+    );
+    return `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
+  });
   s = s.replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>');
   s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
   s = s.replace(/`([^`]+)`/g,'<code>$1</code>');
@@ -1616,10 +1660,15 @@ function renderMarkdown(src){
     }
     return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`;
   });
+  // Splice the real code-block HTML back in now that every other pass —
+  // which would have mangled ** / ` / [..](..) if they'd appeared inside a
+  // code sample — has already run.
+  codeBlocks.forEach((html, i)=>{ s = s.replace(`\u0000CODEBLOCK${i}\u0000`, html); });
   return s.split(/\n{2,}/).map((block,idx)=>{
     let html;
     if(/^<h[123]|^<pre/.test(block)) html = block;
     else if(/^<div class="md-audio/.test(block)) html = block;
+    else if(/^<div class="code-block"/.test(block)) html = block;
     else if(/^<img class="md-img"/.test(block)) html = block;
     else if(looksLikeTable(block)) html = tableToHtml(block);
     else if(/^\s*&gt;/.test(block) && block.split('\n').every(l=>!l.trim() || /^\s*&gt;/.test(l))){

@@ -86,6 +86,16 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.12.0** (2026-09-27) — Fenced code blocks are now a proper Obsidian-
+  style widget instead of a plain `<pre>`: write ```` ```js ```` (any language
+  tag, or none) and the note reader shows a small bar above the code with
+  the language name and a **Copy** button that copies the exact code text to
+  the clipboard (falls back to the older `execCommand` copy trick if the
+  Clipboard API isn't available). Under the hood, fenced blocks are now
+  pulled out into placeholders before the bold/italic/inline-code/link
+  passes run and spliced back in afterwards — previously a code sample
+  containing `**` or a stray backtick (completely normal in real code)
+  could get corrupted by those passes; now it's rendered byte-for-byte.
 - **v1.11.0** (2026-09-27) — Notes are now a real notepad, not just an
   import target:
   - **Start a blank note.** The Add sheet now offers "📝 Start a blank

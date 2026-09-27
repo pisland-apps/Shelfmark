@@ -215,6 +215,22 @@
   .ebar-actions .save{background:var(--ink);color:var(--paper);}
   .mdbody pre{background:var(--card);padding:12px;border-radius:6px;overflow:auto;font-size:13px;}
   .mdbody code{background:var(--card);padding:2px 5px;border-radius:4px;font-size:.9em;}
+  .mdbody pre code{background:none;padding:0;border-radius:0;font-size:1em;}
+  .code-block{margin:14px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+  .code-block pre{margin:0;border-radius:0;}
+  .code-bar{
+    display:flex;align-items:center;justify-content:space-between;gap:8px;
+    padding:6px 10px;background:var(--card);border-bottom:1px solid var(--line);
+  }
+  .code-lang{
+    font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:11px;
+    text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);
+  }
+  .code-copy{
+    background:transparent;border:1px solid var(--line);border-radius:6px;
+    color:var(--ink-soft);font-size:12px;padding:3px 9px;cursor:pointer;
+  }
+  .code-copy.copied{color:var(--ink);border-color:var(--ink);}
   .mdbody a{color:var(--md);}
   .mdbody blockquote{
     margin:14px 0; padding:2px 16px; border-left:3px solid var(--line);
