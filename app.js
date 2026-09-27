@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.22.0';
+const APP_VERSION = '1.23.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -869,10 +869,14 @@ async function saveItem(){
 // "I just want to jot something down right now". The note can still be
 // retitled and re-categorized afterwards from the note's own edit view like
 // any other item.
-async function quickNewNote(){
+// `title` is optional (the header button calls this with none, falling back
+// to "Untitled note") — an unresolved [[Wiki link]]'s missing-link pill also
+// calls this, passing the exact title it was written with, so a link-first
+// note gets created under the title the link already expects.
+async function quickNewNote(title){
   const item = {
     id: Date.now()+'-'+Math.random().toString(36).slice(2),
-    title: 'Untitled note', category: 'Uncategorized', type: 'markdown',
+    title: (title && title.trim()) || 'Untitled note', category: 'Uncategorized', type: 'markdown',
     content: '', mime: 'text/markdown',
     addedAt: Date.now(), progress: null
   };
@@ -1103,6 +1107,11 @@ async function render(){
   if(selectMode) updateSelectBar();
 }
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Inverse of escapeHtml — needed wherever text that renderMarkdown already
+// escaped (e.g. a [[Wiki link]]'s title, kept escaped so it matches
+// buildLinkTypeMap's __byTitle keys) has to go back to plain text to be
+// stored as a real field, like a new note's title.
+function unescapeHtml(s){ return s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e)=>({amp:'&',lt:'<',gt:'>',quot:'"','#39':"'"}[e])); }
 function isValidCoverDataUrl(s){
   return typeof s === 'string' && /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(s);
 }
@@ -1376,6 +1385,7 @@ async function openReader(id){
     div.innerHTML = renderMarkdown(it.content, await buildLinkTypeMap());
     wireInlineAudio(div);
     wireNoteLinks(div);
+    wireMissingWikiLinks(div);
     wireTagPills(div);
     wireTaskCheckboxes(div);
     wireParagraphEdit(div);
@@ -1747,6 +1757,7 @@ async function saveEditNote(){
   mdView.innerHTML = renderMarkdown(text, await buildLinkTypeMap());
   wireInlineAudio(mdView);
   wireNoteLinks(mdView);
+  wireMissingWikiLinks(mdView);
   wireTagPills(mdView);
   wireTaskCheckboxes(mdView);
   wireParagraphEdit(mdView);
@@ -1780,6 +1791,23 @@ function wireNoteLinks(container){
   container.querySelectorAll('.md-note-link').forEach(el=>{
     const id = el.dataset.noteId;
     el.onclick = (e)=>{ e.stopPropagation(); openNoteLink(id); };
+  });
+}
+// Wires up every unresolved [[Wiki link]] pill (.wiki-link-missing) inside a
+// just-rendered note — tapping one creates a brand-new note titled exactly
+// what was written inside the brackets and jumps straight into its editor
+// (same as quickNewNote's own header-button shortcut, just pre-titled).
+// Closes the "link now, write later" loop: this note's own [[Title]] link,
+// and any other note's, resolves to a working .md-note-link the very next
+// time it renders, since renderMarkdown looks titles up fresh every render
+// (buildLinkTypeMap/__byTitle) rather than freezing to an id up front — no
+// separate patch-up step needed once the title exists.
+function wireMissingWikiLinks(container){
+  container.querySelectorAll('.wiki-link-missing').forEach(el=>{
+    el.onclick = (e)=>{
+      e.stopPropagation();
+      quickNewNote(unescapeHtml(el.dataset.title));
+    };
   });
 }
 // Used both by shelf://<id> note-links (v1.16.0, markdown targets only) and
@@ -2565,7 +2593,7 @@ function renderMarkdown(src, linkTypes){
     const label = (bar === -1 ? inner : inner.slice(bar+1)).trim();
     const match = linkTypes.__byTitle && linkTypes.__byTitle.get(rawTitle.toLowerCase());
     if(!match){
-      return `<span class="wiki-link-missing" title="No item titled &quot;${rawTitle}&quot; on your shelf">[[${label}]]</span>`;
+      return `<button type="button" class="wiki-link-missing" data-title="${rawTitle}" title="No item titled &quot;${rawTitle}&quot; on your shelf — tap to create it">[[${label}]]</button>`;
     }
     if(match.type === 'audio'){
       return `<div class="md-audio-inline" data-audio-id="${match.id}">`
@@ -2692,6 +2720,7 @@ async function toggleTaskCheckbox(blockIdx, lineIdx){
     mdView.innerHTML = renderMarkdown(newText, await buildLinkTypeMap());
     wireInlineAudio(mdView);
     wireNoteLinks(mdView);
+    wireMissingWikiLinks(mdView);
     wireTagPills(mdView);
     wireTaskCheckboxes(mdView);
     wireParagraphEdit(mdView);

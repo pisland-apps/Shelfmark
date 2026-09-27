@@ -349,10 +349,16 @@
   .md-note-link .note-link-go{flex-shrink:0;font-size:14px;color:var(--ink-soft);}
   /* [[Wiki link]] to a title that doesn't (or no longer) match anything on
      the shelf — shown inline, dashed, in the pdf-red accent so it reads as
-     "broken" without needing a whole separate widget like .md-note-link */
+     "broken" without needing a whole separate widget like .md-note-link.
+     It's a real <button> (see wireMissingWikiLinks): tapping it creates a
+     note titled exactly what's inside the brackets and jumps into it, so
+     the dashed underline reads as "not made yet — tap to create" rather
+     than a dead end. */
   .wiki-link-missing{
-    color:var(--pdf);border-bottom:1px dashed var(--pdf);cursor:help;
+    display:inline;border:none;background:none;padding:0;margin:0;
+    font:inherit;color:var(--pdf);border-bottom:1px dashed var(--pdf);cursor:pointer;
   }
+  .wiki-link-missing:active{opacity:.7;}
   /* [[ ]] autocomplete dropdown while typing in the note editor — positioned
      absolutely under the caret by positionWikiAutocomplete(), so it has no
      fixed home in the normal document flow */
