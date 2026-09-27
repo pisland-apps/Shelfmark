@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.23.2';
+const APP_VERSION = '1.24.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1395,6 +1395,8 @@ async function openReader(id){
     editWrap.innerHTML = `<textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
       <div class="ebar">
         <div class="ebar-tools">
+          <button class="tool" id="undoBtn" onclick="undoEdit()" title="Undo">&#8617;</button>
+          <button class="tool" id="redoBtn" onclick="redoEdit()" title="Redo">&#8618;</button>
           <button class="tool" onclick="toggleBoldAtSelection()" title="Bold"><b>B</b></button>
           <button class="tool" onclick="toggleHeadingAtLine()" title="Heading">H</button>
           <button class="tool" onclick="insertDivider()" title="Insert divider">&#8213;</button>
@@ -1614,6 +1616,92 @@ function startEditNote(){
   document.getElementById('outlineBtn').style.display = 'none';
   document.getElementById('editNoteBtn').classList.add('active');
   document.getElementById('mdEditArea').focus();
+  resetUndoHistory();
+}
+// ---- Undo/Redo for the note editor textarea ----
+// Assigning straight to ta.value (every toolbar button and autocomplete
+// insert above does this) silently wipes the browser's own native undo
+// stack, so Ctrl+Z stopped doing anything useful the moment any of those
+// touched the textarea. This is a small undo/redo stack of our own instead:
+// a snapshot is pushed before every programmatic edit (one snapshot = one
+// undo step, so a toolbar action reverses in a single Undo), and plain
+// typing is grouped into a step per pause rather than per keystroke, the
+// same granularity most text editors use.
+let undoStack = [];
+let redoStack = [];
+let undoTypingTimer = null;
+const UNDO_TYPING_PAUSE_MS = 500;
+const UNDO_MAX_STEPS = 100;
+function undoSnapshotNow(){
+  const ta = document.getElementById('mdEditArea');
+  return { value: ta.value, start: ta.selectionStart, end: ta.selectionEnd };
+}
+function resetUndoHistory(){
+  clearTimeout(undoTypingTimer);
+  undoStack = [undoSnapshotNow()];
+  redoStack = [];
+  updateUndoRedoButtons();
+}
+function updateUndoRedoButtons(){
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+  if(undoBtn) undoBtn.disabled = undoStack.length < 2;
+  if(redoBtn) redoBtn.disabled = redoStack.length === 0;
+}
+// Call before any programmatic change to ta.value (toolbar buttons, link/
+// image/wiki-link inserts) so that change becomes its own undo step.
+function pushUndoBeforeEdit(){
+  clearTimeout(undoTypingTimer);
+  const ta = document.getElementById('mdEditArea');
+  const top = undoStack[undoStack.length - 1];
+  if(!top || top.value !== ta.value){
+    undoStack.push(undoSnapshotNow());
+    if(undoStack.length > UNDO_MAX_STEPS) undoStack.shift();
+  }
+  redoStack = [];
+  updateUndoRedoButtons();
+}
+// Called on every keystroke from onNoteEditInput; only actually snapshots
+// after a pause in typing, so a burst of keystrokes undoes as one step.
+function noteTypingForUndo(){
+  redoStack = [];
+  clearTimeout(undoTypingTimer);
+  undoTypingTimer = setTimeout(()=>{
+    const ta = document.getElementById('mdEditArea');
+    const top = undoStack[undoStack.length - 1];
+    if(!top || top.value !== ta.value){
+      undoStack.push(undoSnapshotNow());
+      if(undoStack.length > UNDO_MAX_STEPS) undoStack.shift();
+    }
+    updateUndoRedoButtons();
+  }, UNDO_TYPING_PAUSE_MS);
+}
+function applyUndoSnapshot(s){
+  const ta = document.getElementById('mdEditArea');
+  ta.value = s.value;
+  ta.focus();
+  ta.setSelectionRange(s.start, s.end);
+}
+function undoEdit(){
+  clearTimeout(undoTypingTimer);
+  const ta = document.getElementById('mdEditArea');
+  if(!ta || ta.closest('#mdEditWrap').style.display === 'none') return;
+  // Flush whatever's been typed since the last snapshot so Undo steps back
+  // from right now, not from wherever the debounce last landed.
+  const top = undoStack[undoStack.length - 1];
+  if(!top || top.value !== ta.value) undoStack.push(undoSnapshotNow());
+  if(undoStack.length < 2) return; // nothing earlier to go back to
+  redoStack.push(undoStack.pop());
+  applyUndoSnapshot(undoStack[undoStack.length - 1]);
+  updateUndoRedoButtons();
+}
+function redoEdit(){
+  clearTimeout(undoTypingTimer);
+  if(!redoStack.length) return;
+  const s = redoStack.pop();
+  undoStack.push(s);
+  applyUndoSnapshot(s);
+  updateUndoRedoButtons();
 }
 // Same block split renderMarkdown uses (blank-line separated), but returns
 // each block's [start,end] character offset instead of its text — lets
@@ -2033,6 +2121,7 @@ function closeAudioLinkPicker(){
   document.getElementById('audioLinkOverlay').style.display = 'none';
 }
 function insertShelfLink(id, title){
+  pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
   // Square brackets in the title would break the [label] part of the link
   // syntax — strip them from the inserted label only, the stored item title
@@ -2153,6 +2242,7 @@ function positionWikiAutocomplete(ta, el){
 function selectWikiAutocomplete(i){
   const item = wikiAC.items[i];
   if(!item) return;
+  pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
   const pos = ta.selectionStart;
   const before = ta.value.slice(0, wikiAC.start);
@@ -2164,8 +2254,12 @@ function selectWikiAutocomplete(i){
   ta.setSelectionRange(newPos, newPos);
   closeWikiAutocomplete();
 }
-function onNoteEditInput(){ updateWikiAutocomplete(); }
+function onNoteEditInput(){ updateWikiAutocomplete(); noteTypingForUndo(); }
 function onNoteEditKeydown(e){
+  const isUndoKey = (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z';
+  const isRedoKey = (e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'));
+  if(isUndoKey && !(wikiAC.open && wikiAC.items.length)){ e.preventDefault(); undoEdit(); return; }
+  if(isRedoKey && !(wikiAC.open && wikiAC.items.length)){ e.preventDefault(); redoEdit(); return; }
   if(!wikiAC.open || !wikiAC.items.length) return;
   if(e.key === 'ArrowDown'){ e.preventDefault(); wikiAC.activeIndex = (wikiAC.activeIndex+1) % wikiAC.items.length; renderWikiAutocomplete(); }
   else if(e.key === 'ArrowUp'){ e.preventDefault(); wikiAC.activeIndex = (wikiAC.activeIndex-1+wikiAC.items.length) % wikiAC.items.length; renderWikiAutocomplete(); }
@@ -2255,6 +2349,7 @@ async function insertNoteImageFile(f){
   try{ dataUrl = await resizeCoverImage(f, 900, 0.82); }
   catch(err){ alert("Couldn't use that image \u2014 try a different file."); return; }
   curNoteImageRefs.push(dataUrl);
+  pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
   const start = ta.selectionStart, end = ta.selectionEnd;
   const md = `![image ${curNoteImageRefs.length}](img:${curNoteImageRefs.length})\n`;
@@ -2292,6 +2387,7 @@ function onNoteEditPaste(e){
 // **bold text** placeholder with the words pre-selected so typing replaces
 // them, same as most rich editors do for an empty bold toggle).
 function toggleBoldAtSelection(){
+  pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
   const start = ta.selectionStart, end = ta.selectionEnd;
   const selected = ta.value.slice(start, end);
@@ -2305,6 +2401,7 @@ function toggleBoldAtSelection(){
 // headed line removes it rather than stacking another #, so the button
 // behaves like an on/off switch rather than only ever adding more.
 function toggleHeadingAtLine(){
+  pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
   const value = ta.value;
   const pos = ta.selectionStart;
@@ -2331,6 +2428,7 @@ function toggleHeadingAtLine(){
 // (which splits on blank lines) sees it as its own block and turns it into
 // an <hr> rather than folding it into a neighboring paragraph.
 function insertDivider(){
+  pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
   const start = ta.selectionStart, end = ta.selectionEnd;
   const needsLeadingBreak = start > 0 && ta.value[start-1] !== '\n';
@@ -2345,6 +2443,7 @@ function insertDivider(){
 // one) so jotting several timestamped lines in a row doesn't leave a blank
 // paragraph between every single one.
 function insertTimestamp(){
+  pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
   const start = ta.selectionStart, end = ta.selectionEnd;
   const needsLeadingBreak = start > 0 && ta.value[start-1] !== '\n';
@@ -2358,6 +2457,7 @@ function insertTimestamp(){
   ta.setSelectionRange(newPos, newPos);
 }
 function insertTableTemplate(){
+  pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
   const start = ta.selectionStart, end = ta.selectionEnd;
   const needsLeadingBreak = start > 0 && ta.value[start-1] !== '\n';
@@ -2674,8 +2774,30 @@ function renderMarkdown(src, linkTypes){
     else if(looksLikeTable(block)) html = tableToHtml(block);
     else if(/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(block)) html = '<hr>';
     else if(/^\s*&gt;/.test(block) && block.split('\n').every(l=>!l.trim() || /^\s*&gt;/.test(l))){
-      const inner = block.split('\n').filter(l=>l.trim()).map(l=>l.replace(/^\s*&gt;\s?/,'')).join('<br>');
-      html = `<blockquote>${inner}</blockquote>`;
+      const lines = block.split('\n').filter(l=>l.trim()).map(l=>l.replace(/^\s*&gt;\s?/,''));
+      // Obsidian-style callout: a blockquote whose first line is
+      // "[!type] Optional title" renders as a colored card instead of a
+      // plain quote. Reuses the same --pdf/--md/--img/--audio palette the
+      // rest of the app already uses for item-type accents, so callouts
+      // read as part of the same visual system rather than a new one.
+      const calloutMatch = lines[0] && lines[0].match(/^\[!(\w+)\]\s*(.*)$/);
+      if(calloutMatch){
+        const kind = calloutMatch[1].toLowerCase();
+        const CALLOUT_INFO = {
+          note:    { icon:'&#128221;', label:'Note' },
+          warning: { icon:'&#9888;&#65039;', label:'Warning' },
+          idea:    { icon:'&#128161;', label:'Idea' }
+        };
+        const info = CALLOUT_INFO[kind] || { icon:'&#128204;', label: kind.charAt(0).toUpperCase()+kind.slice(1) };
+        const titleText = calloutMatch[2].trim() || info.label;
+        const bodyHtml = lines.slice(1).join('<br>');
+        html = `<div class="callout callout-${/^(note|warning|idea)$/.test(kind) ? kind : 'other'}">`
+             + `<div class="callout-title"><span class="callout-icon">${info.icon}</span>${titleText}</div>`
+             + (bodyHtml ? `<div class="callout-body">${bodyHtml}</div>` : '')
+             + `</div>`;
+      } else {
+        html = `<blockquote>${lines.join('<br>')}</blockquote>`;
+      }
     }
     else if(/^\s*\d+\.\s+/.test(block)){
       const items = block.split('\n').filter(l=>l.trim()).map(l=>`<li>${l.replace(/^\s*\d+\.\s+/,'')}</li>`).join('');
