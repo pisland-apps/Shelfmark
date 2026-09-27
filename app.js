@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.19.1';
+const APP_VERSION = '1.20.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -194,6 +194,12 @@ function expandImagesForSave(text){
 // renderPdfPage() takes the current token, and only applies its result if
 // the token is still current when the async render finishes.
 let curPdfDoc = null, curPdfPage = 1, curPdfNumPages = 0, curPdfRenderToken = 0;
+// Fit-width vs fixed-zoom for the PDF page render. 'fit' scales to the
+// container width (the original behavior); a number is a multiplier on TOP
+// of that fit scale, so zooming still adapts to whatever width the reader
+// happens to have. Resets to 'fit' every time a (possibly different) PDF is
+// opened; not persisted — same lifetime as curPdfPage etc.
+let pdfZoomMode = 'fit';
 
 // ---- Inline shelf audio player ----
 // Audio items play directly from the shelf row (tap to play/pause, inline
@@ -672,7 +678,7 @@ async function mergeImportedItems(items){
 
 const FONT_MAP = {serif:"Georgia,'Times New Roman',serif", sans:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", mono:"'SFMono-Regular',Consolas,Menlo,monospace", zh:"'PingFang SC','Heiti SC','Microsoft YaHei',sans-serif"};
 const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
-let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false};
+let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, categoryOrder:[]};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -937,6 +943,17 @@ function removeCover(mode){
 }
 
 let searchQuery = '';
+function reorderCategory(draggedCat, targetCat){
+  const order = (prefs.categoryOrder||[]).slice();
+  const from = order.indexOf(draggedCat);
+  if(from===-1) return;
+  order.splice(from,1);
+  const to = order.indexOf(targetCat);
+  order.splice(to===-1 ? order.length : to, 0, draggedCat);
+  prefs.categoryOrder = order;
+  putPrefs(prefs).catch(()=>{});
+  render();
+}
 function onSearchInput(){
   searchQuery = document.getElementById('searchInput').value.trim().toLowerCase();
   render();
@@ -966,11 +983,23 @@ async function render(){
     if(!groups.has(cat)) groups.set(cat, []);
     groups.get(cat).push(it);
   }
-  const cats = [...groups.keys()].sort((a,b)=>{
-    if(a==='Uncategorized') return 1;
-    if(b==='Uncategorized') return -1;
-    return a.localeCompare(b);
-  });
+  // Category order is manual (drag a header to move it), stored in prefs.
+  // 'Uncategorized' is never part of that ordering and always sorts last,
+  // same as before. Anything not yet in the saved order (a brand-new
+  // category) is appended alphabetically and the saved order is topped up
+  // to match, so a fresh install still looks alphabetical until the user
+  // actually drags something.
+  const realCats = [...groups.keys()].filter(c=>c!=='Uncategorized');
+  const hasUncat = groups.has('Uncategorized');
+  let order = (prefs.categoryOrder||[]).filter(c=>realCats.includes(c));
+  const known = new Set(order);
+  const freshOnes = realCats.filter(c=>!known.has(c)).sort((a,b)=>a.localeCompare(b));
+  order = [...order, ...freshOnes];
+  if(JSON.stringify(order) !== JSON.stringify(prefs.categoryOrder||[])){
+    prefs.categoryOrder = order;
+    putPrefs(prefs).catch(()=>{});
+  }
+  const cats = hasUncat ? [...order, 'Uncategorized'] : order;
   if(itemSortMode === 'title'){
     // numeric:true so "2" sorts before "10" (plain localeCompare would put
     // "10" first) — matters for titles like the recordings in the
@@ -981,10 +1010,35 @@ async function render(){
   }
 
   for(const cat of cats){
+    const count = groups.get(cat).length;
     const head = document.createElement('div');
     head.className = 'cathead';
     if(collapsedCats.has(cat)) head.classList.add('collapsed');
-    head.innerHTML = `<span class="chev">&#9656;</span><span>${escapeHtml(cat)}</span>`;
+    // 'Uncategorized' is pinned last and excluded from manual ordering (see
+    // above), so it gets no drag handle — nothing to drag it in front of.
+    const draggable = cat !== 'Uncategorized';
+    head.innerHTML = (draggable ? `<span class="cat-drag" title="Drag to reorder">&#8942;&#8942;</span>` : '')
+      + `<span class="chev">&#9656;</span><span>${escapeHtml(cat)}</span>`
+      + `<span class="catcount">(${count})</span>`;
+    if(draggable){
+      head.draggable = true;
+      head.addEventListener('dragstart', e=>{
+        e.dataTransfer.setData('text/plain', cat);
+        e.dataTransfer.effectAllowed = 'move';
+        head.classList.add('dragging');
+      });
+      head.addEventListener('dragend', ()=> head.classList.remove('dragging'));
+      head.addEventListener('dragover', e=>{
+        if(e.dataTransfer.types.includes('text/plain')){ e.preventDefault(); e.dataTransfer.dropEffect = 'move'; head.classList.add('drag-over'); }
+      });
+      head.addEventListener('dragleave', ()=> head.classList.remove('drag-over'));
+      head.addEventListener('drop', e=>{
+        e.preventDefault();
+        head.classList.remove('drag-over');
+        const draggedCat = e.dataTransfer.getData('text/plain');
+        if(draggedCat && draggedCat !== cat) reorderCategory(draggedCat, cat);
+      });
+    }
     shelf.appendChild(head);
 
     const body = document.createElement('div');
@@ -1247,6 +1301,7 @@ async function openReader(id){
   document.getElementById('reader').classList.add('open');
 
   if(it.type === 'pdf'){
+    pdfZoomMode = 'fit';
     c.classList.add('pad0');
     // Rendered page-by-page onto a <canvas> via pdf.js rather than handed to
     // an <iframe>/native PDF plugin — matches the companion Ledger and
@@ -1270,6 +1325,7 @@ async function openReader(id){
         <button id="pdfPrev" onclick="pdfPrevPage()" title="Previous page">&#8249;</button>
         <span class="pnum" id="pdfPnum"></span>
         <button id="pdfNext" onclick="pdfNextPage()" title="Next page">&#8250;</button>
+        <button id="pdfZoomBtn" class="zoombtn" onclick="cyclePdfZoom()" title="Fit width">Fit</button>
       </div>`;
     c.appendChild(pdfWrap);
     try{
@@ -1405,8 +1461,17 @@ function extForItem(type, mime){
 // Strips characters that trip up common filesystems and keeps the name a
 // sane length — the title itself (still shown in the app) is untouched.
 function safeExportFilename(title, ext){
-  const base = (title || 'Untitled').trim().replace(/[\\/:*?"<>|]+/g,'-').slice(0,80) || 'Untitled';
-  return base.toLowerCase().endsWith(ext.toLowerCase()) ? base : base + ext;
+  let base = (title || 'Untitled').trim().replace(/[\\/:*?"<>|]+/g,'-').slice(0,80) || 'Untitled';
+  // A title that already happens to end with the extension (e.g. a note
+  // literally titled "notes.md") shouldn't get it doubled once the date
+  // stamp is inserted before it.
+  if(base.toLowerCase().endsWith(ext.toLowerCase())) base = base.slice(0, base.length - ext.length);
+  // Same date stamp convention as the whole-shelf backup filename below
+  // (doExport). Re-exporting the same item later in the day overwrites/
+  // dedupes the same as before; exporting on a different day no longer
+  // silently collides with — and gets renamed "(1)" over — the old file.
+  const stamp = new Date().toISOString().slice(0,10);
+  return `${base} ${stamp}${ext}`;
 }
 async function exportCurrentItem(){
   if(!curId) return;
@@ -1462,7 +1527,11 @@ async function renderPdfPage(pageNum){
     if(myToken !== curPdfRenderToken) return; // reader moved on while we awaited
     const unscaledViewport = page.getViewport({ scale: 1 });
     const containerWidth = pageEl.clientWidth || 320;
-    const scale = Math.max(0.1, (containerWidth - 16) / unscaledViewport.width);
+    const fitScale = Math.max(0.1, (containerWidth - 16) / unscaledViewport.width);
+    // 'fit' uses the width-fitted scale as-is; a zoom level multiplies on
+    // top of it, so 1.5x/2x still means "1.5x/2x bigger than fit", not an
+    // absolute PDF scale — consistent across pages of different sizes.
+    const scale = pdfZoomMode === 'fit' ? fitScale : fitScale * pdfZoomMode;
     const viewport = page.getViewport({ scale });
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width;
@@ -1470,17 +1539,41 @@ async function renderPdfPage(pageNum){
     canvas.style.display = 'block';
     canvas.style.margin = '12px auto';
     canvas.style.boxShadow = '0 1px 4px rgba(0,0,0,0.15)';
+    // The stylesheet caps canvas width to the container (max-width:calc(100%
+    // - 24px)) so the fit case always looks right; zooming past fit needs
+    // that cap lifted, or the canvas would just get squeezed back down to
+    // the same on-screen size and "zoom" would do nothing. #pdfPage already
+    // scrolls (overflow:auto), so an over-width canvas is just pannable.
+    canvas.style.maxWidth = pdfZoomMode === 'fit' ? '' : 'none';
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
     if(myToken !== curPdfRenderToken) return;
     pageEl.innerHTML = '';
     pageEl.appendChild(canvas);
     curPdfPage = pageNum;
     updatePdfNavUI();
+    updatePdfZoomUI();
     saveProgress({ page: pageNum });
   } catch(pdfErr){
     if(myToken !== curPdfRenderToken) return;
     pageEl.innerHTML = `<p style="color:var(--pdf);">Could not render this page: ${escapeHtml(pdfErr.message)}</p>`;
   }
+}
+function updatePdfZoomUI(){
+  const btn = document.getElementById('pdfZoomBtn');
+  if(!btn) return;
+  if(pdfZoomMode === 'fit'){
+    btn.textContent = 'Fit';
+    btn.title = 'Fitted to width — tap to zoom in';
+  } else {
+    btn.textContent = pdfZoomMode + '\u00d7';
+    btn.title = 'Zoomed ' + pdfZoomMode + '\u00d7 — tap to cycle';
+  }
+}
+function cyclePdfZoom(){
+  const steps = ['fit', 1.5, 2];
+  pdfZoomMode = steps[(steps.indexOf(pdfZoomMode) + 1) % steps.length];
+  updatePdfZoomUI();
+  if(curPdfDoc) renderPdfPage(curPdfPage);
 }
 function updatePdfNavUI(){
   const pnum = document.getElementById('pdfPnum');
@@ -1977,39 +2070,69 @@ function toggleBookmarkPanel(){
   bmPanelOpen = !bmPanelOpen;
   document.getElementById('bmPanel').style.display = bmPanelOpen ? 'block' : 'none';
 }
+// A bookmark's `idx` is only reliable until the note is next edited — adding
+// or removing a paragraph above it shifts every idx below. `snippet` (the
+// paragraph's own text, captured when the bookmark was made) is what
+// survives that: findBlockForBookmark prefers an exact idx+snippet hit
+// (nothing changed), falls back to hunting for that same text wherever it
+// now lives (the paragraph just moved), then a looser prefix match (the
+// paragraph was edited but still starts the same way), and only falls back
+// to the stale idx — better than nothing — if none of that finds anything.
+function bookmarkSnippet(el){ return el ? el.textContent.trim().slice(0,80) : ''; }
+function findBlockForBookmark(bookmark){
+  const blocks = Array.from(document.querySelectorAll('.mdblock'));
+  const byIdx = blocks.find(el=>Number(el.dataset.idx)===bookmark.idx);
+  if(byIdx && bookmarkSnippet(byIdx)===bookmark.snippet) return byIdx;
+  if(bookmark.snippet){
+    const bySnippet = blocks.find(el=>bookmarkSnippet(el)===bookmark.snippet);
+    if(bySnippet) return bySnippet;
+    const head = bookmark.snippet.slice(0, 30);
+    const byPrefix = head && blocks.find(el=>el.textContent.trim().startsWith(head));
+    if(byPrefix) return byPrefix;
+  }
+  return byIdx || null;
+}
 async function toggleBookmark(idx){
   const it = await getOne(curId);
   if(!it) return;
   const bookmarks = it.bookmarks || [];
-  const pos = bookmarks.findIndex(b=>b.idx===idx);
+  const el = document.querySelector(`.mdblock[data-idx="${idx}"]`);
+  // Same fuzzy match as everywhere else, so tapping the ribbon on a spot
+  // that's already bookmarked (even under a shifted idx) removes it instead
+  // of adding a duplicate.
+  const pos = bookmarks.findIndex(b => findBlockForBookmark(b) === el);
   if(pos>-1){
     bookmarks.splice(pos,1);
   } else {
-    const el = document.querySelector(`.mdblock[data-idx="${idx}"]`);
-    const snippet = el ? el.textContent.trim().slice(0,80) : ('Paragraph '+(idx+1));
+    const snippet = bookmarkSnippet(el) || ('Paragraph '+(idx+1));
     bookmarks.push({idx, snippet, createdAt:Date.now()});
   }
   try{ await putMetaOnly(curId, { bookmarks }); }
   catch(err){ if(isQuotaError(err)) alert("Your device's storage is full, so this bookmark couldn't be saved."); return; }
   updateBookmarkUI(bookmarks);
 }
-async function deleteBookmark(idx){
+async function deleteBookmark(createdAt){
   const it = await getOne(curId);
   if(!it) return;
-  const bookmarks = (it.bookmarks||[]).filter(b=>b.idx!==idx);
+  const bookmarks = (it.bookmarks||[]).filter(b=>b.createdAt!==createdAt);
   try{ await putMetaOnly(curId, { bookmarks }); }
   catch(err){ /* removing a bookmark frees space, extremely unlikely to fail on quota */ }
   updateBookmarkUI(bookmarks);
 }
-function jumpBookmark(idx){
-  const el = document.querySelector(`.mdblock[data-idx="${idx}"]`);
+async function jumpBookmark(createdAt){
+  const it = await getOne(curId);
+  const bm = it && (it.bookmarks||[]).find(b=>b.createdAt===createdAt);
+  const el = bm && findBlockForBookmark(bm);
   if(el) el.scrollIntoView({block:'center', behavior:'smooth'});
+  else if(bm) alert("Couldn't find that spot anymore — this part of the note may have changed a lot since the bookmark was made.");
   bmPanelOpen = false;
   document.getElementById('bmPanel').style.display = 'none';
 }
 function updateBookmarkUI(bookmarks){
-  document.querySelectorAll('.mdblock').forEach(el=>{
-    el.classList.toggle('bookmarked', bookmarks.some(b=>b.idx===Number(el.dataset.idx)));
+  document.querySelectorAll('.mdblock').forEach(el=>el.classList.remove('bookmarked'));
+  bookmarks.forEach(b=>{
+    const el = findBlockForBookmark(b);
+    if(el) el.classList.add('bookmarked');
   });
   document.getElementById('bmCount').textContent = bookmarks.length ? ' '+bookmarks.length : '';
   document.getElementById('bmBtn').classList.toggle('active', bookmarks.length>0);
@@ -2020,8 +2143,8 @@ function updateBookmarkUI(bookmarks){
   }
   panel.innerHTML = bookmarks.slice().sort((a,b)=>a.idx-b.idx).map(b=>`
     <div class="bmrow">
-      <div class="snip" onclick="jumpBookmark(${b.idx})">${escapeHtml(b.snippet)}</div>
-      <button class="rm" onclick="event.stopPropagation();deleteBookmark(${b.idx})" title="Remove bookmark">&times;</button>
+      <div class="snip" onclick="jumpBookmark(${b.createdAt})">${escapeHtml(b.snippet)}</div>
+      <button class="rm" onclick="event.stopPropagation();deleteBookmark(${b.createdAt})" title="Remove bookmark">&times;</button>
     </div>`).join('');
 }
 

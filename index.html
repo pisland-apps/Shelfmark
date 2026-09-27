@@ -90,6 +90,13 @@
   }
   .cathead.collapsed .chev{transform:rotate(0deg);}
   .cathead:first-child{margin-top:0;}
+  .cathead .catcount{color:var(--ink-soft);font-size:12px;font-weight:400;}
+  .cathead .cat-drag{
+    font-size:12px;letter-spacing:-3px;opacity:0.4;cursor:grab;padding:2px 2px 2px 0;
+  }
+  .cathead .cat-drag:active{cursor:grabbing;}
+  .cathead.dragging{opacity:0.4;}
+  .cathead.drag-over{outline:2px dashed var(--ink-soft);outline-offset:2px;}
   .catbody{display:flex; flex-direction:column; gap:10px;}
   .catbody.collapsed{display:none;}
   .spine{
@@ -378,6 +385,10 @@
   }
   .pdfnav button:disabled{opacity:0.35;}
   .pdfnav .pnum{font-size:13px;color:var(--ink-soft);min-width:64px;text-align:center;}
+  .pdfnav .zoombtn{
+    width:auto;height:32px;border-radius:16px;padding:0 14px;
+    font-size:13px;font-weight:600;font-family:'Inter',system-ui,sans-serif;
+  }
 
   /* replaced Google Fonts (Lora/Inter) with system font stacks so the app
      works fully offline as an installed PWA with no external font fetch */
