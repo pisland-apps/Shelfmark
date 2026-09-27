@@ -7,6 +7,16 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Markdown formatting help.** A new **?** button in the note editor
+  toolbar (and a "Markdown formatting help" entry in the command palette,
+  reachable from anywhere) opens an overlay covering every syntax the
+  editor supports — bold/italic/headings, lists and `- [ ]` checklists,
+  `> [!note]`-style callouts, fenced code blocks, tables, images/dividers,
+  external links, the three shelf-link pickers (🎵/🔗/📄), `[[Wiki links]]`,
+  and `#tags` — each shown as the literal syntax next to its already-
+  rendered result. Fully static and offline: no network fetch, and it
+  doesn't reuse the note renderer itself (see the Changelog's v1.27.0 entry
+  for why).
 - **Note → PDF links.** The 📄 button in the note editor toolbar (next to
   🎵 Audio and 🔗 Note) links to a PDF already on your shelf the same way —
   inserts `[Title](shelf://<id>)`, and the note reader shows it as a small
@@ -123,6 +133,23 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.27.0** (2026-09-28) — Markdown formatting help: a **?** toolbar
+  button in the note editor (plus a command-palette entry, so it's reachable
+  even when nothing is being edited) opens an overlay documenting every
+  syntax construct the editor renders. Deliberately **not** built by piping
+  a stored markdown string through `renderMarkdown()` — a real syntax guide
+  needs to show the raw syntax (e.g. the literal text `**bold**`) right next
+  to its rendered result, which a renderer that only ever produces the
+  rendered side can't do; also, the guide's own code-block example would
+  need a fenced block *about* fenced blocks, and the fenced-code regex
+  (`` /```(\w*)\n?([\s\S]*?)```/g `` — non-recursive, first-match-wins) has
+  no way to nest one inside another. So the overlay's content is hand-
+  written static HTML reusing the exact same CSS classes `renderMarkdown`
+  itself outputs (`.callout`, `.code-block`, `.md-note-link`, `.task-list`,
+  `.md-table-wrap`, etc.), with interactive-looking elements (checkboxes,
+  play buttons) left inert (`disabled`) since they're illustrations, not
+  real content bound to a real item id. No new static files, no network
+  request — consistent with the rest of the app.
 - **v1.26.0** (2026-09-28) — Note → PDF links, the last of the three
   `shelf://` target types (v1.5.6 added note→audio, v1.16.0 added
   note→note). A new 📄 toolbar button in the note editor opens the same

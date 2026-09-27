@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.26.0';
+const APP_VERSION = '1.27.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1406,6 +1406,7 @@ async function openReader(id){
           <button class="tool" onclick="openPdfLinkPicker()" title="Link a PDF already on your shelf">&#128196;</button>
           <button class="tool" onclick="document.getElementById('noteImgPick').click()" title="Insert a picture">&#128247;</button>
           <button class="tool" onclick="insertTableTemplate()" title="Insert a table">&#9638;</button>
+          <button class="tool" onclick="openMarkdownHelp()" title="Markdown formatting help">?</button>
         </div>
         <div class="ebar-actions">
           <button class="cancel" onclick="cancelEditNote()">Cancel</button>
@@ -2127,6 +2128,21 @@ async function openLinkPicker(kind){
 function closeAudioLinkPicker(){
   document.getElementById('audioLinkOverlay').style.display = 'none';
 }
+
+// ---- Markdown formatting help (the ? toolbar button, v1.27.0) ----
+// The overlay's content is static HTML in index.html, not run through
+// renderMarkdown() — it's meant to show the syntax itself (e.g. the literal
+// text "**bold**") side by side with the already-rendered result, which
+// isn't something a markdown renderer can produce from its own output. No
+// network fetch, no separate file: fully consistent with the rest of the
+// app being offline-only.
+function openMarkdownHelp(){
+  document.getElementById('mdHelpOverlay').style.display = 'flex';
+}
+function closeMarkdownHelp(){
+  document.getElementById('mdHelpOverlay').style.display = 'none';
+}
+
 function insertShelfLink(id, title){
   pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
@@ -2927,6 +2943,7 @@ function buildStaticCommands(){
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
     { id:'storage', icon:'&#128190;', label:'Storage used', hint: storageHint, action: ()=>showStorageDetail() },
+    { id:'md-help', icon:'?', label:'Markdown formatting help', hint:'', action: ()=>openMarkdownHelp() },
     ...themeCmds
   ];
 }

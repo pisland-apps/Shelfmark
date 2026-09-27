@@ -153,6 +153,15 @@
   }
   @media(min-width:600px){.sheet{border-radius:14px;}}
   .sheet h2{margin:0 0 16px;font-size:19px;}
+  /* Markdown help sheet (the ? button) — wider and internally scrollable,
+     since the guide is much longer than every other overlay's content; the
+     rest of the app's overlays assume content short enough to fit as-is. */
+  .help-sheet{max-width:600px;display:flex;flex-direction:column;max-height:86vh;}
+  .help-body{overflow-y:auto;padding-right:2px;}
+  .help-body.mdbody{max-width:none;padding-left:0;font-size:14.5px;}
+  .help-body h3{margin:22px 0 8px;font-size:15px;}
+  .help-body h3:first-child{margin-top:0;}
+  .help-body table{font-size:0.85em;}
   label{display:block;font-size:12px;color:var(--ink-soft);margin:14px 0 6px;}
   input[type=text]{
     width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line);
@@ -783,6 +792,62 @@
     <div id="audioLinkList" class="alink-list"></div>
     <div class="row">
       <button class="cancel" onclick="closeAudioLinkPicker()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="mdHelpOverlay" class="overlay" style="display:none;">
+  <div class="sheet help-sheet">
+    <h2>Markdown formatting help</h2>
+    <div class="help-body mdbody">
+      <h3>Text</h3>
+      <p><strong>**bold**</strong> · <em>*italic*</em> · <code>`inline code`</code></p>
+      <p><code># Heading 1</code> &nbsp; <code>## Heading 2</code> &nbsp; <code>### Heading 3</code></p>
+
+      <h3>Lists</h3>
+      <p><code>- item</code> for a bullet list, <code>1. item</code> for a numbered list.</p>
+      <p>Tappable checklist — tap in the reader to check it off, no need to open the editor:</p>
+      <ul class="task-list">
+        <li class="task-item"><label><input type="checkbox" disabled><span>Type <code>- [ ] text</code> for this</span></label></li>
+        <li class="task-item"><label><input type="checkbox" disabled checked><span class="done">Type <code>- [x] text</code> for this</span></label></li>
+      </ul>
+
+      <h3>Quotes &amp; callouts</h3>
+      <p><code>&gt; text</code> makes a plain quote. Start it with <code>[!type]</code> for a colored callout card instead:</p>
+      <blockquote>&gt; A plain quote looks like this</blockquote>
+      <div class="callout callout-note"><div class="callout-title"><span class="callout-icon">&#128221;</span>Note</div><div class="callout-body"><code>&gt; [!note]</code> — general info</div></div>
+      <div class="callout callout-warning"><div class="callout-title"><span class="callout-icon">&#9888;&#65039;</span>Watch out</div><div class="callout-body"><code>&gt; [!warning] Watch out</code> — the text after <code>[!warning]</code> becomes the card's title</div></div>
+      <div class="callout callout-idea"><div class="callout-title"><span class="callout-icon">&#128161;</span>Idea</div><div class="callout-body"><code>&gt; [!idea]</code> — any other <code>[!type]</code> still renders a card, just in a neutral color</div></div>
+
+      <h3>Code blocks</h3>
+      <p>Fence a block with three backticks; an optional language name after the first fence is shown as a label. Every block gets a one-tap Copy button.</p>
+      <div class="code-block"><div class="code-bar"><span class="code-lang">js</span><button class="code-copy" disabled>Copy</button></div><pre><code>console.log("hello");</code></pre></div>
+
+      <h3>Tables</h3>
+      <p><code>| Col | Col |</code> then a <code>| --- | --- |</code> row, then your data rows:</p>
+      <div class="md-table-wrap"><table><thead><tr><th>Name</th><th>Age</th></tr></thead><tbody><tr><td>Ann</td><td>29</td></tr></tbody></table></div>
+
+      <h3>Images &amp; dividers</h3>
+      <p><code>![alt](url)</code> for an image — or just tap the &#128247; toolbar button to insert one from your device. <code>---</code> on its own line draws a divider.</p>
+
+      <h3>Links</h3>
+      <p><code>[label](https://…)</code> — an ordinary link. Point it at an audio file URL (<code>.mp3</code>, <code>.m4a</code>, <code>.wav</code>, <code>.ogg</code>, <code>.oga</code>, <code>.opus</code>, <code>.aac</code>, <code>.flac</code>, <code>.weba</code>) and it renders as a playable widget instead — the one feature in Shelfmark that makes a live network request.</p>
+
+      <h3>Link something already on your shelf</h3>
+      <p>Use the &#127925; / &#128279; / &#128196; toolbar buttons to pick a recording, note, or PDF and drop in a working link — no syntax to remember:</p>
+      <div class="md-audio-inline"><button class="inline-play" disabled>&#9658;</button><div class="meta"><div class="title">&#127925; Audio &rarr; inline player</div><div class="inline-bar"><div class="inline-bar-fill"></div></div><div class="inline-time"></div></div><button class="expand" disabled title="Open full player">&#8599;</button></div>
+      <div class="md-note-link"><span class="note-link-icon">&#128220;</span><span class="note-link-title">&#128279; Note &rarr; jump-to-note card</span><span class="note-link-go">&#8594;</span></div>
+      <div class="md-note-link pdf-target"><span class="note-link-icon">&#128196;</span><span class="note-link-title">&#128196; PDF &rarr; jump-to-PDF card</span><span class="note-link-go">&#8594;</span></div>
+      <p>These stay linked even if you rename the target later — only deleting it breaks the link (tapping it will say so).</p>
+
+      <h3>Wiki-style links</h3>
+      <p>Type <code>[[</code> and start typing a title for an autocomplete dropdown, or write it by hand: <code>[[Note title]]</code>, or <code>[[Note title|shown text]]</code> to display something else. Unlike the picker links above, this one is matched by title, so renaming the target note keeps it working automatically — but renaming <em>this</em> note's own reference breaks it. Linking a title that doesn't exist yet shows a dashed "missing" pill you can tap to create that note on the spot.</p>
+
+      <h3>Tags</h3>
+      <p>Write <code>#word</code> anywhere in the text to tag the note — as many as you like, alongside its one category. Browse them all from the &#128269; command palette &rarr; <em>Browse tags</em>.</p>
+    </div>
+    <div class="row">
+      <button class="cancel" onclick="closeMarkdownHelp()">Close</button>
     </div>
   </div>
 </div>
