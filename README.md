@@ -86,6 +86,18 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.14.0** (2026-09-27) — Three note-editor conveniences: (1) pasting an
+  image straight from the clipboard (Ctrl+V on desktop, or the long-press
+  "Paste" menu on mobile — e.g. a screenshot that was never saved to a file)
+  now inserts it the same way the 📷 button does, instead of doing nothing;
+  (2) two new toolbar buttons, **B** (bold) and **H** (heading), wrap the
+  current selection in `**...**` or toggle a leading `## ` on the current
+  line, so formatting no longer requires typing the Markdown symbols by
+  hand; (3) two more toolbar buttons insert a `---` divider or the current
+  date/time as plain text at the cursor — handy for splitting up a diary
+  entry or timestamping a running meeting log. The divider now also renders
+  as an actual horizontal rule in the note reader (previously `---` had no
+  special rendering at all).
 - **v1.13.0** (2026-09-27) — The note editor no longer shows a giant wall of
   base64 text for an inserted picture. Opening a note for editing now
   collapses every `![alt](data:image/...;base64,...)` down to a short

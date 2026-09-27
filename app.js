@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.13.0';
+const APP_VERSION = '1.14.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1263,6 +1263,10 @@ async function openReader(id){
     editWrap.innerHTML = `<textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
       <div class="ebar">
         <div class="ebar-tools">
+          <button class="tool" onclick="toggleBoldAtSelection()" title="Bold"><b>B</b></button>
+          <button class="tool" onclick="toggleHeadingAtLine()" title="Heading">H</button>
+          <button class="tool" onclick="insertDivider()" title="Insert divider">&#8213;</button>
+          <button class="tool" onclick="insertTimestamp()" title="Insert date/time">&#128197;</button>
           <button class="tool" onclick="openAudioLinkPicker()" title="Link a recording already on your shelf">&#127925;</button>
           <button class="tool" onclick="document.getElementById('noteImgPick').click()" title="Insert a picture">&#128247;</button>
           <button class="tool" onclick="insertTableTemplate()" title="Insert a table">&#9638;</button>
@@ -1274,6 +1278,7 @@ async function openReader(id){
       </div>`;
     c.appendChild(div);
     c.appendChild(editWrap);
+    document.getElementById('mdEditArea').addEventListener('paste', onNoteEditPaste);
     if(it.progress && it.progress.scroll) c.scrollTop = it.progress.scroll;
     c.onscroll = ()=>{ clearTimeout(c._t); c._t = setTimeout(()=>saveProgress({scroll:c.scrollTop}), 400); };
     document.getElementById('bmBtn').style.display = 'flex';
@@ -1503,6 +1508,12 @@ async function copyCodeBlock(btn){
 async function onNoteImagePick(e){
   const f = e.target.files[0];
   e.target.value = '';
+  await insertNoteImageFile(f);
+}
+// Shared by the 📷 file picker above and the clipboard-paste handler below —
+// both end up with a plain File/Blob to resize and drop into the note the
+// same way, so the actual insert logic only needs to live once.
+async function insertNoteImageFile(f){
   if(!f) return;
   let dataUrl;
   try{ dataUrl = await resizeCoverImage(f, 900, 0.82); }
@@ -1516,6 +1527,22 @@ async function onNoteImagePick(e){
   const newPos = start + md.length;
   ta.setSelectionRange(newPos, newPos);
 }
+// Ctrl+V (desktop) or the long-press "Paste" menu (mobile) on the note
+// textarea — if the clipboard is carrying an image (e.g. a screenshot copied
+// straight from the OS, not saved to a file first), insert it the same way
+// the 📷 button does instead of pasting nothing/garbage. Falls through to the
+// browser's normal text paste when the clipboard has no image on it.
+function onNoteEditPaste(e){
+  const items = e.clipboardData && e.clipboardData.items;
+  if(!items) return;
+  for(const item of items){
+    if(item.kind === 'file' && item.type && item.type.startsWith('image/')){
+      e.preventDefault();
+      insertNoteImageFile(item.getAsFile());
+      return;
+    }
+  }
+}
 
 // ---- Inserting a table template into a note ----
 // Drops a ready-to-edit pipe table at the cursor rather than trying to offer
@@ -1523,6 +1550,77 @@ async function onNoteImagePick(e){
 // rows and columns as plain markdown text, same as they would in Obsidian or
 // any other markdown editor. renderMarkdown() below is what turns this
 // syntax back into an actual <table> in the read view.
+// ---- Bold / heading toolbar buttons ----
+// For people who don't already know Markdown syntax by heart: wraps the
+// current selection in ** ** (or, with nothing selected, drops an empty
+// **bold text** placeholder with the words pre-selected so typing replaces
+// them, same as most rich editors do for an empty bold toggle).
+function toggleBoldAtSelection(){
+  const ta = document.getElementById('mdEditArea');
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  const selected = ta.value.slice(start, end);
+  const text = selected || 'bold text';
+  const wrapped = '**' + text + '**';
+  ta.value = ta.value.slice(0, start) + wrapped + ta.value.slice(end);
+  ta.focus();
+  ta.setSelectionRange(start + 2, start + 2 + text.length);
+}
+// Toggles a leading "## " on the current line — tapping again on an already-
+// headed line removes it rather than stacking another #, so the button
+// behaves like an on/off switch rather than only ever adding more.
+function toggleHeadingAtLine(){
+  const ta = document.getElementById('mdEditArea');
+  const value = ta.value;
+  const pos = ta.selectionStart;
+  const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
+  let lineEnd = value.indexOf('\n', pos);
+  if(lineEnd === -1) lineEnd = value.length;
+  const line = value.slice(lineStart, lineEnd);
+  const existing = line.match(/^(#{1,6})\s+/);
+  let newLine, delta;
+  if(existing){
+    newLine = line.slice(existing[0].length);
+    delta = -existing[0].length;
+  } else {
+    newLine = '## ' + line;
+    delta = 3;
+  }
+  ta.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
+  ta.focus();
+  const newPos = Math.max(lineStart, pos + delta);
+  ta.setSelectionRange(newPos, newPos);
+}
+// ---- Divider / timestamp toolbar buttons ----
+// A plain "---" on its own line, surrounded by blank lines so renderMarkdown
+// (which splits on blank lines) sees it as its own block and turns it into
+// an <hr> rather than folding it into a neighboring paragraph.
+function insertDivider(){
+  const ta = document.getElementById('mdEditArea');
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  const needsLeadingBreak = start > 0 && ta.value[start-1] !== '\n';
+  const block = (needsLeadingBreak ? '\n\n' : '') + '---\n\n';
+  ta.value = ta.value.slice(0, start) + block + ta.value.slice(end);
+  ta.focus();
+  const newPos = start + block.length;
+  ta.setSelectionRange(newPos, newPos);
+}
+// Drops the current date/time as plain text at the cursor — handy for diary
+// entries and meeting notes. Only a leading break is forced (not a trailing
+// one) so jotting several timestamped lines in a row doesn't leave a blank
+// paragraph between every single one.
+function insertTimestamp(){
+  const ta = document.getElementById('mdEditArea');
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  const needsLeadingBreak = start > 0 && ta.value[start-1] !== '\n';
+  const stamp = new Date().toLocaleString(undefined, {
+    year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'
+  });
+  const insert = (needsLeadingBreak ? '\n' : '') + stamp;
+  ta.value = ta.value.slice(0, start) + insert + ta.value.slice(end);
+  ta.focus();
+  const newPos = start + insert.length;
+  ta.setSelectionRange(newPos, newPos);
+}
 function insertTableTemplate(){
   const ta = document.getElementById('mdEditArea');
   const start = ta.selectionStart, end = ta.selectionEnd;
@@ -1699,6 +1797,7 @@ function renderMarkdown(src){
     else if(/^<div class="code-block"/.test(block)) html = block;
     else if(/^<img class="md-img"/.test(block)) html = block;
     else if(looksLikeTable(block)) html = tableToHtml(block);
+    else if(/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(block)) html = '<hr>';
     else if(/^\s*&gt;/.test(block) && block.split('\n').every(l=>!l.trim() || /^\s*&gt;/.test(l))){
       const inner = block.split('\n').filter(l=>l.trim()).map(l=>l.replace(/^\s*&gt;\s?/,'')).join('<br>');
       html = `<blockquote>${inner}</blockquote>`;
