@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.19.1';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1418,7 +1418,7 @@ async function exportCurrentItem(){
       // If a note is mid-edit, export exactly what's in the text box rather
       // than the last-saved version, so nothing just typed goes missing.
       const editWrap = document.getElementById('mdEditWrap');
-      const isEditing = editWrap && editWrap.style.display !== 'none';
+      const isEditing = editWrap && editWrap.style.display === 'flex';
       const raw = isEditing
         ? expandImagesForSave(document.getElementById('mdEditArea').value)
         : it.content;
