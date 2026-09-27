@@ -86,6 +86,18 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.16.0** (2026-09-27) — Notes can now link to other notes, not just
+  audio, with backlinks shown automatically. A new 🔗 button next to the
+  existing 🎵 Audio button in the note editor toolbar opens the same picker
+  filtered to your other notes; picking one inserts `[Title](shelf://<id>)`
+  exactly as the audio link does, but the note reader renders it as a small
+  tappable "jump to note" widget instead of an inline player. Opening any
+  note now also shows a "Linked from" list at the bottom whenever one or
+  more other notes link to it — tapping an entry jumps straight there.
+  Finding backlinks means decrypting every other note's content to search
+  it (there's no separate link index), so it only happens once when a note
+  is opened or saved, not continuously. As before, if a linked note has
+  since been deleted, tapping the widget says so rather than doing nothing.
 - **v1.15.0** (2026-09-27) — Two new ways to start a note. (1) The Add sheet's
   "Start a blank note" button is now a 2×2 grid of starting templates —
   **Blank**, **Diary** (auto-titled with today's date, a `##` date heading

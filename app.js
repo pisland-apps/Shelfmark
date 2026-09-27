@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.16.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1306,9 +1306,11 @@ async function openReader(id){
     const div = document.createElement('div');
     div.className = 'mdbody';
     div.id = 'mdView';
-    div.innerHTML = renderMarkdown(it.content);
+    div.innerHTML = renderMarkdown(it.content, await buildLinkTypeMap());
     wireInlineAudio(div);
+    wireNoteLinks(div);
     wireTaskCheckboxes(div);
+    await renderBacklinks(id, div);
     const editWrap = document.createElement('div');
     editWrap.id = 'mdEditWrap';
     editWrap.innerHTML = `<textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
@@ -1319,6 +1321,7 @@ async function openReader(id){
           <button class="tool" onclick="insertDivider()" title="Insert divider">&#8213;</button>
           <button class="tool" onclick="insertTimestamp()" title="Insert date/time">&#128197;</button>
           <button class="tool" onclick="openAudioLinkPicker()" title="Link a recording already on your shelf">&#127925;</button>
+          <button class="tool" onclick="openNoteLinkPicker()" title="Link another note already on your shelf">&#128279;</button>
           <button class="tool" onclick="document.getElementById('noteImgPick').click()" title="Insert a picture">&#128247;</button>
           <button class="tool" onclick="insertTableTemplate()" title="Insert a table">&#9638;</button>
         </div>
@@ -1455,9 +1458,12 @@ async function saveEditNote(){
     return;
   }
   curNoteRaw = text;
-  document.getElementById('mdView').innerHTML = renderMarkdown(text);
-  wireInlineAudio(document.getElementById('mdView'));
-  wireTaskCheckboxes(document.getElementById('mdView'));
+  const mdView = document.getElementById('mdView');
+  mdView.innerHTML = renderMarkdown(text, await buildLinkTypeMap());
+  wireInlineAudio(mdView);
+  wireNoteLinks(mdView);
+  wireTaskCheckboxes(mdView);
+  await renderBacklinks(curId, mdView); // link targets may have changed
   const it = await getOne(curId);
   updateBookmarkUI(it.bookmarks || []);
   cancelEditNote();
@@ -1477,17 +1483,61 @@ function wireInlineAudio(container){
   if(shelfPlayingId) refreshShelfAudioRowUI();
 }
 
-// ---- Linking a note to an audio item already on the shelf ----
+// Wires up every shelf://<id> note-link widget inside a just-rendered note
+// (mirrors wireInlineAudio above, for the note-to-note case added in
+// v1.16.0). A tap jumps straight into the linked note; if it's been deleted
+// since the link was made, this is where that's actually discovered and
+// reported — renderMarkdown itself has no way to know that ahead of time.
+function wireNoteLinks(container){
+  container.querySelectorAll('.md-note-link').forEach(el=>{
+    const id = el.dataset.noteId;
+    el.onclick = (e)=>{ e.stopPropagation(); openNoteLink(id); };
+  });
+}
+async function openNoteLink(id){
+  const items = await getAll();
+  const target = items.find(it=>it.id === id);
+  if(!target || target.type !== 'markdown'){
+    alert("This linked note isn't on your shelf anymore — it may have been deleted.");
+    return;
+  }
+  openReader(id);
+}
+
+// Cheap {id: type} lookup built from item metadata alone (getAll() never
+// touches encrypted file content) — renderMarkdown uses this to tell a
+// shelf://<id> link's target type apart so it can render an audio widget
+// vs. a note-link widget without decrypting anything itself.
+async function buildLinkTypeMap(){
+  const items = await getAll();
+  const map = {};
+  items.forEach(it=>{ map[it.id] = it.type; });
+  return map;
+}
+
+// ---- Linking a note to an audio item, or to another note, already on
+// the shelf ----
 // Inserts a `[Title](shelf://<id>)` link at the note editor's cursor; render
-// turns that into an inline player rather than a plain outgoing link.
-let mdAudioLinkCursor = null;
-async function openAudioLinkPicker(){
+// turns that into an inline player (audio target) or a note-jump widget
+// (note target) rather than a plain outgoing link. Shares one overlay/list
+// markup between both kinds — only the picker's title and the item filter
+// differ.
+let mdLinkCursor = null;
+async function openAudioLinkPicker(){ return openLinkPicker('audio'); }
+async function openNoteLinkPicker(){ return openLinkPicker('markdown'); }
+async function openLinkPicker(kind){
   const ta = document.getElementById('mdEditArea');
-  mdAudioLinkCursor = { start: ta.selectionStart, end: ta.selectionEnd };
-  const items = (await getAll()).filter(it=>it.type==='audio');
+  mdLinkCursor = { start: ta.selectionStart, end: ta.selectionEnd };
+  // A note can't usefully link to itself, so it's excluded from its own
+  // note-link picker (there's nothing wrong with the audio picker ever
+  // matching curId — an item can't be both types at once).
+  const items = (await getAll()).filter(it=>it.type === kind && it.id !== curId);
   const list = document.getElementById('audioLinkList');
+  const titleEl = document.getElementById('audioLinkTitle');
+  if(titleEl) titleEl.textContent = kind === 'audio' ? 'Link a recording' : 'Link a note';
   if(!items.length){
-    list.innerHTML = `<div class="alink-empty">No recordings on your shelf yet — add one first, then come back here to link it into this note.</div>`;
+    const emptyLabel = kind === 'audio' ? 'No recordings' : 'No other notes';
+    list.innerHTML = `<div class="alink-empty">${emptyLabel} on your shelf yet — add one first, then come back here to link it into this note.</div>`;
   } else {
     items.sort((a,b)=>(a.category||'').localeCompare(b.category||'') || a.title.localeCompare(b.title, undefined, {numeric:true, sensitivity:'base'}));
     list.innerHTML = items.map(it=>`
@@ -1496,7 +1546,7 @@ async function openAudioLinkPicker(){
         <span class="alink-cat">${escapeHtml(it.category || 'Uncategorized')}</span>
       </button>`).join('');
     list.querySelectorAll('.alink-row').forEach(btn=>{
-      btn.onclick = ()=>insertAudioLink(btn.dataset.id, btn.dataset.title);
+      btn.onclick = ()=>insertShelfLink(btn.dataset.id, btn.dataset.title);
     });
   }
   document.getElementById('audioLinkOverlay').style.display = 'flex';
@@ -1504,19 +1554,50 @@ async function openAudioLinkPicker(){
 function closeAudioLinkPicker(){
   document.getElementById('audioLinkOverlay').style.display = 'none';
 }
-function insertAudioLink(id, title){
+function insertShelfLink(id, title){
   const ta = document.getElementById('mdEditArea');
   // Square brackets in the title would break the [label] part of the link
   // syntax — strip them from the inserted label only, the stored item title
   // itself is untouched.
   const safeLabel = title.replace(/[[\]]/g,'');
   const markdown = `[${safeLabel}](shelf://${id})`;
-  const { start, end } = mdAudioLinkCursor || { start: ta.value.length, end: ta.value.length };
+  const { start, end } = mdLinkCursor || { start: ta.value.length, end: ta.value.length };
   ta.value = ta.value.slice(0, start) + markdown + ta.value.slice(end);
   closeAudioLinkPicker();
   ta.focus();
   const newPos = start + markdown.length;
   ta.setSelectionRange(newPos, newPos);
+}
+
+// ---- Backlinks ("which notes link to me") ----
+// Scans every OTHER note's raw markdown for a shelf://<thisId> reference and
+// lists whoever links here, appended under the note body. This has to
+// decrypt every other note's content to search it — the same cost the
+// v1.7.0 search box deliberately avoided paying on every keystroke — but
+// here it only runs once per note-open (or note-save), not per keystroke,
+// so the trade-off is different. Purely additive: nothing is written back,
+// this only reads.
+async function renderBacklinks(id, mountEl){
+  document.querySelectorAll('.backlinks-section').forEach(el=>el.remove());
+  const others = (await getAll()).filter(it=>it.type === 'markdown' && it.id !== id);
+  if(!others.length) return;
+  const linkRe = new RegExp(`\\]\\(shelf://${id}\\)`);
+  const linkedFrom = [];
+  for(const meta of others){
+    let full;
+    try{ full = await getOne(meta.id); } catch(err){ continue; } // skip unreadable/corrupt entries rather than aborting the whole scan
+    if(full && full.content && linkRe.test(full.content)) linkedFrom.push(full);
+  }
+  if(!linkedFrom.length) return;
+  linkedFrom.sort((a,b)=>a.title.localeCompare(b.title, undefined, {numeric:true, sensitivity:'base'}));
+  const section = document.createElement('div');
+  section.className = 'backlinks-section';
+  section.innerHTML = `<div class="backlinks-label">Linked from</div>`
+    + linkedFrom.map(n=>`<button class="backlink-row" data-id="${escapeHtml(n.id)}">${escapeHtml(n.title)}</button>`).join('');
+  section.querySelectorAll('.backlink-row').forEach(btn=>{
+    btn.onclick = ()=>openReader(btn.dataset.id);
+  });
+  mountEl.appendChild(section);
 }
 
 // ---- Copy button on fenced code blocks ----
@@ -1781,7 +1862,17 @@ function tableToHtml(block){
 }
 
 // minimal markdown renderer
-function renderMarkdown(src){
+// linkTypes: optional {id: type} map (from buildLinkTypeMap()) used to tell
+// a shelf://<id> link's target type apart at render time — renderMarkdown
+// itself never touches IndexedDB, so callers that want shelf:// links to
+// render correctly must build and pass this first. An id missing from the
+// map (deleted item, or map omitted entirely) falls back to the original
+// audio-widget look, since every shelf:// link was necessarily audio before
+// note-to-note linking existed — the click handler wired in later
+// (wireNoteLinks/wireInlineAudio) is what actually reports "no longer on
+// your shelf" once the user taps it.
+function renderMarkdown(src, linkTypes){
+  linkTypes = linkTypes || {};
   let s = escapeHtml(src);
   // Fenced code blocks are pulled out into placeholder tokens FIRST, before
   // any other regex runs, and only spliced back in as real HTML at the very
@@ -1824,6 +1915,12 @@ function renderMarkdown(src){
     const shelfMatch = trimmedUrl.match(SHELF_LINK);
     if(shelfMatch){
       const id = shelfMatch[1];
+      if(linkTypes[id] === 'markdown'){
+        return `<div class="md-note-link" data-note-id="${id}">`
+             + `<span class="note-link-icon">&#128220;</span>`
+             + `<span class="note-link-title">${label}</span>`
+             + `<span class="note-link-go">&#8594;</span></div>`;
+      }
       return `<div class="md-audio-inline" data-audio-id="${id}">`
            + `<button class="inline-play">&#9658;</button>`
            + `<div class="meta"><div class="title">${label}</div>`
@@ -1845,6 +1942,7 @@ function renderMarkdown(src){
     let html;
     if(/^<h[123]|^<pre/.test(block)) html = block;
     else if(/^<div class="md-audio/.test(block)) html = block;
+    else if(/^<div class="md-note-link/.test(block)) html = block;
     else if(/^<div class="code-block"/.test(block)) html = block;
     else if(/^<img class="md-img"/.test(block)) html = block;
     else if(looksLikeTable(block)) html = tableToHtml(block);
@@ -1906,9 +2004,11 @@ async function toggleTaskCheckbox(blockIdx, lineIdx){
   curNoteRaw = newText;
   const mdView = document.getElementById('mdView');
   if(mdView){
-    mdView.innerHTML = renderMarkdown(newText);
+    mdView.innerHTML = renderMarkdown(newText, await buildLinkTypeMap());
     wireInlineAudio(mdView);
+    wireNoteLinks(mdView);
     wireTaskCheckboxes(mdView);
+    await renderBacklinks(curId, mdView);
   }
 }
 function wireTaskCheckboxes(container){

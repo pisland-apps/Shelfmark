@@ -275,6 +275,29 @@
   .md-audio-inline .expand{
     background:none;border:none;color:var(--ink-soft);font-size:14px;padding:6px;line-height:1;flex-shrink:0;
   }
+  /* note-to-note link widget (shelf://<id> pointing at another markdown
+     item) — same shelf://<id> syntax as the audio inline player above, but
+     renderMarkdown tells the two apart via the linkTypes map and picks this
+     look for a markdown target instead */
+  .md-note-link{
+    display:flex;align-items:center;gap:10px;margin:14px 0;padding:10px 12px;
+    border:1px solid var(--line);border-radius:10px;background:var(--card);
+    cursor:pointer;color:var(--md);
+  }
+  .md-note-link:active{background:var(--line);}
+  .md-note-link .note-link-icon{font-size:15px;flex-shrink:0;}
+  .md-note-link .note-link-title{flex:1;min-width:0;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .md-note-link .note-link-go{flex-shrink:0;font-size:14px;color:var(--ink-soft);}
+  /* "Linked from" backlinks list appended under a note's body — every other
+     note whose raw markdown contains a shelf://<thisNoteId> link */
+  .backlinks-section{margin:28px 0 8px;padding-top:16px;border-top:1px solid var(--line);}
+  .backlinks-label{font-size:12px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;}
+  .backlink-row{
+    display:block;width:100%;text-align:left;margin-bottom:6px;padding:8px 12px;
+    border:1px solid var(--line);border-radius:8px;background:var(--card);
+    color:var(--md);font-size:14px;font-family:inherit;
+  }
+  .backlink-row:active{background:var(--line);}
   .alink-list{max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-top:4px;}
   .alink-row{
     display:flex;align-items:baseline;justify-content:space-between;gap:10px;width:100%;
@@ -600,7 +623,7 @@
 
 <div id="audioLinkOverlay" class="overlay" style="display:none;">
   <div class="sheet">
-    <h2>Link a recording</h2>
+    <h2 id="audioLinkTitle">Link a recording</h2>
     <div id="audioLinkList" class="alink-list"></div>
     <div class="row">
       <button class="cancel" onclick="closeAudioLinkPicker()">Close</button>
