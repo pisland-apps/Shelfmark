@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.21.0';
+const APP_VERSION = '1.22.0';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1378,6 +1378,7 @@ async function openReader(id){
     wireNoteLinks(div);
     wireTagPills(div);
     wireTaskCheckboxes(div);
+    wireParagraphEdit(div);
     await renderBacklinks(id, div);
     const editWrap = document.createElement('div');
     editWrap.id = 'mdEditWrap';
@@ -1604,6 +1605,126 @@ function startEditNote(){
   document.getElementById('editNoteBtn').classList.add('active');
   document.getElementById('mdEditArea').focus();
 }
+// Same block split renderMarkdown uses (blank-line separated), but returns
+// each block's [start,end] character offset instead of its text — lets
+// editParagraphAt find exactly where a tapped paragraph starts in the
+// textarea without disturbing anything renderMarkdown itself does.
+function blockOffsets(text){
+  const offsets = [];
+  let start = 0;
+  const re = /\n{2,}/g;
+  let m;
+  while((m = re.exec(text))){
+    offsets.push([start, m.index]);
+    start = m.index + m[0].length;
+  }
+  offsets.push([start, text.length]);
+  return offsets;
+}
+// Jumps straight into the existing source editor with the cursor placed at
+// paragraph `idx`, instead of only landing at the top via the pencil
+// button. Offsets are computed against the COLLAPSED text (same
+// collapseImagesForEdit output startEditNote puts in the textarea) since
+// that's what's actually on screen — collapsing an image link to `img:N`
+// only shortens it in place, so block boundaries still line up 1:1 with
+// curNoteRaw's.
+function editParagraphAt(idx){
+  if(curNoteRaw == null) return;
+  startEditNote();
+  const ta = document.getElementById('mdEditArea');
+  const range = blockOffsets(ta.value)[idx];
+  if(!range) return;
+  const pos = range[0];
+  // Rough proportional nudge so a long note doesn't leave the caret way off
+  // screen before the browser's own focus/selection scrolling takes over —
+  // measuring the exact wrapped-line position isn't worth the complexity
+  // here.
+  if(ta.scrollHeight > ta.clientHeight){
+    ta.scrollTop = Math.max(0, (pos / ta.value.length) * ta.scrollHeight - ta.clientHeight / 3);
+  }
+  ta.setSelectionRange(pos, pos);
+}
+// Lets a tap on a paragraph in reading view jump straight into edit mode at
+// that paragraph. Skips taps on anything with its own tap behavior (a link,
+// a button, a checkbox, an audio/note-link widget) so those keep working
+// exactly as before.
+const PARAGRAPH_TAP_EXCLUDE = 'button, a, input, .md-audio-inline, .md-note-link';
+let paragraphLongPressFired = false;
+function wireParagraphEdit(container){
+  container.querySelectorAll('.mdblock').forEach(el=>{
+    el.onclick = (e)=>{
+      if(paragraphLongPressFired){ paragraphLongPressFired = false; return; }
+      if(e.target.closest(PARAGRAPH_TAP_EXCLUDE)) return;
+      editParagraphAt(Number(el.dataset.idx));
+    };
+  });
+  wireParagraphLongPress(container);
+}
+// Touch fallback for the tap-to-edit gesture above: there's no hover state
+// on touch to hint a paragraph is tappable before you tap it, so a
+// long-press instead pops up an explicit "Edit this paragraph" menu at the
+// touch point. Same destination (editParagraphAt) — just discoverable
+// without a mouse.
+function wireParagraphLongPress(container){
+  container.querySelectorAll('.mdblock').forEach(el=>{
+    let timer = null, startX = 0, startY = 0, moved = false;
+    el.addEventListener('touchstart', (e)=>{
+      if(e.target.closest(PARAGRAPH_TAP_EXCLUDE)) return;
+      moved = false;
+      const t = e.touches[0];
+      startX = t.clientX; startY = t.clientY;
+      const idx = Number(el.dataset.idx);
+      clearTimeout(timer);
+      timer = setTimeout(()=>{
+        if(moved) return;
+        paragraphLongPressFired = true;
+        setTimeout(()=>{ paragraphLongPressFired = false; }, 800); // fail-safe in case no click follows to reset this
+        showParagraphMenu(idx, t.clientX, t.clientY);
+      }, 550);
+    }, {passive:true});
+    el.addEventListener('touchmove', (e)=>{
+      const t = e.touches[0];
+      if(Math.abs(t.clientX-startX) > 10 || Math.abs(t.clientY-startY) > 10){
+        moved = true;
+        clearTimeout(timer);
+      }
+    }, {passive:true});
+    el.addEventListener('touchend', ()=>clearTimeout(timer));
+    el.addEventListener('touchcancel', ()=>clearTimeout(timer));
+  });
+}
+let paragraphMenuEl = null;
+function closeParagraphMenu(){
+  if(paragraphMenuEl){ paragraphMenuEl.remove(); paragraphMenuEl = null; }
+  document.removeEventListener('touchstart', closeParagraphMenuOnOutside, true);
+  document.removeEventListener('click', closeParagraphMenuOnOutside, true);
+}
+function closeParagraphMenuOnOutside(e){
+  if(paragraphMenuEl && !paragraphMenuEl.contains(e.target)) closeParagraphMenu();
+}
+function showParagraphMenu(idx, x, y){
+  closeParagraphMenu();
+  const menu = document.createElement('div');
+  menu.className = 'para-menu';
+  menu.innerHTML = `<button type="button" class="para-menu-btn">Edit this paragraph</button>`;
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(Math.max(8, x - rect.width / 2), window.innerWidth - rect.width - 8);
+  let top = y - rect.height - 14;
+  if(top < 8) top = y + 14;
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  menu.querySelector('.para-menu-btn').onclick = (e)=>{
+    e.stopPropagation();
+    closeParagraphMenu();
+    editParagraphAt(idx);
+  };
+  paragraphMenuEl = menu;
+  setTimeout(()=>{
+    document.addEventListener('touchstart', closeParagraphMenuOnOutside, true);
+    document.addEventListener('click', closeParagraphMenuOnOutside, true);
+  }, 0);
+}
 function cancelEditNote(){
   closeWikiAutocomplete();
   document.getElementById('mdEditWrap').style.display = 'none';
@@ -1628,6 +1749,7 @@ async function saveEditNote(){
   wireNoteLinks(mdView);
   wireTagPills(mdView);
   wireTaskCheckboxes(mdView);
+  wireParagraphEdit(mdView);
   await renderBacklinks(curId, mdView); // link targets may have changed
   const it = await getOne(curId);
   updateBookmarkUI(it.bookmarks || []);
@@ -2572,6 +2694,7 @@ async function toggleTaskCheckbox(blockIdx, lineIdx){
     wireNoteLinks(mdView);
     wireTagPills(mdView);
     wireTaskCheckboxes(mdView);
+    wireParagraphEdit(mdView);
     await renderBacklinks(curId, mdView);
     updateOutlineUI(buildOutline(mdView));
   }
