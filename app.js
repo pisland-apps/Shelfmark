@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.23.0';
-const APP_VERSION_DATE = '2026-09-27';
+const APP_VERSION = '1.23.1';
+const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -1665,6 +1665,13 @@ function wireParagraphEdit(container){
     el.onclick = (e)=>{
       if(paragraphLongPressFired){ paragraphLongPressFired = false; return; }
       if(e.target.closest(PARAGRAPH_TAP_EXCLUDE)) return;
+      // A mouse drag that selects text still fires a click on mouseup (as
+      // long as it started/ended on the same element), so without this
+      // check every text selection would get yanked straight into edit
+      // mode instead of leaving you free to copy. Only treat this as a
+      // genuine tap when there's no active (non-empty) selection.
+      const sel = window.getSelection();
+      if(sel && sel.toString().length > 0) return;
       editParagraphAt(Number(el.dataset.idx));
     };
   });
