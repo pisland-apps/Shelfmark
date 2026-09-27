@@ -8,10 +8,22 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '2.0.0';
-const APP_VERSION_DATE = '2026-09-26';
+const APP_VERSION = '1.10.0';
+const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
+
+// pdf.js — vendored locally under lib/ (no CDN dependency, same approach as
+// the companion Family Health & Shield and Ledger apps). pdfjs-dist 4.x+
+// only ships ES module builds, so it's loaded via dynamic import() rather
+// than a <script> tag. Awaiting this promise at the point of use
+// (renderPdfPage()) means it doesn't matter whether this script or the
+// module finishes loading first. Worker vendored at lib/pdf.worker.min.mjs —
+// must stay in lockstep with lib/pdf.min.mjs's package/version.
+const pdfjsLibPromise = import('./lib/pdf.min.mjs').then(mod => {
+  mod.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.mjs';
+  return mod;
+});
 
 // ---- crypto / auth ---------------------------------------------------------
 const PBKDF2_ITERATIONS = 250000;
@@ -150,29 +162,14 @@ const TYPE_LABEL = {pdf:'PDF', markdown:'Note', image:'Picture', audio:'Recordin
 let db, pendingFile = null, pendingType = null;
 let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
 
-// ---- pdf.js loading (vendored under lib/pdfjs/, no CDN) ----
-// pdfjs-dist ships only as an ES module (.mjs) — app.js is a plain classic
-// script so it can't `import` it at the top level (and switching this whole
-// file to type="module" would break every inline onclick="..." handler,
-// since module-scope functions aren't implicitly globals). Dynamic import()
-// works fine from a classic script, resolved relative to app.js's own URL,
-// so that's the integration point. cMapUrl/standardFontDataUrl/wasmUrl are
-// resolved as ABSOLUTE URLs before being handed to pdf.js — whether that
-// resolution actually happens on the main thread or inside the worker
-// varies by internal version, and an absolute URL is correct either way,
-// so this sidesteps needing to know which.
-const PDFJS_BASE = new URL('./lib/pdfjs/', document.baseURI).href;
-let pdfjsLibPromise = null;
-function loadPdfJs(){
-  if(!pdfjsLibPromise){
-    pdfjsLibPromise = import('./lib/pdfjs/pdf.min.mjs').then(mod=>{
-      mod.GlobalWorkerOptions.workerSrc = PDFJS_BASE + 'pdf.worker.min.mjs';
-      return mod;
-    });
-  }
-  return pdfjsLibPromise;
-}
-let curPdfDoc = null, curPdfPage = 1, curPdfTotalPages = 0, curPdfRenderTask = null, curPdfResizeHandler = null, pdfProgressTimer = null;
+// ---- PDF reader (page-by-page canvas render via pdf.js) ----
+// curPdfDoc is the live pdf.js document for whatever's open in the reader;
+// curPdfPage/curPdfNumPages track where we are. curPdfRenderToken guards
+// against a slow render from a page the reader already navigated away from
+// (or already closed) landing on the canvas after the fact — each call to
+// renderPdfPage() takes the current token, and only applies its result if
+// the token is still current when the async render finishes.
+let curPdfDoc = null, curPdfPage = 1, curPdfNumPages = 0, curPdfRenderToken = 0;
 
 // ---- Inline shelf audio player ----
 // Audio items play directly from the shelf row (tap to play/pause, inline
@@ -926,7 +923,7 @@ async function render(){
         row.onclick = ()=>openReader(it.id);
         row.innerHTML = `${it.cover ? `<img class="cover-thumb" src="${escapeHtml(it.cover)}">` : ''}
           <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
-          <div class="sub">${TYPE_LABEL[it.type]}${pdfProgressLabel(it)}</div></div>
+          <div class="sub">${TYPE_LABEL[it.type]}${it.progress ? ' \u00b7 in progress' : ''}</div></div>
           <button class="edit" title="Rename or recategorize">&#9998;</button>
           <button class="del" title="Remove">&times;</button>`;
       }
@@ -940,12 +937,6 @@ async function render(){
   if(selectMode) updateSelectBar();
 }
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function pdfProgressLabel(it){
-  if(it.type === 'pdf' && it.progress && it.progress.page){
-    return ` \u00b7 page ${it.progress.page} of ${it.progress.totalPages || '?'}`;
-  }
-  return it.progress ? ' \u00b7 in progress' : '';
-}
 function isValidCoverDataUrl(s){
   return typeof s === 'string' && /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(s);
 }
@@ -1116,54 +1107,52 @@ async function openReader(id){
   document.getElementById('bmPanel').style.display = 'none';
   const c = document.getElementById('rcontent');
   c.className = ''; c.innerHTML = ''; c.style.display = ''; c.style.flexDirection = '';
-  teardownReaderContent(); // tear down any PREVIOUS item's resources — e.g. a
-  // pdf.js document, its resize listener — since this can run while the
-  // reader is already open showing something else (a note's embedded
-  // audio-expand button opens a different item without closing first).
+  if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
+  if(curPdfDoc){ curPdfDoc.destroy(); curPdfDoc = null; }
+  curPdfRenderToken++; // invalidate any render still in flight for whatever was open before
+  curPdfPage = 1; curPdfNumPages = 0;
 
   if(it.type === 'pdf'){
     c.classList.add('pad0');
+    // Rendered page-by-page onto a <canvas> via pdf.js rather than handed to
+    // an <iframe>/native PDF plugin — matches the companion Ledger and
+    // Family Health & Shield apps. Two things that native viewer couldn't
+    // give us: reading progress (which page you left off on, restored next
+    // time you open this item) and identical rendering across every
+    // platform, since some mobile browsers have no built-in PDF viewer at
+    // all and would otherwise just offer the file as a download.
     c.style.display = 'flex'; c.style.flexDirection = 'column';
-    curBlobUrl = URL.createObjectURL(it.content);
-    const coverHtml = it.cover ? `<img class="reader-cover" src="${escapeHtml(it.cover)}">` : '';
-    c.innerHTML = coverHtml + `
-      <div class="pdfwrap">
-        <div class="pdf-toolbar">
-          <button onclick="pdfPrevPage()" title="Previous page">&#8592;</button>
-          <span class="pdf-pageinfo">
-            <input type="number" id="pdfPageInput" min="1" value="1" onchange="pdfJumpToPage(this.value)">
-            <span>/ <span id="pdfPageTotal">&hellip;</span></span>
-          </span>
-          <button onclick="pdfNextPage()" title="Next page">&#8594;</button>
-          <a id="pdfDownloadBtn" class="pdf-download" title="Download original" href="${curBlobUrl}" download="${escapeHtml(it.title)}.pdf">&#8681;</a>
-        </div>
-        <div class="pdf-canvas-wrap" id="pdfCanvasWrap"><canvas id="pdfCanvas"></canvas></div>
+    const pdfWrap = document.createElement('div');
+    pdfWrap.className = 'pdfwrap';
+    if(it.cover){
+      const coverImg = document.createElement('img');
+      coverImg.className = 'reader-cover';
+      coverImg.src = it.cover;
+      c.appendChild(coverImg);
+    }
+    pdfWrap.innerHTML = `
+      <div class="pdfpage" id="pdfPage"><p style="font-size:0.85rem;color:var(--ink-soft);">Loading PDF…</p></div>
+      <div class="pdfnav">
+        <button id="pdfPrev" onclick="pdfPrevPage()" title="Previous page">&#8249;</button>
+        <span class="pnum" id="pdfPnum"></span>
+        <button id="pdfNext" onclick="pdfNextPage()" title="Next page">&#8250;</button>
       </div>`;
+    c.appendChild(pdfWrap);
     try{
-      const pdfjsLib = await loadPdfJs();
-      const arrayBuf = await it.content.arrayBuffer();
-      curPdfDoc = await pdfjsLib.getDocument({
-        data: new Uint8Array(arrayBuf),
-        cMapUrl: PDFJS_BASE + 'cmaps/', cMapPacked: true,
-        standardFontDataUrl: PDFJS_BASE + 'standard_fonts/',
-        wasmUrl: PDFJS_BASE + 'wasm/'
-      }).promise;
-      // The item may have been closed (or reopened as something else)
-      // while the above awaits were in flight — bail rather than render
-      // into a torn-down or repurposed view.
-      if(curId !== id) { curPdfDoc.destroy(); return; }
-      curPdfTotalPages = curPdfDoc.numPages;
-      document.getElementById('pdfPageTotal').textContent = curPdfTotalPages;
-      document.getElementById('pdfPageInput').max = curPdfTotalPages;
-      const savedPage = it.progress && it.progress.page;
-      curPdfPage = Math.min(Math.max(1, savedPage || 1), curPdfTotalPages);
-      await renderPdfPage(curPdfPage);
-      curPdfResizeHandler = ()=>renderPdfPage(curPdfPage);
-      window.addEventListener('resize', curPdfResizeHandler);
-      document.addEventListener('keydown', pdfKeyHandler);
-    }catch(err){
-      const wrap = document.getElementById('pdfCanvasWrap');
-      if(wrap) wrap.innerHTML = `<div class="pdf-error">Couldn't open this PDF — it may be corrupted or password-protected.<br>You can still <a href="${curBlobUrl}" download="${escapeHtml(it.title)}.pdf">download the original file</a>.</div>`;
+      const buf = await it.content.arrayBuffer();
+      const pdfjsLib = await pdfjsLibPromise;
+      // isEvalSupported: false — belt-and-suspenders on top of only ever
+      // calling getPage()/render() here: tells pdf.js not to use eval()/
+      // new Function() for any internal optimization, so a malicious PDF
+      // can't get script execution out of the parser. Harmless for
+      // rendering — eval is only ever used there as a speed optimization.
+      curPdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false }).promise;
+      curPdfNumPages = curPdfDoc.numPages;
+      const startPage = (it.progress && it.progress.page) ? Math.min(Math.max(1, it.progress.page), curPdfNumPages) : 1;
+      await renderPdfPage(startPage);
+    } catch(pdfErr){
+      const pageEl = document.getElementById('pdfPage');
+      if(pageEl) pageEl.innerHTML = `<p style="color:var(--pdf);">Could not open this PDF: ${escapeHtml(pdfErr.message)}</p>`;
     }
   } else if(it.type === 'image'){
     curBlobUrl = URL.createObjectURL(it.content);
@@ -1224,79 +1213,6 @@ async function openReader(id){
   document.getElementById('reader').classList.add('open');
   updateMiniPlayer(); // may need to hide now that the reader is showing this track
 }
-
-// Torn down both when closing the reader entirely AND at the top of
-// openReader when it's re-invoked while already open for something else
-// (e.g. a note's embedded audio-expand button, tapped while a PDF is the
-// current reader content).
-function teardownReaderContent(){
-  if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
-  if(curPdfRenderTask){ curPdfRenderTask.cancel(); curPdfRenderTask = null; }
-  if(curPdfDoc){ curPdfDoc.destroy(); curPdfDoc = null; }
-  curPdfTotalPages = 0; curPdfPage = 1;
-  clearTimeout(pdfProgressTimer);
-  if(curPdfResizeHandler){ window.removeEventListener('resize', curPdfResizeHandler); curPdfResizeHandler = null; }
-  document.removeEventListener('keydown', pdfKeyHandler);
-}
-
-// ---- PDF page rendering ----
-// One page at a time onto a single <canvas>, scaled to fit the available
-// width — not a continuous scroll — so "page N of M" is an exact, stable
-// progress marker rather than a fuzzy scroll fraction.
-async function renderPdfPage(pageNum){
-  if(!curPdfDoc) return;
-  if(curPdfRenderTask){ curPdfRenderTask.cancel(); curPdfRenderTask = null; }
-  const wrap = document.getElementById('pdfCanvasWrap');
-  const canvas = document.getElementById('pdfCanvas');
-  if(!wrap || !canvas) return; // reader may have moved on while this was loading
-  const page = await curPdfDoc.getPage(pageNum);
-  const unscaled = page.getViewport({ scale: 1 });
-  const availableWidth = Math.max(100, wrap.clientWidth - 24);
-  const scale = Math.max(0.25, availableWidth / unscaled.width);
-  const viewport = page.getViewport({ scale });
-  const outputScale = window.devicePixelRatio || 1;
-  canvas.width = Math.floor(viewport.width * outputScale);
-  canvas.height = Math.floor(viewport.height * outputScale);
-  canvas.style.width = Math.floor(viewport.width) + 'px';
-  canvas.style.height = Math.floor(viewport.height) + 'px';
-  const ctx = canvas.getContext('2d');
-  const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
-  curPdfRenderTask = page.render({ canvasContext: ctx, viewport, transform });
-  try{ await curPdfRenderTask.promise; }
-  catch(err){
-    if(err && err.name === 'RenderingCancelledException') return; // superseded by a newer page/resize
-    throw err;
-  }
-  curPdfRenderTask = null;
-  const pageInput = document.getElementById('pdfPageInput');
-  if(pageInput) pageInput.value = pageNum;
-  savePdfProgress(pageNum);
-}
-function savePdfProgress(page){
-  if(!curId) return;
-  clearTimeout(pdfProgressTimer);
-  pdfProgressTimer = setTimeout(()=>{
-    putMetaOnly(curId, { progress: { page, totalPages: curPdfTotalPages } }).catch(()=>{});
-  }, 300);
-}
-function pdfPrevPage(){
-  if(curPdfDoc && curPdfPage > 1){ curPdfPage--; renderPdfPage(curPdfPage); }
-}
-function pdfNextPage(){
-  if(curPdfDoc && curPdfPage < curPdfTotalPages){ curPdfPage++; renderPdfPage(curPdfPage); }
-}
-function pdfJumpToPage(v){
-  if(!curPdfDoc) return;
-  const n = Math.min(Math.max(1, parseInt(v, 10) || 1), curPdfTotalPages || 1);
-  curPdfPage = n;
-  renderPdfPage(n);
-}
-function pdfKeyHandler(e){
-  if(curType !== 'pdf') return;
-  if(document.activeElement && document.activeElement.id === 'pdfPageInput') return; // let arrow keys move the cursor there
-  if(e.key === 'ArrowLeft') pdfPrevPage();
-  else if(e.key === 'ArrowRight') pdfNextPage();
-}
 function skip(s){ const a = shelfAudioEl; if(!a) return; a.currentTime = Math.max(0, Math.min((a.duration||0), a.currentTime+s)); }
 // Sticks for the rest of this session (not saved across app restarts) —
 // picking a speed once and having it apply to the next recording you open
@@ -1311,6 +1227,53 @@ function cycleSpeed(){
   if(btn) btn.textContent = audioSpeed + 'x';
 }
 function fmtTime(t){ t=Math.floor(t); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0'); }
+
+// Renders one page of the currently-open PDF onto a fresh canvas (pdf.js
+// canvases can't be resized/reused across renders) and updates the nav bar.
+// Saves {page: n} as this item's reading progress so reopening it resumes
+// here — mirrors how the markdown reader saves scroll position and the
+// audio reader saves playback time.
+async function renderPdfPage(pageNum){
+  if(!curPdfDoc) return;
+  const myToken = ++curPdfRenderToken;
+  const pageEl = document.getElementById('pdfPage');
+  if(!pageEl) return;
+  pageEl.innerHTML = '<p style="font-size:0.85rem;color:var(--ink-soft);">Loading page…</p>';
+  try{
+    const page = await curPdfDoc.getPage(pageNum);
+    if(myToken !== curPdfRenderToken) return; // reader moved on while we awaited
+    const unscaledViewport = page.getViewport({ scale: 1 });
+    const containerWidth = pageEl.clientWidth || 320;
+    const scale = Math.max(0.1, (containerWidth - 16) / unscaledViewport.width);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.display = 'block';
+    canvas.style.margin = '12px auto';
+    canvas.style.boxShadow = '0 1px 4px rgba(0,0,0,0.15)';
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    if(myToken !== curPdfRenderToken) return;
+    pageEl.innerHTML = '';
+    pageEl.appendChild(canvas);
+    curPdfPage = pageNum;
+    updatePdfNavUI();
+    saveProgress({ page: pageNum });
+  } catch(pdfErr){
+    if(myToken !== curPdfRenderToken) return;
+    pageEl.innerHTML = `<p style="color:var(--pdf);">Could not render this page: ${escapeHtml(pdfErr.message)}</p>`;
+  }
+}
+function updatePdfNavUI(){
+  const pnum = document.getElementById('pdfPnum');
+  if(pnum) pnum.textContent = curPdfPage + ' / ' + curPdfNumPages;
+  const prev = document.getElementById('pdfPrev');
+  const next = document.getElementById('pdfNext');
+  if(prev) prev.disabled = curPdfPage <= 1;
+  if(next) next.disabled = curPdfPage >= curPdfNumPages;
+}
+function pdfPrevPage(){ if(curPdfPage > 1) renderPdfPage(curPdfPage - 1); }
+function pdfNextPage(){ if(curPdfPage < curPdfNumPages) renderPdfPage(curPdfPage + 1); }
 
 async function saveProgress(p){
   if(!curId) return;
@@ -1463,7 +1426,10 @@ function updateBookmarkUI(bookmarks){
 
 function closeReader(){
   document.getElementById('reader').classList.remove('open');
-  teardownReaderContent();
+  if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
+  if(curPdfDoc){ curPdfDoc.destroy(); curPdfDoc = null; }
+  curPdfRenderToken++; // invalidate any render still in flight for the closed item
+  curPdfPage = 1; curPdfNumPages = 0;
   curId = null; curType = null;
   updateMiniPlayer(); // the mini bar may need to reappear now that the reader isn't showing this track
   render();
