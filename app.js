@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.10.1';
 const APP_VERSION_DATE = '2026-09-27';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1109,8 +1109,19 @@ async function openReader(id){
   c.className = ''; c.innerHTML = ''; c.style.display = ''; c.style.flexDirection = '';
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
   if(curPdfDoc){ curPdfDoc.destroy(); curPdfDoc = null; }
-  curPdfRenderToken++; // invalidate any render still in flight for whatever was open before
+  // Bump the token now and remember it as THIS open's id. Every checkpoint in
+  // the pdf branch below re-checks against the live counter before touching
+  // shared state (curPdfDoc/curPdfNumPages) or the DOM, so a slow load from
+  // an open the user has since closed or replaced can't clobber whatever's
+  // current when it finally resolves — it just quietly discards itself.
+  const openToken = ++curPdfRenderToken;
   curPdfPage = 1; curPdfNumPages = 0;
+  // Show the reader chrome before any type-specific content loads. The pdf
+  // branch measures #pdfPage's rendered width to pick a render scale; while
+  // #reader still has display:none (i.e. before this class is added) that
+  // width reads as 0, so the very first page was rendering at a hardcoded
+  // 320px fallback and staying that small even once the reader appeared.
+  document.getElementById('reader').classList.add('open');
 
   if(it.type === 'pdf'){
     c.classList.add('pad0');
@@ -1140,17 +1151,32 @@ async function openReader(id){
     c.appendChild(pdfWrap);
     try{
       const buf = await it.content.arrayBuffer();
+      if(openToken !== curPdfRenderToken) return; // superseded while reading the file — bail before touching anything
       const pdfjsLib = await pdfjsLibPromise;
+      if(openToken !== curPdfRenderToken) return; // superseded while pdf.js was loading
       // isEvalSupported: false — belt-and-suspenders on top of only ever
       // calling getPage()/render() here: tells pdf.js not to use eval()/
       // new Function() for any internal optimization, so a malicious PDF
       // can't get script execution out of the parser. Harmless for
       // rendering — eval is only ever used there as a speed optimization.
-      curPdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false }).promise;
+      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false }).promise;
+      if(openToken !== curPdfRenderToken){
+        // The reader was closed or moved on to a different item while this
+        // document was parsing. Destroy this orphaned doc immediately rather
+        // than assigning it to curPdfDoc — otherwise a slow first open could
+        // resolve after a second, faster open already has its own document
+        // and canvas on screen, silently swapping curPdfDoc out from under
+        // it and stealing the next render-page token so the real, current
+        // open never finishes rendering.
+        doc.destroy();
+        return;
+      }
+      curPdfDoc = doc;
       curPdfNumPages = curPdfDoc.numPages;
       const startPage = (it.progress && it.progress.page) ? Math.min(Math.max(1, it.progress.page), curPdfNumPages) : 1;
       await renderPdfPage(startPage);
     } catch(pdfErr){
+      if(openToken !== curPdfRenderToken) return; // reader moved on; nowhere to report this error
       const pageEl = document.getElementById('pdfPage');
       if(pageEl) pageEl.innerHTML = `<p style="color:var(--pdf);">Could not open this PDF: ${escapeHtml(pdfErr.message)}</p>`;
     }
@@ -1210,7 +1236,6 @@ async function openReader(id){
       </div>`;
     document.getElementById('scrub').oninput = (e)=>{ aud.currentTime = (e.target.value/100)*(aud.duration||0); };
   }
-  document.getElementById('reader').classList.add('open');
   updateMiniPlayer(); // may need to hide now that the reader is showing this track
 }
 function skip(s){ const a = shelfAudioEl; if(!a) return; a.currentTime = Math.max(0, Math.min((a.duration||0), a.currentTime+s)); }
