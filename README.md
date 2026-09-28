@@ -142,6 +142,16 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.30.1** (2026-09-28) — Fix: v1.30.0's tag jump highlighted nothing on a
+  real note (0 hits, ↑/↓ dead). The Tags page listed `#lockOverlay`, but in
+  the rendered note every occurrence sat inside an inline-code span, and the
+  whole-tag mode skipped code — so it found nothing. The tag index
+  (`stripCodeForTags`, run on raw text) and the renderer can disagree about
+  what is code, so the mode no longer skips code. It also falls back to a
+  plain substring search if the whole-tag search finds nothing. Root cause of
+  the index/renderer disagreement on that note is not yet identified (needs
+  the raw text).
+
 - **v1.30.0** (2026-09-28) — Jump straight to a tag's position. Palette
   "Jump to #tag" used to always open the Tags page; if only one note has the
   tag it now opens that note scrolled to the tag with every occurrence

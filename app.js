@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.30.0';
+const APP_VERSION = '1.30.1';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1963,9 +1963,12 @@ async function saveEditNote(){
 let findOpen = false;
 let findCase = false;
 // Set only by openNoteAtTag(): the query is a #tag and should match that WHOLE
-// tag ('#idea' must not light up '#ideas'), skipping code, exactly the way
-// TAG_RE decides what counts as a tag. Cleared the moment the user edits the
-// query, so ordinary find stays a plain substring search.
+// tag ('#idea' must not light up '#ideas'). Deliberately NOT skipping code:
+// the tag index and the renderer can disagree about what counts as code (a
+// stray or unbalanced backtick shifts which spans pair up), so a tag the Tags
+// page lists may show up in the note only inside a code span — skipping code
+// then found nothing and the jump looked broken. Cleared the moment the user
+// edits the query, so ordinary find stays a plain substring search.
 let findTagExact = false;
 let findHits = [];       // reading view: the <mark> elements
 let findEditMatches = []; // editing view: start offsets into the textarea
@@ -2060,7 +2063,6 @@ function highlightReader(q){
       const tag = n.parentNode && n.parentNode.nodeName;
       // tag pills are <button>s but hold real note text ("#idea"), so they stay searchable
       const pill = n.parentNode.classList && n.parentNode.classList.contains('tag-pill');
-      if(findTagExact && n.parentNode.closest && n.parentNode.closest('code, pre')) return NodeFilter.FILTER_REJECT;
       if((tag === 'BUTTON' && !pill) || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SCRIPT' || tag === 'STYLE') return NodeFilter.FILTER_REJECT;
       return n.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     }
@@ -2391,6 +2393,9 @@ async function openNoteAtTag(id, tagKey){
   document.getElementById('findInput').value = '#' + tagKey;
   findTagExact = true;
   openFindBar(true);
+  // Whole-tag mode found nothing (e.g. the tag is glued to other characters
+  // in the text): retry as a plain substring so the jump still lands somewhere.
+  if(!findHits.length){ findTagExact = false; findRefresh(); }
   goToFindMatch();
 }
 // Palette "Jump to #tag": one note has it -> go straight to the tag inside
