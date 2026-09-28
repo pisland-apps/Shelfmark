@@ -223,6 +223,28 @@
     max-height:60vh; overflow:auto; background:var(--card); border:1px solid var(--line);
     border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,.2); z-index:15;
   }
+  /* ---- find / replace bar (note pages) ---- */
+  #findBar{
+    position:fixed; top:calc(58px + env(safe-area-inset-top,0px)); left:0; right:0; z-index:16;
+    background:var(--card); border-bottom:1px solid var(--line); box-shadow:0 6px 16px rgba(0,0,0,.12);
+    padding:8px 12px; display:flex; flex-direction:column; gap:6px;
+  }
+  .find-row{display:flex;align-items:center;gap:6px;max-width:640px;width:100%;margin:0 auto;}
+  .find-row input{
+    flex:1;min-width:0;box-sizing:border-box;padding:8px 10px;border-radius:8px;
+    border:1px solid var(--line);background:var(--paper);color:var(--ink);font-size:14px;font-family:inherit;
+  }
+  .find-count{font-size:12px;color:var(--ink-soft);min-width:44px;text-align:center;white-space:nowrap;}
+  .find-btn{
+    background:none;border:1px solid var(--line);border-radius:8px;color:var(--ink);
+    min-width:34px;height:34px;font-size:14px;font-family:inherit;padding:0 8px;flex-shrink:0;
+  }
+  .find-btn.wide{padding:0 12px;}
+  .find-btn.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  .find-btn:active{background:var(--line);}
+  /* highlights inside the rendered note */
+  mark.find-hit{background:rgba(156,122,41,.35);color:inherit;border-radius:2px;padding:0;}
+  mark.find-hit.cur{background:var(--audio);color:#fff;}
   .bmrow{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line);font-size:13px;}
   .bmrow:last-child{border-bottom:none;}
   .bmrow .snip{flex:1;cursor:pointer;color:var(--ink);line-height:1.4;}
@@ -873,6 +895,7 @@
     <div class="rtitle" id="rtitle"></div>
     <button class="bmbtn" id="exportItemBtn" onclick="exportCurrentItem()" title="Export this file">&#8679;</button>
     <button class="bmbtn" id="settingsBtn" onclick="toggleSettingsPanel()" style="display:none;" title="Reading settings">&#9881;</button>
+    <button class="bmbtn" id="findBtn" onclick="toggleFindBar()" style="display:none;" title="Find in this note (Ctrl+F)">&#128269;</button>
     <button class="bmbtn" id="editNoteBtn" onclick="startEditNote()" style="display:none;" title="Edit this note">&#9998;</button>
     <button class="bmbtn" id="outlineBtn" onclick="toggleOutlinePanel()" style="display:none;" title="Table of contents">&#9776;</button>
     <button class="bmbtn" id="bmBtn" onclick="toggleBookmarkPanel()" style="display:none;">&#128278;<span id="bmCount"></span></button>
@@ -902,6 +925,24 @@
   </div>
   <div id="bmPanel" class="bmpanel" style="display:none;"></div>
   <div id="outlinePanel" class="bmpanel" style="display:none;"></div>
+  <div id="findBar" style="display:none;">
+    <div class="find-row">
+      <input type="search" id="findInput" placeholder="Find in note&hellip;" autocomplete="off" oninput="onFindInput()" onkeydown="onFindKeydown(event)">
+      <span id="findCount" class="find-count"></span>
+      <button class="find-btn" id="findCaseBtn" onclick="toggleFindCase()" title="Match case" aria-pressed="false">Aa</button>
+      <button class="find-btn" onclick="findStep(-1)" title="Previous match (Shift+Enter)">&#8593;</button>
+      <button class="find-btn" onclick="findStep(1)" title="Next match (Enter)">&#8595;</button>
+      <button class="find-btn" onclick="closeFindBar()" title="Close">&#10005;</button>
+    </div>
+    <div class="find-row" id="replaceRow" style="display:none;">
+      <input type="text" id="replaceInput" placeholder="Replace with&hellip;" autocomplete="off" onkeydown="onReplaceKeydown(event)">
+      <button class="find-btn wide" onclick="replaceCurrent()" title="Replace this match and jump to the next">Replace</button>
+      <button class="find-btn wide" onclick="replaceAll()" title="Replace every match (Undo reverses it in one step)">All</button>
+    </div>
+    <div class="find-row" id="findEditHint" style="display:none;">
+      <button class="find-btn wide" onclick="startEditFromFind()" title="Replacing edits the note text, so this opens the editor">Replace&hellip;</button>
+    </div>
+  </div>
   <div id="rcontent"></div>
 </div>
 

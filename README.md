@@ -7,6 +7,11 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Find & replace in a note.** A 🔍 button in the note page's top bar
+  (or Ctrl/Cmd+F) opens a find bar: matches are highlighted in reading
+  view with a prev/next stepper and a `3/12` counter; a match-case toggle
+  (Aa) is included. In the editor the same bar gains Replace and All —
+  Replace All is one Undo step.
 - **Deep search (note text).** A toggle button beside the search box
   (off by default, resets to off on every reopen) makes search also match
   inside markdown notes' own text, not just title/category. Debounced
@@ -136,6 +141,23 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.29.0** (2026-09-28) — Find & replace inside a note. Two modes on one
+  bar, because "what you read" and "what you edit" are different strings in
+  markdown. Reading view searches the RENDERED text (a hit never lands on
+  hidden syntax like `**` or a URL) and wraps hits in `<mark>`; it's
+  read-only, so the bar shows a "Replace…" button that opens the editor
+  with the query carried over. Editing view searches the textarea itself,
+  selects each match, and Replace/All rewrite it through
+  `pushUndoBeforeEdit`, so Replace All is a single Undo step. Replace is
+  two-step like most editors (first press selects, second replaces and
+  hops on). Matches inside an image's `(img:N)` placeholder are skipped so
+  a replace can never break an embedded picture. Ctrl/Cmd+F is intercepted
+  only while a note is open. Limits: reading-view hits can't span two
+  rendered elements (e.g. across a bold boundary — edit-mode search has no
+  such gap); highlights are capped at 2000; on mobile, stepping through
+  edit-mode matches focuses the textarea (so the selection scrolls into
+  view), which raises the keyboard.
 
 - **v1.28.0** (2026-09-28) — Opt-in deep search. Default search still only
   compares title/category (already decrypted for the shelf listing, so it's

@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.28.0';
+const APP_VERSION = '1.29.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1333,6 +1333,8 @@ async function openReader(id){
   document.getElementById('rtitle').textContent = it.title;
   document.getElementById('bmBtn').style.display = 'none';
   document.getElementById('editNoteBtn').style.display = 'none';
+  document.getElementById('findBtn').style.display = 'none';
+  closeFindBar(); // a find bar left open from the previous note must not carry over
   document.getElementById('settingsBtn').style.display = 'none';
   document.getElementById('outlineBtn').style.display = 'none';
   settingsPanelOpen = false;
@@ -1481,6 +1483,7 @@ async function openReader(id){
     c.onscroll = ()=>{ clearTimeout(c._t); c._t = setTimeout(()=>saveProgress({scroll:c.scrollTop}), 400); };
     document.getElementById('bmBtn').style.display = 'flex';
     document.getElementById('editNoteBtn').style.display = 'flex';
+    document.getElementById('findBtn').style.display = 'flex';
     document.getElementById('settingsBtn').style.display = 'flex';
     updateBookmarkUI(it.bookmarks || []);
     updateOutlineUI(buildOutline(div));
@@ -1677,6 +1680,7 @@ function startEditNote(){
   document.getElementById('editNoteBtn').classList.add('active');
   document.getElementById('mdEditArea').focus();
   resetUndoHistory();
+  findRefresh(); // switch an open find bar over to editor mode
 }
 // ---- Undo/Redo for the note editor textarea ----
 // Assigning straight to ta.value (every toolbar button and autocomplete
@@ -1903,6 +1907,7 @@ function cancelEditNote(){
   document.getElementById('bmBtn').style.display = 'flex';
   document.getElementById('editNoteBtn').classList.remove('active');
   updateOutlineUI(buildOutline(document.getElementById('mdView')));
+  findRefresh(); // back to reading view: re-highlight against the (possibly just re-rendered) text
 }
 async function saveEditNote(){
   if(!curId) return;
@@ -1928,6 +1933,255 @@ async function saveEditNote(){
   updateOutlineUI(buildOutline(mdView));
   cancelEditNote();
 }
+
+// ---- Find / replace inside a note (v1.29.0) ----
+// One find bar, two modes, because "the text you see" and "the text you edit"
+// are different strings in a markdown note:
+//  • Reading view: searches the RENDERED text (what you actually see — a
+//    match never lands on hidden syntax like `**` or a URL) and highlights
+//    hits with <mark>. Read-only: replacing needs the source text, so the
+//    bar offers a "Replace…" button that opens the editor with the same
+//    query carried over.
+//  • Editing view: searches the textarea's own text, selects each match, and
+//    Replace / All rewrite it. Every replace goes through pushUndoBeforeEdit,
+//    so Replace All is a single Undo step.
+// Session-only state, nothing persisted. Matches spanning two rendered
+// elements (e.g. across a bold boundary) aren't found in reading view — a
+// known limit of walking text nodes; edit-mode search has no such gap.
+let findOpen = false;
+let findCase = false;
+let findHits = [];       // reading view: the <mark> elements
+let findEditMatches = []; // editing view: start offsets into the textarea
+let findIdx = -1;
+const FIND_MAX_HITS = 2000;
+function findIsEditing(){
+  const w = document.getElementById('mdEditWrap');
+  return !!w && w.style.display === 'flex';
+}
+function escapeRegExp(str){ return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function findRegex(q){ return new RegExp(escapeRegExp(q), findCase ? 'g' : 'gi'); }
+function toggleFindBar(){ findOpen ? closeFindBar() : openFindBar(); }
+function openFindBar(){
+  if(curType !== 'markdown') return;
+  findOpen = true;
+  document.getElementById('findBar').style.display = 'flex';
+  document.getElementById('findBtn').classList.add('active');
+  updateFindBarMode();
+  const inp = document.getElementById('findInput');
+  // Pre-fill from a selection in the editor, if there is one — same habit as
+  // every desktop editor's Ctrl+F.
+  if(findIsEditing()){
+    const ta = document.getElementById('mdEditArea');
+    const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    if(sel && sel.length < 100 && !sel.includes('\n')) inp.value = sel;
+  }
+  inp.focus(); inp.select();
+  findRefresh();
+}
+function closeFindBar(){
+  findOpen = false;
+  clearFindMarks();
+  findHits = []; findEditMatches = []; findIdx = -1;
+  const bar = document.getElementById('findBar');
+  if(bar) bar.style.display = 'none';
+  const btn = document.getElementById('findBtn');
+  if(btn) btn.classList.remove('active');
+}
+function toggleFindCase(){
+  findCase = !findCase;
+  const b = document.getElementById('findCaseBtn');
+  b.classList.toggle('active', findCase);
+  b.setAttribute('aria-pressed', findCase ? 'true' : 'false');
+  findRefresh();
+}
+// Shows the replace row only while editing; in reading view shows the
+// "Replace…" shortcut into the editor instead.
+function updateFindBarMode(){
+  const editing = findIsEditing();
+  document.getElementById('replaceRow').style.display = editing ? 'flex' : 'none';
+  document.getElementById('findEditHint').style.display = editing ? 'none' : 'flex';
+}
+function clearFindMarks(){
+  const view = document.getElementById('mdView');
+  if(!view) return;
+  view.querySelectorAll('mark.find-hit').forEach(m=>{
+    const parent = m.parentNode;
+    parent.replaceChild(document.createTextNode(m.textContent), m);
+    parent.normalize();
+  });
+}
+// Ranges of the editor text that must never be touched by a match: the
+// (img:N) reference that stands in for an embedded picture's data.
+function findProtectedRanges(text){
+  const out = [];
+  const re = /\(img:\d+\)/g; let m;
+  while((m = re.exec(text))) out.push([m.index, m.index + m[0].length]);
+  return out;
+}
+function findEditOffsets(text, q){
+  const prot = findProtectedRanges(text);
+  const re = findRegex(q); const out = []; let m;
+  while((m = re.exec(text)) && out.length < FIND_MAX_HITS){
+    const a = m.index, b = m.index + m[0].length;
+    if(!prot.some(([ps, pe]) => a < pe && b > ps)) out.push(a);
+    if(m[0].length === 0) re.lastIndex++;
+  }
+  return out;
+}
+function highlightReader(q){
+  clearFindMarks();
+  findHits = [];
+  const view = document.getElementById('mdView');
+  if(!view || !q) return;
+  const walker = document.createTreeWalker(view, NodeFilter.SHOW_TEXT, {
+    acceptNode(n){
+      const tag = n.parentNode && n.parentNode.nodeName;
+      if(tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SCRIPT' || tag === 'STYLE') return NodeFilter.FILTER_REJECT;
+      return n.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    }
+  });
+  const nodes = []; let n;
+  while((n = walker.nextNode())) nodes.push(n); // collect first — wrapping mutates the tree
+  for(const node of nodes){
+    if(findHits.length >= FIND_MAX_HITS) break;
+    const text = node.nodeValue;
+    const re = findRegex(q); let m, last = 0, frag = null;
+    while((m = re.exec(text)) && findHits.length < FIND_MAX_HITS){
+      if(m[0].length === 0){ re.lastIndex++; continue; }
+      if(!frag) frag = document.createDocumentFragment();
+      if(m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const mark = document.createElement('mark');
+      mark.className = 'find-hit';
+      mark.textContent = m[0];
+      frag.appendChild(mark);
+      findHits.push(mark);
+      last = m.index + m[0].length;
+    }
+    if(frag){
+      if(last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
+  }
+}
+function updateFindCount(msg){
+  const el = document.getElementById('findCount');
+  if(!el) return;
+  if(msg){ el.textContent = msg; return; }
+  const q = document.getElementById('findInput').value;
+  const total = findIsEditing() ? findEditMatches.length : findHits.length;
+  el.textContent = !q ? '' : (total ? `${findIdx + 1}/${total}` : '0');
+}
+// Recomputes matches for the current query + mode. Called on every query
+// change, mode switch, and after anything that re-renders the note.
+function findRefresh(){
+  if(!findOpen) return;
+  updateFindBarMode();
+  const q = document.getElementById('findInput').value;
+  if(findIsEditing()){
+    clearFindMarks(); findHits = [];
+    const ta = document.getElementById('mdEditArea');
+    findEditMatches = q ? findEditOffsets(ta.value, q) : [];
+    // land on the first match at/after the caret so typing a query doesn't
+    // yank you back to the top of a long note
+    const at = findEditMatches.findIndex(o => o >= ta.selectionStart);
+    findIdx = findEditMatches.length ? (at === -1 ? 0 : at) : -1;
+  } else {
+    findEditMatches = [];
+    highlightReader(q);
+    findIdx = findHits.length ? 0 : -1;
+    if(findIdx === 0) findHits[0].classList.add('cur');
+  }
+  updateFindCount();
+}
+function onFindInput(){
+  findRefresh();
+  // reading view: bring the first hit into view as you type
+  if(!findIsEditing() && findIdx >= 0) findHits[findIdx].scrollIntoView({ block:'center' });
+}
+function goToFindMatch(){
+  const editing = findIsEditing();
+  const total = editing ? findEditMatches.length : findHits.length;
+  if(!total){ updateFindCount(); return; }
+  if(editing){
+    const q = document.getElementById('findInput').value;
+    const ta = document.getElementById('mdEditArea');
+    const start = findEditMatches[findIdx];
+    ta.focus(); // focusing is what makes the browser scroll the selection into view
+    ta.setSelectionRange(start, start + q.length);
+  } else {
+    findHits.forEach(m=>m.classList.remove('cur'));
+    findHits[findIdx].classList.add('cur');
+    findHits[findIdx].scrollIntoView({ block:'center' });
+  }
+  updateFindCount();
+}
+function findStep(dir){
+  const total = findIsEditing() ? findEditMatches.length : findHits.length;
+  if(!total) return;
+  findIdx = (findIdx + dir + total) % total;
+  goToFindMatch();
+}
+function onFindKeydown(e){
+  if(e.key === 'Enter'){ e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
+  else if(e.key === 'Escape'){ e.preventDefault(); closeFindBar(); }
+}
+function onReplaceKeydown(e){
+  if(e.key === 'Enter'){ e.preventDefault(); replaceCurrent(); }
+  else if(e.key === 'Escape'){ e.preventDefault(); closeFindBar(); }
+}
+// Replace = two-step, like most editors: the first press selects the match
+// you're on (so you see what's about to change); pressing again replaces it
+// and hops to the next.
+function replaceCurrent(){
+  if(!findIsEditing() || !findEditMatches.length) return;
+  const q = document.getElementById('findInput').value;
+  const rep = document.getElementById('replaceInput').value;
+  const ta = document.getElementById('mdEditArea');
+  const start = findEditMatches[findIdx];
+  const alreadySelected = ta.selectionStart === start && ta.selectionEnd === start + q.length;
+  if(!alreadySelected){ goToFindMatch(); return; }
+  pushUndoBeforeEdit();
+  ta.value = ta.value.slice(0, start) + rep + ta.value.slice(start + q.length);
+  const caret = start + rep.length;
+  ta.setSelectionRange(caret, caret);
+  findEditMatches = findEditOffsets(ta.value, q);
+  const next = findEditMatches.findIndex(o => o >= caret);
+  findIdx = findEditMatches.length ? (next === -1 ? 0 : next) : -1;
+  if(findIdx >= 0) goToFindMatch(); else updateFindCount();
+}
+function replaceAll(){
+  if(!findIsEditing()) return;
+  const q = document.getElementById('findInput').value;
+  if(!q) return;
+  const rep = document.getElementById('replaceInput').value;
+  const ta = document.getElementById('mdEditArea');
+  const offsets = findEditOffsets(ta.value, q);
+  if(!offsets.length){ updateFindCount(); return; }
+  pushUndoBeforeEdit(); // the whole batch is one Undo step
+  // rebuild from the end so earlier offsets stay valid
+  let text = ta.value;
+  for(let i = offsets.length - 1; i >= 0; i--){
+    text = text.slice(0, offsets[i]) + rep + text.slice(offsets[i] + q.length);
+  }
+  ta.value = text;
+  findRefresh();
+  updateFindCount(`${offsets.length} replaced`);
+}
+// Reading view's "Replace…": replacing edits the note's text, so switch to
+// the editor and keep the query.
+function startEditFromFind(){
+  startEditNote();
+  findRefresh();
+}
+// Ctrl/Cmd+F while a note is open opens this bar instead of the browser's
+// own find (which can't see inside the editor and knows nothing of Replace).
+document.addEventListener('keydown', (e)=>{
+  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f'
+     && curType === 'markdown' && document.getElementById('reader').classList.contains('open')){
+    e.preventDefault();
+    if(!findOpen) openFindBar(); else { const i = document.getElementById('findInput'); i.focus(); i.select(); }
+  }
+});
 
 // Wires up the play button on every shelf://<id> inline audio widget inside
 // a just-rendered note (renderMarkdown only produces markup — it can't
@@ -2693,6 +2947,7 @@ function updateOutlineUI(outline){
 
 function closeReader(){
   closeWikiAutocomplete();
+  closeFindBar();
   document.getElementById('reader').classList.remove('open');
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
   if(curPdfDoc){ curPdfDoc.loadingTask.destroy(); curPdfDoc = null; }
@@ -2959,6 +3214,7 @@ async function toggleTaskCheckbox(blockIdx, lineIdx){
     wireParagraphEdit(mdView);
     await renderBacklinks(curId, mdView);
     updateOutlineUI(buildOutline(mdView));
+    findRefresh(); // the re-render wiped the highlights
   }
 }
 function wireTaskCheckboxes(container){
