@@ -7,6 +7,12 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Draft autosave.** While you edit a note, the text is saved as a
+  separate draft every 3 seconds (and instantly when you leave). Back out,
+  switch away or lose the page by accident and the note opens with an
+  "Unsaved draft" banner: Continue editing / Discard. Save and Cancel keep
+  their meaning — only Save changes the note; Cancel asks before throwing
+  changes away.
 - **Find & replace in a note.** A 🔍 button in the note page's top bar
   (or Ctrl/Cmd+F) opens a find bar: matches are highlighted in reading
   view with a prev/next stepper and a `3/12` counter; a match-case toggle
@@ -141,6 +147,32 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.31.0** (2026-09-28) — Draft autosave. Before: an edit lived only in the
+  textarea until Save, so leaving mid-edit (back button, opening another
+  note, the tab being killed) lost it. Now the editor writes a draft every 3 s
+  when the text has changed (`draftTick`), and immediately on leaving
+  (`closeReader`, `openReader` of another item, `visibilitychange`,
+  `pagehide`). The draft is NOT written over the note: it is a third
+  encrypted blob (`draftIv`/`draftCipher`) on the same record — not in the
+  content blob (so Save/Cancel still mean what they say) and not in the
+  metadata blob (decrypted for every item on every shelf listing; a draft
+  with pictures can be megabytes). It is never exported, goes with the note
+  if it's deleted, and is dropped if identical to the saved text. Reopening
+  a note with a draft shows a banner (Continue editing / Discard); any way
+  of entering the editor (✎, tapping a paragraph) resumes the draft, with a
+  notice + "Revert to saved" (confirmed and not undoable, because Undo would
+  cross a re-numbering of the `img:N` picture placeholders). Cancel now asks
+  first if it would discard changes, then clears the draft.
+  **Also fixed a latent race:** `putMetaOnly`/`putContentOnly` (and the new
+  draft writers) are read-modify-write on the whole record with awaits in
+  the middle, so two overlapping (say a draft landing during Save) could put
+  back a stale record and undo the other's change. They now run through one
+  queue (`serialized`). Limits: a draft is device-local and not backed up; it
+  temporarily adds roughly the note's size to storage; a checkbox ticked in
+  reading view while a draft exists changes the saved text, not the draft;
+  resuming a draft skips paragraph-tap caret placement (paragraph numbers
+  refer to the saved text).
 
 - **v1.30.2** (2026-09-28) — Find highlight made much easier to spot. Every
   hit gets a gold wash; the current hit is solid gold (#d4af37, dark text so

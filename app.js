@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.30.2';
+const APP_VERSION = '1.31.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -478,22 +478,69 @@ async function put(item){
 // Metadata-only update (rename, recategorize, progress, bookmarks) — keeps
 // the existing encrypted content blob untouched, just re-encrypts metadata.
 async function putMetaOnly(id, metaUpdates){
-  const rec = await getOneRaw(id);
-  if(!rec) return;
-  const meta = await decryptJSON(cryptoKey, rec.metaIv, rec.metaCipher);
-  Object.assign(meta, metaUpdates);
-  const { iv, cipher } = await encryptJSON(cryptoKey, meta);
-  rec.metaIv = iv; rec.metaCipher = cipher;
-  await putRaw(rec);
+  return serialized(async ()=>{
+    const rec = await getOneRaw(id);
+    if(!rec) return;
+    const meta = await decryptJSON(cryptoKey, rec.metaIv, rec.metaCipher);
+    Object.assign(meta, metaUpdates);
+    const { iv, cipher } = await encryptJSON(cryptoKey, meta);
+    rec.metaIv = iv; rec.metaCipher = cipher;
+    await putRaw(rec);
+  });
 }
 // Content-only update (editing a note's text)
 async function putContentOnly(id, type, contentValue){
+  return serialized(async ()=>{
+    const rec = await getOneRaw(id);
+    if(!rec) return;
+    const bytes = type === 'markdown' ? new TextEncoder().encode(contentValue) : await contentValue.arrayBuffer();
+    const { iv, cipher } = await aesEncrypt(cryptoKey, bytes);
+    rec.contentIv = iv; rec.contentCipher = cipher;
+    await putRaw(rec);
+  });
+}
+// putMetaOnly / putContentOnly / the draft writers below are all
+// read-modify-write on the SAME whole record (get it, change one blob, put it
+// back), and each has awaits in the middle. Two of them overlapping — an
+// autosaved draft landing while Save writes the note, say — would let the
+// slower one put back a stale copy of the record and silently undo the
+// other's change (a draft write could resurrect the OLD note text over a
+// just-saved one). This queue makes them run strictly one after another.
+let dbWriteQueue = Promise.resolve();
+function serialized(fn){
+  const p = dbWriteQueue.then(fn);
+  dbWriteQueue = p.catch(()=>{});
+  return p;
+}
+// ---- Note drafts (v1.31.0) ----
+// An unsaved edit is kept as a third encrypted blob (draftIv/draftCipher) on
+// the SAME record as the note — deliberately not in the content blob (Save and
+// Cancel keep their meaning: only Save changes the note) and not in the
+// metadata blob (that one is decrypted for every item on every shelf listing;
+// a draft with pictures in it can be megabytes). Never exported, dropped with
+// the note when it's deleted, and cleared by Save/Cancel.
+function putDraft(id, text){
+  return serialized(async ()=>{
+    const rec = await getOneRaw(id);
+    if(!rec) return;
+    const { iv, cipher } = await encryptJSON(cryptoKey, { text, savedAt: Date.now() });
+    rec.draftIv = iv; rec.draftCipher = cipher;
+    await putRaw(rec);
+  });
+}
+async function getDraft(id){
   const rec = await getOneRaw(id);
-  if(!rec) return;
-  const bytes = type === 'markdown' ? new TextEncoder().encode(contentValue) : await contentValue.arrayBuffer();
-  const { iv, cipher } = await aesEncrypt(cryptoKey, bytes);
-  rec.contentIv = iv; rec.contentCipher = cipher;
-  await putRaw(rec);
+  if(!rec || !rec.draftCipher) return null;
+  try{ return await decryptJSON(cryptoKey, rec.draftIv, rec.draftCipher); }
+  catch(err){ return null; }
+}
+function clearDraft(id){
+  return serialized(async ()=>{
+    const rec = await getOneRaw(id);
+    if(!rec || !rec.draftCipher) return;
+    delete rec.draftIv; delete rec.draftCipher;
+    await putRaw(rec);
+  });
 }
 
 // ---- Export / Import ----
@@ -1327,9 +1374,12 @@ async function saveEdit(){
 
 // ---- Reader ----
 async function openReader(id){
+  flushDraftNow(); // opening another item while a note is mid-edit (palette jump, note link…) must not lose that edit
+  stopDraftTimer();
   const it = await getOne(id);
   if(!it) return;
   curId = id; curType = it.type;
+  curDraft = null;
   document.getElementById('rtitle').textContent = it.title;
   document.getElementById('bmBtn').style.display = 'none';
   document.getElementById('editNoteBtn').style.display = 'none';
@@ -1433,6 +1483,7 @@ async function openReader(id){
     c.innerHTML = `<img class="full" src="${curBlobUrl}">`;
   } else if(it.type === 'markdown'){
     curNoteRaw = it.content;
+    curDraft = await loadDraftFor(id, it.content);
     if(it.cover){
       const coverImg = document.createElement('img');
       coverImg.className = 'reader-cover';
@@ -1452,7 +1503,8 @@ async function openReader(id){
     await renderBacklinks(id, div);
     const editWrap = document.createElement('div');
     editWrap.id = 'mdEditWrap';
-    editWrap.innerHTML = `<textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
+    editWrap.innerHTML = `<div id="draftNotice" class="draft-notice" style="display:none;"><span id="draftNoticeText"></span><button type="button" onclick="revertToSaved()">Revert to saved</button></div>
+      <textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
       <div class="ebar">
         <div class="ebar-tools">
           <button class="tool" id="undoBtn" onclick="undoEdit()" title="Undo">&#8617;</button>
@@ -1475,6 +1527,7 @@ async function openReader(id){
       </div>`;
     c.appendChild(div);
     c.appendChild(editWrap);
+    renderDraftBanner();
     document.getElementById('mdEditArea').addEventListener('paste', onNoteEditPaste);
     document.getElementById('mdEditArea').addEventListener('input', onNoteEditInput);
     document.getElementById('mdEditArea').addEventListener('keydown', onNoteEditKeydown);
@@ -1672,7 +1725,20 @@ async function saveProgress(p){
 }
 
 function startEditNote(){
-  document.getElementById('mdEditArea').value = collapseImagesForEdit(curNoteRaw);
+  // If an unsaved draft exists for this note, editing RESUMES it rather than
+  // starting over from the saved text — otherwise the first autosave tick
+  // would overwrite the draft the user never got back.
+  editResumedDraft = false;
+  const draftBanner = document.getElementById('draftBanner');
+  if(draftBanner) draftBanner.style.display = 'none'; // the editor's own notice takes over while editing
+  if(curDraft){
+    document.getElementById('mdEditArea').value = collapseImagesForEdit(curDraft.text);
+    editResumedDraft = true;
+    editBaselineValue = null;
+  } else {
+    document.getElementById('mdEditArea').value = collapseImagesForEdit(curNoteRaw);
+    editBaselineValue = document.getElementById('mdEditArea').value;
+  }
   document.getElementById('mdView').style.display = 'none';
   document.getElementById('mdEditWrap').style.display = 'flex';
   document.getElementById('bmBtn').style.display = 'none';
@@ -1680,6 +1746,9 @@ function startEditNote(){
   document.getElementById('editNoteBtn').classList.add('active');
   document.getElementById('mdEditArea').focus();
   resetUndoHistory();
+  draftLastValue = document.getElementById('mdEditArea').value;
+  startDraftTimer();
+  updateDraftNotice();
   findRefresh(); // switch an open find bar over to editor mode
 }
 // ---- Undo/Redo for the note editor textarea ----
@@ -1805,6 +1874,10 @@ function blockOffsets(text){
 function editParagraphAt(idx){
   if(curNoteRaw == null) return;
   startEditNote();
+  // Resuming a draft: paragraph numbers refer to the SAVED text, so they don't
+  // line up with the draft — leave the caret alone rather than land on the
+  // wrong paragraph.
+  if(editResumedDraft) return;
   const ta = document.getElementById('mdEditArea');
   const range = blockOffsets(ta.value)[idx];
   if(!range) return;
@@ -1912,7 +1985,107 @@ function showParagraphMenu(idx, x, y){
     document.addEventListener('click', closeParagraphMenuOnOutside, true);
   }, 0);
 }
+// ---- Draft autosave (v1.31.0) ----
+// While the editor is open, the text is written to a draft every few seconds
+// (only when it has changed), and immediately when the reader is closed, the
+// page is hidden, or another item is opened. Same "fail silently" stance as
+// reading-progress autosave — it fires too often to interrupt with an alert.
+const DRAFT_INTERVAL_MS = 3000;
+let curDraft = null;          // {text, savedAt} loaded when this note was opened, or null
+let draftTimer = null;
+let draftLastValue = null;    // textarea value as of the last draft write (or edit start)
+let editResumedDraft = false; // this edit session began from a draft, not from the saved text
+let editBaselineValue = null; // textarea value at edit start when NOT resuming; null when resuming
+function noteEditActive(){
+  const w = document.getElementById('mdEditWrap');
+  return !!w && w.style.display === 'flex';
+}
+function startDraftTimer(){
+  stopDraftTimer();
+  draftTimer = setInterval(draftTick, DRAFT_INTERVAL_MS);
+}
+function stopDraftTimer(){
+  if(draftTimer){ clearInterval(draftTimer); draftTimer = null; }
+}
+function draftTick(){ flushDraftNow(); }
+function flushDraftNow(){
+  if(!curId || curType !== 'markdown' || !noteEditActive()) return;
+  const ta = document.getElementById('mdEditArea');
+  if(!ta || ta.value === draftLastValue) return;
+  draftLastValue = ta.value;
+  putDraft(curId, expandImagesForSave(ta.value)).catch(()=>{}); // fail silently, see above
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flushDraftNow(); });
+window.addEventListener('pagehide', flushDraftNow);
+// A draft only counts if it differs from what's saved — one identical to the
+// saved text (typed something, then typed it back) is just cleaned up.
+async function loadDraftFor(id, savedText){
+  const d = await getDraft(id);
+  if(!d) return null;
+  if(d.text === savedText){ clearDraft(id).catch(()=>{}); return null; }
+  return d;
+}
+function fmtDraftTime(ts){
+  return new Date(ts).toLocaleString(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+}
+function renderDraftBanner(){
+  const old = document.getElementById('draftBanner');
+  if(old) old.remove();
+  const view = document.getElementById('mdView');
+  if(!curDraft || !view) return;
+  const b = document.createElement('div');
+  b.id = 'draftBanner';
+  b.className = 'draft-banner';
+  b.innerHTML = `<span>Unsaved draft from ${escapeHtml(fmtDraftTime(curDraft.savedAt))} — your last edits weren't saved.</span>`
+    + `<button type="button" onclick="startEditNote()">Continue editing</button>`
+    + `<button type="button" onclick="discardDraft()">Discard</button>`;
+  view.parentNode.insertBefore(b, view);
+}
+async function discardDraft(){
+  if(!confirm("Discard this unsaved draft? This can't be undone.")) return;
+  const id = curId;
+  curDraft = null;
+  renderDraftBanner();
+  if(id) clearDraft(id).catch(()=>{});
+}
+function updateDraftNotice(){
+  const box = document.getElementById('draftNotice');
+  if(!box) return;
+  box.style.display = editResumedDraft ? 'flex' : 'none';
+  if(editResumedDraft && curDraft) document.getElementById('draftNoticeText').textContent = 'Resumed your unsaved draft from ' + fmtDraftTime(curDraft.savedAt) + '.';
+}
+// Not undoable on purpose: collapseImagesForEdit renumbers the picture
+// placeholders (img:1, img:2…) for whichever text it's given, so undoing back
+// across a revert would restore text whose numbers no longer match the
+// picture list — and Save would then attach the wrong pictures.
+function revertToSaved(){
+  if(!confirm('Replace the text in the editor with the last saved version? Your unsaved draft will be lost.')) return;
+  const ta = document.getElementById('mdEditArea');
+  ta.value = collapseImagesForEdit(curNoteRaw);
+  editResumedDraft = false;
+  editBaselineValue = ta.value;
+  resetUndoHistory();
+  updateDraftNotice();
+  findRefresh();
+}
+// The Cancel button: asks first if that would throw work away, then discards
+// the draft too. (Closing the reader instead keeps the draft — see
+// closeReader — that's the accidental-back case this whole feature is for.)
 function cancelEditNote(){
+  const ta = document.getElementById('mdEditArea');
+  const dirty = editResumedDraft || (ta && editBaselineValue !== null && ta.value !== editBaselineValue);
+  if(dirty && !confirm('Discard your unsaved changes to this note?')) return;
+  stopDraftTimer();
+  const id = curId;
+  curDraft = null;
+  renderDraftBanner();
+  if(id) clearDraft(id).catch(()=>{});
+  leaveEditMode();
+}
+function leaveEditMode(){
+  stopDraftTimer();
+  editResumedDraft = false;
+  updateDraftNotice();
   closeWikiAutocomplete();
   document.getElementById('mdEditWrap').style.display = 'none';
   document.getElementById('mdView').style.display = 'block';
@@ -1923,10 +2096,12 @@ function cancelEditNote(){
 }
 async function saveEditNote(){
   if(!curId) return;
+  stopDraftTimer(); // no new draft write may start once Save has (an in-flight one finishes first — see serialized())
   const text = expandImagesForSave(document.getElementById('mdEditArea').value);
   try{
     await putContentOnly(curId, 'markdown', text);
   }catch(err){
+    startDraftTimer(); // save failed and the editor stays open — keep protecting the text
     alert(isQuotaError(err) ? "Your device's storage is full, so this couldn't be saved. Your edits are still in the text box — free up space and try Save again." : "Couldn't save this note — please try again.");
     return;
   }
@@ -1943,7 +2118,11 @@ async function saveEditNote(){
   const it = await getOne(curId);
   updateBookmarkUI(it.bookmarks || []);
   updateOutlineUI(buildOutline(mdView));
-  cancelEditNote();
+  const savedId = curId;
+  curDraft = null;
+  renderDraftBanner();
+  clearDraft(savedId).catch(()=>{}); // queued after the content write, so it can't resurrect stale text
+  leaveEditMode();
 }
 
 // ---- Find / replace inside a note (v1.29.0) ----
@@ -3002,6 +3181,8 @@ function updateOutlineUI(outline){
 }
 
 function closeReader(){
+  flushDraftNow(); // leaving mid-edit keeps the draft (offered back next time this note is opened)
+  stopDraftTimer();
   closeWikiAutocomplete();
   closeFindBar();
   document.getElementById('reader').classList.remove('open');

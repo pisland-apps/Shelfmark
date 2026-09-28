@@ -223,6 +223,21 @@
     max-height:60vh; overflow:auto; background:var(--card); border:1px solid var(--line);
     border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,.2); z-index:15;
   }
+  /* ---- unsaved-draft banner (reading view) + notice (editor) ---- */
+  .draft-banner{
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 16px;padding:10px 12px;
+    border:1px solid var(--audio);border-radius:10px;background:rgba(156,122,41,.12);font-size:13px;
+  }
+  .draft-banner span{flex:1;min-width:180px;line-height:1.4;}
+  .draft-banner button,.draft-notice button{
+    border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;
+    padding:6px 11px;font-size:13px;font-family:inherit;flex-shrink:0;
+  }
+  .draft-notice{
+    align-items:center;gap:8px;padding:8px 24px;font-size:12.5px;flex-shrink:0;
+    background:rgba(156,122,41,.12);border-bottom:1px solid var(--line);
+  }
+  .draft-notice span{flex:1;}
   /* ---- find / replace bar (note pages) ---- */
   /* In normal flow between the top bar and #rcontent (a flex column), so
      opening it SHRINKS the reading area instead of floating over — a fixed
@@ -879,8 +894,9 @@
       <h3>Tags</h3>
       <p>Write <code>#word</code> anywhere in the text to tag the note — as many as you like, alongside its one category. Browse them all from the &#128269; command palette &rarr; <em>Browse tags</em>.</p>
 
-      <h3>Tips: finding things</h3>
+      <h3>Tips</h3>
       <p><strong>Find in a note:</strong> tap &#128269; in the note's top bar (or press Ctrl/Cmd+F). Matches are highlighted, with &uarr; &darr; buttons to step through them and <code>Aa</code> to match case. While editing, the bar also has <em>Replace</em> and <em>All</em> — Replace All can be undone in one step with &#8617;. In reading view, <em>Replace&hellip;</em> opens the editor with your search carried over.</p>
+      <p><strong>Drafts:</strong> while you edit, your text is saved automatically every few seconds as a draft. If you leave without saving, the note shows an <em>Unsaved draft</em> banner next time so you can continue or discard it. Only <em>Save</em> changes the note itself.</p>
       <p><strong>Search note text from the shelf:</strong> the shelf search box only looks at titles and categories. Tap the button beside it to also search inside your notes' text — slower, since every note has to be decrypted, so it switches itself off each time you reopen the app.</p>
     </div>
     <div class="row">
