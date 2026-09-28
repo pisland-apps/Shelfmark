@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.27.0';
+const APP_VERSION = '1.28.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -958,19 +958,77 @@ function reorderCategory(draggedCat, targetCat){
   putPrefs(prefs).catch(()=>{});
   render();
 }
+// ---- Deep search: also match inside note text (opt-in, v1.28.0) ----
+// The default search only ever compares against title/category, which are
+// already decrypted as part of listing the shelf — free, so it can run on
+// every keystroke. Matching note *text* means decrypting every markdown
+// note's content (the same cost class as buildTagIndex/renderBacklinks), so
+// it's behind a toggle instead of always on. Deliberately session-only, not
+// saved in prefs: it resets to off on every reopen, like the sort mode and
+// collapsed categories, so it stays a conscious "yes, decrypt everything"
+// choice rather than something left on forever and quietly costing time/
+// battery on every search.
+let deepSearchOn = false;
+let deepSearchMatchIds = null; // Set of note ids whose TEXT matched searchQuery; null = not computed for this query yet
+let deepSearchToken = 0;       // bumped per keystroke/toggle so a stale in-flight scan discards itself (same idea as wikiACToken)
+let deepSearchTimer = null;
+function toggleDeepSearch(){
+  deepSearchOn = !deepSearchOn;
+  const btn = document.getElementById('deepSearchBtn');
+  btn.classList.toggle('active', deepSearchOn);
+  btn.setAttribute('aria-pressed', deepSearchOn ? 'true' : 'false');
+  deepSearchMatchIds = null;
+  deepSearchToken++;
+  clearTimeout(deepSearchTimer);
+  if(deepSearchOn && searchQuery) scheduleDeepSearch();
+  render();
+}
+function scheduleDeepSearch(){
+  clearTimeout(deepSearchTimer);
+  // Debounced: without this, typing "hello" would decrypt every note five
+  // times over, once per letter.
+  deepSearchTimer = setTimeout(runDeepSearch, 300);
+}
+async function runDeepSearch(){
+  const myToken = ++deepSearchToken;
+  const query = searchQuery;
+  if(!query || !deepSearchOn) return;
+  const metas = (await getAll()).filter(m=>m.type==='markdown');
+  const matches = new Set();
+  for(const m of metas){
+    if(myToken !== deepSearchToken) return; // a newer keystroke/toggle superseded this scan mid-way
+    let full;
+    try{ full = await getOne(m.id); } catch(err){ continue; } // skip unreadable/corrupt entries
+    if(full && full.content && full.content.toLowerCase().includes(query)) matches.add(m.id);
+  }
+  if(myToken !== deepSearchToken) return;
+  deepSearchMatchIds = matches;
+  render();
+}
+
 function onSearchInput(){
   searchQuery = document.getElementById('searchInput').value.trim().toLowerCase();
+  // Any cached text-matches belong to the previous query; drop them until
+  // the debounced scan below finishes. Meanwhile title/category matches
+  // still show instantly, then text-only matches appear when the scan lands.
+  deepSearchMatchIds = null;
+  deepSearchToken++;
+  if(deepSearchOn && searchQuery) scheduleDeepSearch();
+  else clearTimeout(deepSearchTimer);
   render();
 }
 
 async function render(){
   const allItems = (await getAll()).sort((a,b)=>b.addedAt-a.addedAt);
   const items = searchQuery
-    ? allItems.filter(it => it.title.toLowerCase().includes(searchQuery) || (it.category||'').toLowerCase().includes(searchQuery))
+    ? allItems.filter(it => it.title.toLowerCase().includes(searchQuery)
+        || (it.category||'').toLowerCase().includes(searchQuery)
+        || (deepSearchMatchIds && deepSearchMatchIds.has(it.id)))
     : allItems;
   document.getElementById('empty').style.display = allItems.length ? 'none' : 'block';
   const noResults = document.getElementById('noResults');
-  if(allItems.length && searchQuery && !items.length){
+  const deepScanPending = deepSearchOn && !!searchQuery && deepSearchMatchIds === null;
+  if(allItems.length && searchQuery && !items.length && !deepScanPending){
     document.getElementById('noResultsText').textContent = `No matches for "${document.getElementById('searchInput').value.trim()}"`;
     noResults.style.display = 'block';
   } else {

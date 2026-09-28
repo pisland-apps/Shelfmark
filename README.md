@@ -7,6 +7,10 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Deep search (note text).** A toggle button beside the search box
+  (off by default, resets to off on every reopen) makes search also match
+  inside markdown notes' own text, not just title/category. Debounced
+  (300 ms) so typing doesn't decrypt the whole shelf once per letter.
 - **Markdown formatting help.** A new **?** button in the note editor
   toolbar (and a "Markdown formatting help" entry in the command palette,
   reachable from anywhere) opens an overlay covering every syntax the
@@ -132,6 +136,21 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.28.0** (2026-09-28) — Opt-in deep search. Default search still only
+  compares title/category (already decrypted for the shelf listing, so it's
+  free per keystroke). The new toggle next to the search box additionally
+  decrypts each markdown note via `getOne()` and substring-matches its text
+  — same cost class as `buildTagIndex`/`renderBacklinks`, hence opt-in.
+  Session-only on purpose (not in prefs): it resets to off on reopen so
+  paying the decrypt cost stays a conscious choice. The scan is debounced
+  (300 ms) and guarded by a token (`deepSearchToken`, same idea as
+  `wikiACToken`) so a stale in-flight scan discards itself when the query
+  changes. Title/category hits show instantly; text-only hits join when the
+  scan lands, and "No matches" is suppressed while a scan is pending.
+  Limits: no match snippets/highlighting; results are cached per query, so
+  editing a note mid-search isn't reflected until the next keystroke or
+  toggle.
 
 - **v1.27.0** (2026-09-28) — Markdown formatting help: a **?** toolbar
   button in the note editor (plus a command-palette entry, so it's reachable

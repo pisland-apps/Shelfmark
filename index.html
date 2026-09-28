@@ -64,9 +64,9 @@
   }
   .icon-btn:active{background:var(--card);}
   .icon-btn.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
-  .searchRow{max-width:640px;margin:0 auto;padding:0 0 14px;}
+  .searchRow{max-width:640px;margin:0 auto;padding:0 0 14px;display:flex;gap:8px;align-items:center;}
   .searchRow input[type=search]{
-    width:100%;box-sizing:border-box;padding:9px 12px;border-radius:8px;
+    flex:1;min-width:0;box-sizing:border-box;padding:9px 12px;border-radius:8px;
     border:1px solid var(--line);background:var(--card);color:var(--ink);
     font-size:14px;font-family:inherit;
   }
@@ -669,6 +669,7 @@
   </div>
   <div class="searchRow">
     <input type="search" id="searchInput" placeholder="Search your shelf&hellip;" oninput="onSearchInput()">
+    <button class="icon-btn" id="deepSearchBtn" onclick="toggleDeepSearch()" title="Also search inside note text (slower — decrypts every note)" aria-pressed="false">&#128462;</button>
   </div>
 </header>
 
