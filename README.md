@@ -142,6 +142,13 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.29.3** (2026-09-28) — Command palette no longer lists every tag as a
+  "Jump to #tag" row when opened; with many tags they pushed the real
+  commands off-screen, and "Browse tags" already covers browsing. Tag rows
+  now appear only on request: a query starting with `#` shows just tags,
+  fuzzy-matched on the tag name (a bare `#` lists them all); any other query
+  still mixes tags in with the commands as before.
+
 - **v1.29.2** (2026-09-28) — Two fixes to v1.29.0's find bar, from a
   screenshot. (1) The bar was `position:fixed`, floating over the note and
   hiding its first lines (and any match scrolled beneath it); it's now an

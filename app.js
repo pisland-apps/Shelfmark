@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.29.2';
+const APP_VERSION = '1.29.3';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3325,12 +3325,28 @@ function fuzzyScore(query, target){
 function onCmdPalInput(){ cmdPalActiveIndex = 0; renderCommandPalette(); }
 function renderCommandPalette(){
   const query = document.getElementById('cmdPalInput').value.trim();
-  const all = buildStaticCommands().concat(cmdPalTagCommands);
-  cmdPalFiltered = !query ? all : all
-    .map(c=>({ c, score: fuzzyScore(query, c.label) }))
-    .filter(x=>x.score >= 0)
-    .sort((a,b)=>b.score - a.score)
-    .map(x=>x.c);
+  // "Jump to #tag" rows are NOT listed by default: with many tags they buried
+  // the real commands, and "Browse tags" already covers browsing. They only
+  // appear when you ask for them — start the query with "#" (only tags,
+  // matched on the tag name itself), or type anything else and they compete
+  // with the commands as before.
+  const statics = buildStaticCommands();
+  if(!query){
+    cmdPalFiltered = statics;
+  } else if(query.startsWith('#')){
+    const tagQ = query.slice(1);
+    cmdPalFiltered = !tagQ ? cmdPalTagCommands.slice() : cmdPalTagCommands
+      .map(c=>({ c, score: fuzzyScore(tagQ, c.label.replace(/^Jump to #/, '')) }))
+      .filter(x=>x.score >= 0)
+      .sort((a,b)=>b.score - a.score)
+      .map(x=>x.c);
+  } else {
+    cmdPalFiltered = statics.concat(cmdPalTagCommands)
+      .map(c=>({ c, score: fuzzyScore(query, c.label) }))
+      .filter(x=>x.score >= 0)
+      .sort((a,b)=>b.score - a.score)
+      .map(x=>x.c);
+  }
   if(cmdPalActiveIndex >= cmdPalFiltered.length) cmdPalActiveIndex = 0;
   const list = document.getElementById('cmdPalList');
   if(!cmdPalFiltered.length){
