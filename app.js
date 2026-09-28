@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.43.0';
+const APP_VERSION = '1.44.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1534,6 +1534,9 @@ async function openReader(id){
     c.appendChild(editWrap);
     renderDraftBanner();
     document.getElementById('mdEditArea').addEventListener('paste', onNoteEditPaste);
+    ['dragenter','dragover'].forEach(t=>document.getElementById('mdEditArea').addEventListener(t, onNoteEditDragOver));
+    ['dragleave','dragend'].forEach(t=>document.getElementById('mdEditArea').addEventListener(t, onNoteEditDragLeave));
+    document.getElementById('mdEditArea').addEventListener('drop', onNoteEditDrop);
     document.getElementById('mdEditArea').addEventListener('input', onNoteEditInput);
     document.getElementById('mdEditArea').addEventListener('keydown', onNoteEditKeydown);
     document.getElementById('mdEditArea').addEventListener('beforeinput', onNoteEditBeforeInput);
@@ -3143,6 +3146,34 @@ function onNoteEditPaste(e){
       return;
     }
   }
+}
+
+// Dragging picture files from the OS file manager onto the note textarea
+// (v1.44.0) — same insert path as paste and the 📷 button. Without these
+// handlers the browser's default for a dropped file is to navigate away to it,
+// which would throw away the open editor. So ANY file drag is claimed here;
+// non-pictures are refused with a message instead. While dragging, only the
+// item kinds/types are readable (not the files), so dragover just checks for
+// "Files". The picture goes in at the caret's last position (a textarea gives
+// no way to map the drop point to a text offset), one after another if
+// several files are dropped.
+function dragHasFiles(e){ return !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')); }
+function onNoteEditDragOver(e){
+  if(!dragHasFiles(e)) return;              // plain text drags keep the browser's own behaviour
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  e.currentTarget.classList.add('drag-over');
+}
+function onNoteEditDragLeave(e){ e.currentTarget.classList.remove('drag-over'); }
+async function onNoteEditDrop(e){
+  if(!dragHasFiles(e)) return;
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const files = Array.from(e.dataTransfer.files || []);
+  const pics = files.filter(f=>f.type && f.type.startsWith('image/'));
+  if(!pics.length){ alert('Only picture files can be dropped into a note.'); return; }
+  for(const f of pics) await insertNoteImageFile(f);
+  if(pics.length < files.length) alert('Some dropped files were skipped \u2014 only pictures can be added to a note.');
 }
 
 // ---- Inserting a table template into a note ----

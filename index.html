@@ -398,6 +398,7 @@
   .fold-btn:hover,.fold-btn:focus-visible{opacity:1;}
   .mdblock.fold-collapsed > :is(h1,h2,h3,h4,h5,h6)::after{content:'\00a0\2026';color:var(--ink-soft);}
   #mdEditWrap{display:none;flex-direction:column;height:100%;}
+  .mdedit.drag-over{outline:2px dashed var(--ink-soft);outline-offset:-4px;}
   .mdedit{
     flex:1;width:100%;border:none;background:transparent;color:var(--ink);
     font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:15px;line-height:1.6;
@@ -1012,7 +1013,7 @@
       <details class="hc-more"><summary>More details</summary><p>In reading view you can edit a table without opening the editor: tap a cell and type. <b>Enter</b> starts a new line inside the cell; save with <b>Ctrl/⌘+Enter</b>, the <b>✓ Done</b> button, or by tapping elsewhere (<b>Esc</b> cancels, <b>Tab</b> moves to the next cell — in the last cell it adds a row). While a cell is open, the bar under the table adds or deletes a row or column. Use <code>\|</code> for a literal pipe inside a cell. A multi-line cell is stored as <code>line one&lt;br&gt;line two</code> — you can type <code>&lt;br&gt;</code> yourself in the note editor to get the same result.</p></details>
       </section>
       <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">🖼️</span>Images &amp; dividers</div>
-            <p><code>![alt](url)</code> for an image — or just tap the &#128247; toolbar button to insert one from your device. In reading view pictures show as small thumbnails — tap one to view it full-screen (tap it again for actual size, tap outside or press Esc to close). <code>---</code> on its own line draws a divider.</p>
+            <p><code>![alt](url)</code> for an image — or just tap the &#128247; toolbar button to insert one from your device — you can also paste a copied picture (Ctrl/⌘+V) or drag picture files from your computer into the editor. In reading view pictures show as small thumbnails — tap one to view it full-screen (tap it again for actual size, tap outside or press Esc to close). <code>---</code> on its own line draws a divider.</p>
       </section>
       <section class="hcard hc-l"><div class="hc-title"><span class="hc-ic">🔗</span>Links</div>
             <p><code>[label](https://…)</code> — an ordinary link. Point it at an audio file URL (<code>.mp3</code>, <code>.m4a</code>, <code>.wav</code>, <code>.ogg</code>, <code>.oga</code>, <code>.opus</code>, <code>.aac</code>, <code>.flac</code>, <code>.weba</code>) and it renders as a playable widget instead — the one feature in Shelfmark that makes a live network request.</p>

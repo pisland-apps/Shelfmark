@@ -154,6 +154,14 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.44.0** (2026-09-28) — Drag-and-drop pictures into the note editor.
+  Dropping image files on the textarea calls `insertNoteImageFile` (same path
+  as paste and the 📷 button; several files go in one after another, each its
+  own undo step). The picture lands at the caret's last position — a textarea
+  can't map a drop point to a text offset. Any *file* drag is claimed
+  (`preventDefault`), because the browser default for a dropped file is to
+  navigate to it and lose the open editor; non-pictures get a message
+  instead. A dashed outline shows while dragging over the editor.
 - **v1.43.0** (2026-09-28) — Merged table cells (Excel-style). While a cell is
   open, the table bar has **Merge →**, **Merge ↓** and **Unmerge**. Pipe
   tables have no spans, so the text uses two marker cells: `<<` = merged into
