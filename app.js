@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.50.0';
+const APP_VERSION = '1.51.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -212,6 +212,7 @@ async function unlockApp(){
   const saved = await getPrefsDecrypted();
   if(saved) prefs = { ...prefs, ...saved };
   applyPrefs(prefs);
+  restoreShelfViewPrefs();
   await ensureShelfId();
   render();
   // Best-effort: ask the browser to protect this origin's storage from
@@ -413,24 +414,39 @@ let pdfZoomMode = 'fit';
 // element is reused across tracks; the file is only decrypted when actually
 // played, not eagerly for every audio row.
 let shelfAudioEl = null, shelfPlayingId = null, shelfPlayingTitle = null, shelfPlayingCategory = null, shelfAudioBlobUrl = null;
-// Which category headers are collapsed. In-memory only (resets on reload,
-// matching that nothing but library content lives in IndexedDB) — expanded
-// is the default each time the app opens.
+// Which category headers are collapsed. Since v1.51.0 this is remembered:
+// the live Set is mirrored into the encrypted prefs record as
+// prefs.collapsedCats (an array of category names) every time a header is
+// toggled, and reloaded at unlock (restoreShelfViewPrefs). Default is
+// all-expanded on a fresh shelf.
 const collapsedCats = new Set();
 // Sort order for items within each category: 'newest' (added-date desc,
-// the original behavior) or 'title' (alphabetical). In-memory only, same
-// reasoning as collapsedCats — resets to 'newest' each time the app opens.
+// the original behavior) or 'title' (alphabetical). Also remembered since
+// v1.51.0, as prefs.itemSortMode.
 let itemSortMode = 'newest';
+function syncSortBtn(){
+  const btn = document.getElementById('sortBtn');
+  if(!btn) return;
+  btn.textContent = itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z';
+  btn.title = itemSortMode === 'newest'
+    ? 'Sorting items by newest added \u2014 tap for A\u2013Z'
+    : 'Sorting items A\u2013Z \u2014 tap for newest added';
+}
 function toggleSortMode(){
   itemSortMode = itemSortMode === 'newest' ? 'title' : 'newest';
-  const btn = document.getElementById('sortBtn');
-  if(btn){
-    btn.textContent = itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z';
-    btn.title = itemSortMode === 'newest'
-      ? 'Sorting items by newest added \u2014 tap for A\u2013Z'
-      : 'Sorting items A\u2013Z \u2014 tap for newest added';
-  }
+  syncSortBtn();
+  prefs.itemSortMode = itemSortMode;
+  putPrefs(prefs).catch(()=>{});
   render();
+}
+// Called once at unlock, after the saved prefs are merged in.
+function restoreShelfViewPrefs(){
+  itemSortMode = prefs.itemSortMode === 'title' ? 'title' : 'newest';
+  collapsedCats.clear();
+  if(Array.isArray(prefs.collapsedCats)){
+    for(const c of prefs.collapsedCats) if(typeof c === 'string') collapsedCats.add(c);
+  }
+  syncSortBtn();
 }
 
 function ensureShelfAudio(){
@@ -1043,7 +1059,7 @@ async function mergeImportedItems(items, info){
 
 const FONT_MAP = {serif:"Georgia,'Times New Roman',serif", sans:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", mono:"'SFMono-Regular',Consolas,Menlo,monospace", zh:"'PingFang SC','Heiti SC','Microsoft YaHei',sans-serif"};
 const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
-let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true};
+let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, itemSortMode:'newest', collapsedCats:[], categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -1333,8 +1349,8 @@ function reorderCategory(draggedCat, targetCat){
 // every keystroke. Matching note *text* means decrypting every markdown
 // note's content (the same cost class as buildTagIndex/renderBacklinks), so
 // it's behind a toggle instead of always on. Deliberately session-only, not
-// saved in prefs: it resets to off on every reopen, like the sort mode and
-// collapsed categories, so it stays a conscious "yes, decrypt everything"
+// saved in prefs: it resets to off on every reopen (unlike the sort mode and
+// collapsed categories, which are remembered since v1.51.0), so it stays a conscious "yes, decrypt everything"
 // choice rather than something left on forever and quietly costing time/
 // battery on every search.
 let deepSearchOn = false;
@@ -1480,6 +1496,8 @@ async function render(){
       const nowCollapsed = body.classList.toggle('collapsed');
       head.classList.toggle('collapsed', nowCollapsed);
       if(nowCollapsed) collapsedCats.add(cat); else collapsedCats.delete(cat);
+      prefs.collapsedCats = [...collapsedCats];
+      putPrefs(prefs).catch(()=>{});
     };
 
     for(const it of groups.get(cat)){

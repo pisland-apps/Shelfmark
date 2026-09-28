@@ -163,6 +163,12 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.0** (2026-09-28) — The shelf now remembers your view. The sort
+  choice (Newest / A–Z) and which category headers are collapsed are saved
+  (encrypted, in the same prefs record as theme/font) and restored each
+  time you unlock, instead of resetting on every reopen. Per device, not
+  part of backups. Deep search still resets to off on purpose.
+
 - **v1.50.0** (2026-09-28) — Notes folder (Obsidian-style). Ctrl+K → "Open a
   notes folder…" and pick a folder/vault: every `.md` inside (subfolders
   become categories; dot-folders are skipped) appears as a linked note.
