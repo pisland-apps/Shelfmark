@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.39.0';
+const APP_VERSION = '1.40.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1536,6 +1536,7 @@ async function openReader(id){
     document.getElementById('mdEditArea').addEventListener('paste', onNoteEditPaste);
     document.getElementById('mdEditArea').addEventListener('input', onNoteEditInput);
     document.getElementById('mdEditArea').addEventListener('keydown', onNoteEditKeydown);
+    document.getElementById('mdEditArea').addEventListener('beforeinput', onNoteEditBeforeInput);
     document.getElementById('mdEditArea').addEventListener('blur', closeWikiAutocomplete);
     if(it.progress && it.progress.scroll) c.scrollTop = it.progress.scroll;
     c.onscroll = ()=>{ clearTimeout(c._t); c._t = setTimeout(()=>saveProgress({scroll:c.scrollTop}), 400); };
@@ -2897,11 +2898,118 @@ function selectWikiAutocomplete(i){
   closeWikiAutocomplete();
 }
 function onNoteEditInput(){ updateWikiAutocomplete(); noteTypingForUndo(); }
+// ---- Editor keyboard aids (v1.40.0) ----
+// List / quote continuation on Enter, Tab inside list lines, and the
+// Ctrl/Cmd+B, Ctrl/Cmd+I, Ctrl+Alt+H shortcuts.
+//
+// NOTE_LIST_RE matches exactly the line prefixes renderMarkdown understands:
+//   groups: 1 indent, 2 bullet char (- or *), 3 task box "[ ] ", 4 ordered
+//   number, 5 quote marker. (Not "+" bullets or "1)" — the renderer doesn't
+//   treat those as lists, so continuing them would just add stray text.)
+const NOTE_LIST_RE = /^(\s*)(?:([-*])\s+(\[[ xX]\]\s+)?|(\d+)\.\s+|(>)[ \t]?)/;
+let noteEnterBusy = false;   // guards against our own edit re-triggering beforeinput
+let noteTabFree = false;     // Esc pressed → the next Tab in a list moves focus normally
+function noteLineBounds(v, pos){
+  const ls = pos ? v.lastIndexOf('\n', pos - 1) + 1 : 0;
+  let le = v.indexOf('\n', pos); if(le === -1) le = v.length;
+  return { ls, le };
+}
+// Odd number of ``` before the line → the line is inside a fenced code block,
+// where "- foo" / "1. foo" are literal code and must not be auto-continued.
+function noteInCodeFence(v, lineStart){
+  return ((v.slice(0, lineStart).match(/```/g) || []).length % 2) === 1;
+}
+// Replace [from,to) with text as ONE undoable step. Goes through
+// execCommand so the browser also fires a real `input` event (draft autosave,
+// wiki autocomplete, undo debounce all keep working) and keeps the caret in
+// view; falls back to setRangeText + a synthetic input event where
+// execCommand is unavailable.
+function noteReplaceRange(ta, from, to, text){
+  pushUndoBeforeEdit();
+  ta.focus();
+  ta.setSelectionRange(from, to);
+  noteEnterBusy = true;
+  let ok = false;
+  try{ ok = text ? document.execCommand('insertText', false, text) : document.execCommand('delete'); }
+  catch(err){ ok = false; }
+  noteEnterBusy = false;
+  if(!ok){
+    ta.setRangeText(text, from, to, 'end');
+    ta.dispatchEvent(new Event('input', { bubbles:true }));
+  }
+}
+// Enter is handled on `beforeinput`, not keydown: soft keyboards (Gboard etc.)
+// often report keydown as key "Unidentified"/keyCode 229, and an IME that is
+// mid-composition must be left alone — beforeinput's inputType tells us
+// reliably that a real line break is being inserted.
+function onNoteEditBeforeInput(e){
+  if(noteEnterBusy || e.isComposing) return;
+  if(e.inputType !== 'insertLineBreak' && e.inputType !== 'insertParagraph') return;
+  if(wikiAC.open && wikiAC.items.length) return;
+  const ta = e.target;
+  if(ta.selectionStart !== ta.selectionEnd) return;
+  const v = ta.value, pos = ta.selectionStart;
+  const { ls, le } = noteLineBounds(v, pos);
+  const line = v.slice(ls, le);
+  const m = line.match(NOTE_LIST_RE);
+  if(!m || pos - ls < m[0].length) return;        // not a list line, or caret is inside the marker
+  if(noteInCodeFence(v, ls)) return;
+  e.preventDefault();
+  // Enter on an empty item ends the list: clear the line instead of adding another.
+  if(!line.slice(m[0].length).trim() && pos === le){
+    noteReplaceRange(ta, ls, le, '');
+    return;
+  }
+  let prefix;
+  if(m[5]) prefix = m[1] + '> ';
+  else if(m[4]) prefix = m[1] + (parseInt(m[4], 10) + 1) + '. ';
+  else prefix = m[1] + m[2] + ' ' + (m[3] ? '[ ] ' : '');   // a new task starts unchecked
+  noteReplaceRange(ta, pos, pos, '\n' + prefix);
+}
+// Tab / Shift+Tab on a list line: keep focus in the editor and indent /
+// outdent by two spaces. (The reading view still shows lists flat — the
+// indent is kept in the text for export and for other Markdown apps.)
+// Returns true if the key was handled. Quote lines and non-list lines are
+// left alone so Tab still moves focus, and Esc → Tab always lets you out.
+function noteTabInList(e){
+  const ta = e.target, v = ta.value, pos = ta.selectionStart, end = ta.selectionEnd;
+  if(v.slice(pos, end).includes('\n')) return false;
+  const { ls, le } = noteLineBounds(v, pos);
+  const line = v.slice(ls, le);
+  const m = line.match(NOTE_LIST_RE);
+  if(!m || m[5] || noteInCodeFence(v, ls)) return false;
+  if(noteTabFree){ noteTabFree = false; return false; }
+  e.preventDefault();
+  if(!e.shiftKey){
+    noteReplaceRange(ta, ls, ls, '  ');
+    ta.setSelectionRange(pos + 2, end + 2);
+  } else {
+    const lead = line.match(/^( {1,2}|\t)/);
+    if(!lead) return true;
+    const k = lead[0].length;
+    noteReplaceRange(ta, ls, ls + k, '');
+    ta.setSelectionRange(Math.max(ls, pos - k), Math.max(ls, end - k));
+  }
+  return true;
+}
 function onNoteEditKeydown(e){
   const isUndoKey = (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z';
   const isRedoKey = (e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'));
   if(isUndoKey && !(wikiAC.open && wikiAC.items.length)){ e.preventDefault(); undoEdit(); return; }
   if(isRedoKey && !(wikiAC.open && wikiAC.items.length)){ e.preventDefault(); redoEdit(); return; }
+  // Formatting shortcuts — same toggles as the toolbar buttons.
+  if((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey){
+    const k = e.key.toLowerCase();
+    if(k === 'b'){ e.preventDefault(); toggleBoldAtSelection(); return; }
+    if(k === 'i'){ e.preventDefault(); toggleItalicAtSelection(); return; }
+  }
+  // Ctrl+Alt+H (Ctrl+Option+H on Mac): heading toggle. Cmd/Ctrl+H and
+  // Ctrl+Shift+H are taken by browsers, hence the Alt combo.
+  if(e.ctrlKey && e.altKey && !e.metaKey && e.code === 'KeyH'){ e.preventDefault(); toggleHeadingAtLine(); return; }
+  const acOpen = wikiAC.open && wikiAC.items.length;
+  if(e.key === 'Tab' && !acOpen && !e.ctrlKey && !e.metaKey && !e.altKey){ if(noteTabInList(e)) return; }
+  if(e.key === 'Escape' && !acOpen) noteTabFree = true;
+  else if(!['Tab','Shift','Control','Alt','Meta'].includes(e.key)) noteTabFree = false;
   if(!wikiAC.open || !wikiAC.items.length) return;
   if(e.key === 'ArrowDown'){ e.preventDefault(); wikiAC.activeIndex = (wikiAC.activeIndex+1) % wikiAC.items.length; renderWikiAutocomplete(); }
   else if(e.key === 'ArrowUp'){ e.preventDefault(); wikiAC.activeIndex = (wikiAC.activeIndex-1+wikiAC.items.length) % wikiAC.items.length; renderWikiAutocomplete(); }
@@ -3028,17 +3136,8 @@ function onNoteEditPaste(e){
 // current selection in ** ** (or, with nothing selected, drops an empty
 // **bold text** placeholder with the words pre-selected so typing replaces
 // them, same as most rich editors do for an empty bold toggle).
-function toggleBoldAtSelection(){
-  pushUndoBeforeEdit();
-  const ta = document.getElementById('mdEditArea');
-  const start = ta.selectionStart, end = ta.selectionEnd;
-  const selected = ta.value.slice(start, end);
-  const text = selected || 'bold text';
-  const wrapped = '**' + text + '**';
-  ta.value = ta.value.slice(0, start) + wrapped + ta.value.slice(end);
-  ta.focus();
-  ta.setSelectionRange(start + 2, start + 2 + text.length);
-}
+function toggleBoldAtSelection(){ toggleWrapAtSelection('**', 'bold text'); }
+function toggleItalicAtSelection(){ toggleWrapAtSelection('*', 'italic text'); }
 // ---- Strikethrough / highlight toolbar buttons (v1.33.0) ----
 // Same idea as the Bold button, but a real on/off toggle: tapping again on
 // text that is already wrapped removes the delimiters (whether the selection
@@ -3057,7 +3156,26 @@ function markSplitLine(line){
   const m = line.slice(prefix.length).match(/^(\s*)([\s\S]*?)(\s*)$/);
   return { prefix, lead: m[1], inner: m[2], trail: m[3] };
 }
+// Bold ("**") and italic ("*") share a character, so a plain startsWith/
+// endsWith check can't tell them apart: "**x**" would look italic-wrapped.
+// Compare the RUNS of stars instead — italic is present when the shorter run
+// is odd (1 or 3, as in "***x***"), bold when it is 2 or more.
+function starRun(v, pos, dir){
+  let c = 0;
+  while(v[dir < 0 ? pos - 1 - c : pos + c] === '*') c++;
+  return c;
+}
+function starDelimPresent(d, before, after){
+  const m = Math.min(before, after);
+  return d === '**' ? m >= 2 : (m % 2 === 1);
+}
 function markInnerIsWrapped(inner, d){
+  if(d[0] === '*'){
+    if(!/[^*]/.test(inner)) return false;
+    const lead = inner.length - inner.replace(/^\*+/, '').length;
+    const trail = inner.length - inner.replace(/\*+$/, '').length;
+    return starDelimPresent(d, lead, trail);
+  }
   return inner.length > 2*d.length && inner.startsWith(d) && inner.endsWith(d);
 }
 function toggleWrapAtSelection(d, placeholder){
@@ -3091,7 +3209,10 @@ function toggleWrapAtSelection(d, placeholder){
     return;
   }
   const is = start + m[1].length, ie = is + inner.length;
-  if(is >= n && v.slice(is - n, is) === d && v.slice(ie, ie + n) === d){
+  const surrounded = d[0] === '*'
+    ? starDelimPresent(d, starRun(v, is, -1), starRun(v, ie, 1))
+    : (is >= n && v.slice(is - n, is) === d && v.slice(ie, ie + n) === d);
+  if(surrounded){
     ta.value = v.slice(0, is - n) + inner + v.slice(ie + n);
     ta.focus();
     ta.setSelectionRange(is - n, ie - n);

@@ -949,7 +949,7 @@
       <h3>Text</h3>
       <p><strong>**bold**</strong> · <em>*italic*</em> · <code>`inline code`</code></p>
       <p><code># Heading 1</code> &nbsp; <code>## Heading 2</code> &nbsp; <code>### Heading 3</code> &nbsp; … &nbsp; <code>###### Heading 6</code></p>
-      <p>The <b>B</b> and <b>H</b> toolbar buttons insert bold and a heading for you.</p>
+      <p>The <b>B</b> and <b>H</b> toolbar buttons insert bold and a heading for you. <b>B</b> is an on/off switch — select bold text and tap it again to remove the <code>**</code>. Italic has no button: use <b>Ctrl/⌘+I</b> (see <em>Typing shortcuts</em> below).</p>
       <p>In reading view, tap the arrow at the right of a heading to fold everything under it, up to the next heading of the same or higher level. The outline (☰) has Collapse all / Expand all. Folds are remembered per note and don't change the text.</p>
 
       <h3>Strikethrough &amp; highlight</h3>
@@ -960,6 +960,8 @@
 
       <h3>Lists</h3>
       <p><code>- item</code> for a bullet list, <code>1. item</code> for a numbered list.</p>
+      <p>Press <b>Enter</b> at the end of a list line and the next line starts with the same marker — <code>- </code>, <code>* </code>, the next number (<code>2. </code>) or, for a checklist, a fresh unchecked <code>- [ ] </code>. Press <b>Enter</b> again on the empty item to end the list. Inside a fenced code block nothing is added.</p>
+      <p><b>Tab</b> / <b>Shift+Tab</b> on a list line indent / outdent it by two spaces instead of jumping focus out of the editor (reading view still shows lists flat). Press <b>Esc</b> and then <b>Tab</b> if you do want to move focus to the toolbar.</p>
       <p>Tappable checklist — tap in the reader to check it off, no need to open the editor:</p>
       <ul class="task-list">
         <li class="task-item"><label><input type="checkbox" disabled><span>Type <code>- [ ] text</code> for this</span></label></li>
@@ -967,7 +969,7 @@
       </ul>
 
       <h3>Quotes &amp; callouts</h3>
-      <p><code>&gt; text</code> makes a plain quote. Start it with <code>[!type]</code> for a colored callout card instead:</p>
+      <p><code>&gt; text</code> makes a plain quote. Start it with <code>[!type]</code> for a colored callout card instead. <b>Enter</b> at the end of a quote line continues it with <code>&gt; </code>; <b>Enter</b> on an empty <code>&gt; </code> line ends the quote:</p>
       <blockquote>&gt; A plain quote looks like this</blockquote>
       <div class="callout callout-note"><div class="callout-title"><span class="callout-icon">&#128221;</span>Note</div><div class="callout-body"><code>&gt; [!note]</code> — general info</div></div>
       <div class="callout callout-warning"><div class="callout-title"><span class="callout-icon">&#9888;&#65039;</span>Watch out</div><div class="callout-body"><code>&gt; [!warning] Watch out</code> — the text after <code>[!warning]</code> becomes the card's title</div></div>
@@ -1003,6 +1005,12 @@
 
       <h3>Tags</h3>
       <p>Write <code>#word</code> anywhere in the text to tag the note — as many as you like, alongside its one category. Browse them all from the &#128269; command palette &rarr; <em>Browse tags</em>.</p>
+
+      <h3>Typing shortcuts</h3>
+      <p><b>Ctrl/⌘+B</b> bold · <b>Ctrl/⌘+I</b> italic — both switch on and off, like the toolbar buttons, and work line by line on a multi-line selection.</p>
+      <p><b>Ctrl+Alt+H</b> (Ctrl+Option+H on Mac) toggles a heading on the current line.</p>
+      <p><b>Ctrl/⌘+Z</b> undo · <b>Ctrl/⌘+Shift+Z</b> or <b>Ctrl/⌘+Y</b> redo · <b>Ctrl/⌘+F</b> find.</p>
+      <p><b>Enter</b> / <b>Tab</b> in lists and quotes: see <em>Lists</em> and <em>Quotes &amp; callouts</em> above.</p>
 
       <h3>Tips</h3>
       <p><strong>Find in a note:</strong> tap &#128269; in the note's top bar (or press Ctrl/Cmd+F). Matches are highlighted, with &uarr; &darr; buttons to step through them and <code>Aa</code> to match case. While editing, the bar also has <em>Replace</em> and <em>All</em> — Replace All can be undone in one step with &#8617;. In reading view, <em>Replace&hellip;</em> opens the editor with your search carried over.</p>

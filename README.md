@@ -154,6 +154,24 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.40.0** (2026-09-28) — Editor keyboard aids. **Enter** at the end of a
+  list / task / numbered / quote line continues it (`- `, `* `, next number,
+  fresh `- [ ] `, `> `); Enter on the empty item ends the list. Not applied
+  inside fenced code blocks or with a text selection. Implemented on
+  `beforeinput` (`insertLineBreak`/`insertParagraph`) rather than `keydown`,
+  because soft keyboards report unreliable `keydown` keys and IMEs mid-
+  composition must not be touched. **Tab / Shift+Tab** on a list line
+  indent / outdent two spaces instead of moving focus (list lines only; Esc
+  then Tab always moves focus, so it is never a keyboard trap; the reader
+  still renders lists flat). **Ctrl/⌘+B**, **Ctrl/⌘+I**, **Ctrl+Alt+H**
+  (bold, italic, heading — Ctrl/Cmd+H is a browser shortcut). The B button
+  is now a true on/off toggle (`toggleWrapAtSelection('**')`) and italic
+  uses `'*'`; because `*` and `**` share a character, detection compares
+  runs of stars (`starRun` / `starDelimPresent`) so `**x**` is never read as
+  italic. All edits go through `noteReplaceRange` (one undo step each, real
+  `input` event so drafts/autocomplete keep working). Markdown help updated:
+  Lists, Quotes, Text and a new *Typing shortcuts* section (the docked help
+  clones the overlay, so there is still one copy to maintain).
 - **v1.39.0** (2026-09-28) — Pictures in notes are thumbnails in reading view
   (max 280 × 200 px, aspect ratio kept); tap one to open it full-screen. In
   the viewer, tap the picture again to toggle fit-to-screen / actual size
