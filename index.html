@@ -986,6 +986,7 @@ columns: 分类 | 笔记
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128274;</span>Passcode is optional</div>
       <p>You can lock Shelfmark with a passcode or open it straight to your shelf. Either way your data is stored encrypted; a passcode also keeps other people on this device out. You can switch at any time.</p>
+      <p>Want to wipe everything and start fresh? Ctrl+K &rarr; <em>Erase this shelf and start over</em> works in either mode.</p>
       <p><button type="button" class="cancel" style="width:auto;padding:8px 14px;" onclick="closeGuide();openSecInfo()">Passcode &amp; lock settings&hellip;</button></p>
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#9997;&#65039;</span>Writing notes</div>
@@ -1013,6 +1014,10 @@ columns: 分类 | 笔记
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128260;</span>Switching</div>
       <p>You can switch at any time: every item is re-encrypted in one all-or-nothing step, so if anything goes wrong your current setup keeps working. Removing a passcode asks for it first.</p>
       <p>Exports use their own passphrase and aren&rsquo;t affected by this setting.</p>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128465;&#65039;</span>Starting over</div>
+      <p>With a passcode, the lock screen has a <em>Forgot passcode? Erase this shelf</em> link. Without one there is no lock screen, so use Ctrl+K &rarr; <em>Erase this shelf and start over</em> (or the button below). Either way it deletes everything on this device and cannot be undone &mdash; export an encrypted backup first if you might want anything back.</p>
+      <p><button type="button" class="cancel" style="width:auto;padding:8px 14px;color:#b23b3b;" onclick="closeSecInfo();eraseShelfFromApp()">Erase this shelf&hellip;</button></p>
       <p style="font-size:12.5px;color:var(--ink-soft);">Tip: press <code>Ctrl+K</code> (or tap &#128269;) and type &ldquo;passcode&rdquo; to get back here.</p>
       </section>
     </div>

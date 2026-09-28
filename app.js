@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.48.1';
+const APP_VERSION = '1.48.2';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -190,6 +190,18 @@ async function onLockSubmit(){
 document.addEventListener('keydown', e=>{
   if(e.key === 'Enter' && !document.getElementById('lockScreen').classList.contains('hidden')) onLockSubmit();
 });
+// Erase from inside the app (v1.48.2). In no-passcode mode there is no lock
+// screen, so the lock screen's "Forgot passcode? Erase" link is never shown —
+// this is the way to start over from the command palette / Passcode panel.
+// Two steps (confirm + typing ERASE) because, unlike the lock-screen link, it
+// is reachable while the shelf is open and there is no undo.
+function eraseShelfFromApp(){
+  if(!confirm('Erase this shelf?\n\nEvery item on this device will be permanently deleted, and Shelfmark will go back to its first-run setup. There is no undo. Export an encrypted backup first if you might want anything back.')) return;
+  const typed = prompt('To confirm, type ERASE (capital letters):');
+  if(typed === null) return;
+  if(typed.trim() !== 'ERASE'){ alert('Not erased — you didn\'t type ERASE.'); return; }
+  wipeAllData();
+}
 function onResetRequest(){
   if(confirm('This permanently erases everything on this shelf on this device. There is no undo. Continue?')){
     wipeAllData();
@@ -4848,6 +4860,7 @@ function buildStaticCommands(){
       ? { id:'passcode-set', icon:'&#128274;', label:'Set a passcode\u2026', hint:'currently none', action: ()=>openAuthModal('set') }
       : { id:'passcode-remove', icon:'&#128275;', label:'Remove passcode\u2026', hint:'', action: ()=>openAuthModal('remove') },
     { id:'guide', icon:'&#128218;', label:'App guide: index, passcode & tips', hint:'', action: ()=>openGuide() },
+    { id:'erase-shelf', icon:'&#128465;&#65039;', label:'Erase this shelf and start over\u2026', hint:'deletes everything', action: ()=>eraseShelfFromApp() },
     { id:'passcode-info', icon:'&#128272;', label:'Passcode & lock: info and settings', hint: authMode === 'device' ? 'no passcode' : 'passcode on', action: ()=>openSecInfo() },
     { id:'storage', icon:'&#128190;', label:'Storage used', hint: storageHint, action: ()=>showStorageDetail() },
     { id:'md-help', icon:'?', label:'Markdown formatting help', hint:'', action: ()=>openMarkdownHelp() },

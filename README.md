@@ -163,6 +163,14 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.48.2** (2026-09-28) — Reset without a lock screen. New Ctrl+K command
+  "Erase this shelf and start over…" (also a button in the Passcode & lock
+  panel), for no-passcode mode where the lock screen's "Forgot passcode?
+  Erase" link never appears. Works in either mode; asks for a confirmation
+  and then for the word ERASE to be typed, then deletes the local database and
+  returns to first-run setup. Bump `CACHE_VERSION` in `service-worker.js` to
+  match on deploy.
+
 - **v1.48.1** (2026-09-28) — New in-app "App guide" panel (Ctrl+K → "App
   guide: index, passcode & tips") covering the command palette, the category
   index (what it is, how to make one, the optional `types:` / `exclude:` /
