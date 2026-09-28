@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.45.0';
+const APP_VERSION = '1.45.1';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2995,8 +2995,8 @@ function onNoteEditBeforeInput(e){
 //  - list line (or a single-line selection, or Shift+Tab): the LINE is
 //    indented / outdented, caret stays put relative to the text
 //  - any other line, no selection, Tab: two spaces are inserted at the caret
-// (The reading view still shows lists flat — the indent is kept in the text
-// for export and other Markdown apps.) Esc → Tab always lets focus out, so it
+// (Reading view shows the indent as left spacing since v1.45.1; lists are still
+// flat <ul>/<ol>, and the indent is kept in the text for export.) Esc → Tab always lets focus out, so it
 // is never a keyboard trap. Returns true if the key was handled.
 function noteTabInList(e){
   const ta = e.target, v = ta.value, pos = ta.selectionStart, end = ta.selectionEnd;
@@ -3813,6 +3813,27 @@ function applyInlineMarks(html){
   s = s.replace(/==([^\s=](?:.*?[^\s=])?)==/g,'<mark class="md-mark">$1</mark>');
   return s.replace(/\u0000T(\d+)\u0000/g, (_, i)=>held[+i]);
 }
+// Indentation in reading view (v1.45.1). Leading spaces/tabs used to vanish
+// because HTML collapses them, so the editor's Tab indent looked like it did
+// nothing. Now each leading space is worth 0.75em (a tab counts as 4 spaces,
+// so the editor's 2-space Tab step = 1.5em). Paragraph / heading-body lines get an
+// inline spacer span; list items get a margin-left (lists stay flat <ul>/<ol>
+// — no real nesting — so block/line indices used by checkboxes are unchanged).
+function mdIndentEm(line){
+  const m = line.match(/^[ \t]+/);
+  return m ? m[0].replace(/\t/g, '    ').length * 0.75 : 0;
+}
+function mdBrLines(text){
+  return text.split('\n').map(l=>{
+    if(!l.trim()) return l;
+    const em = mdIndentEm(l);
+    return em ? `<span class="md-ind" style="width:${em}em"></span>` + l.replace(/^[ \t]+/, '') : l;
+  }).join('<br>');
+}
+function mdLiOpen(line, cls){
+  const em = mdIndentEm(line);
+  return `<li${cls ? ` class="${cls}"` : ''}${em ? ` style="margin-left:${em}em"` : ''}>`;
+}
 function renderMarkdown(src, linkTypes){
   linkTypes = linkTypes || {};
   let s = escapeHtml(src);
@@ -3942,7 +3963,7 @@ function renderMarkdown(src, linkTypes){
       const nl = block.indexOf('\n');
       const rest = nl === -1 ? '' : block.slice(nl + 1);
       if(!rest.trim()) html = nl === -1 ? block : block.slice(0, nl);
-      else html = block.slice(0, nl) + `<div class="heading-rest">${/<(div|pre|table|ul|ol)\b/.test(rest) ? rest : rest.replace(/\n/g,'<br>')}</div>`;
+      else html = block.slice(0, nl) + `<div class="heading-rest">${/<(div|pre|table|ul|ol)\b/.test(rest) ? rest : mdBrLines(rest)}</div>`;
     }
     else if(/^<pre/.test(block)) html = block;
     else if(/^<div class="md-audio/.test(block)) html = block;
@@ -3992,7 +4013,7 @@ function renderMarkdown(src, linkTypes){
       }
     }
     else if(/^\s*\d+\.\s+/.test(block)){
-      const items = block.split('\n').filter(l=>l.trim()).map(l=>`<li>${l.replace(/^\s*\d+\.\s+/,'')}</li>`).join('');
+      const items = block.split('\n').filter(l=>l.trim()).map(l=>`${mdLiOpen(l)}${l.replace(/^\s*\d+\.\s+/,'')}</li>`).join('');
       html = `<ol>${items}</ol>`;
     }
     else if(/^\s*[-*]\s+/m.test(block)){
@@ -4010,12 +4031,12 @@ function renderMarkdown(src, linkTypes){
         if(taskMatch){
           isTaskList = true;
           const checked = /x/i.test(taskMatch[1]);
-          return `<li class="task-item"><label><input type="checkbox" data-block-idx="${idx}" data-line-idx="${li}"${checked ? ' checked' : ''}><span${checked ? ' class="done"' : ''}>${taskMatch[2]}</span></label></li>`;
+          return `${mdLiOpen(l, 'task-item')}<label><input type="checkbox" data-block-idx="${idx}" data-line-idx="${li}"${checked ? ' checked' : ''}><span${checked ? ' class="done"' : ''}>${taskMatch[2]}</span></label></li>`;
         }
-        return `<li>${stripped}</li>`;
+        return `${mdLiOpen(l)}${stripped}</li>`;
       }).join('');
       html = `<ul${isTaskList ? ' class="task-list"' : ''}>${items}</ul>`;
-    } else html = `<p>${block.replace(/\n/g,'<br>')}</p>`;
+    } else html = `<p>${mdBrLines(block)}</p>`;
     return `<div class="mdblock" data-idx="${idx}"><button class="bm-btn" onclick="toggleBookmark(${idx})" title="Bookmark this spot">&#128278;</button>${html}</div>`;
   }).join('\n');
 }

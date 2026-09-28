@@ -154,6 +154,13 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.45.1** (2026-09-28) — Indentation now shows in reading view. Leading
+  spaces / tabs were being collapsed by HTML, so Tab indent (v1.45.0) only
+  showed in the editor. `mdIndentEm` counts 0.75em per leading space (tab = 4
+  spaces): paragraph and heading-body lines get an inline `.md-ind` spacer
+  span, list / ordered / task items get `margin-left`. Lists remain flat
+  `<ul>`/`<ol>` (no real nesting), so block and line indices used by task
+  checkboxes and tap-to-edit are untouched.
 - **v1.45.0** (2026-09-28) — Tab / Shift+Tab now indent on **every** line in
   the note editor, not only list lines. Before, Tab on a plain line (or a
   marker-less `*asdf`) still moved focus out of the textarea. Now: multi-line
