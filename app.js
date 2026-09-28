@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.47.0';
+const APP_VERSION = '1.47.1';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -149,7 +149,7 @@ async function initLockScreen(){
   }
   if(!auth){
     document.getElementById('lockTitle').textContent = 'Set a passcode';
-    document.getElementById('lockSub').textContent = 'This encrypts everything you add to your shelf. There is no recovery — write it down somewhere safe.';
+    document.getElementById('lockSub').textContent = 'This encrypts everything you add to your shelf. There is no recovery — write it down somewhere safe. Prefer no lock? You can skip it below and change your mind any time (press Ctrl+K, then search "passcode").';
     confirmInput.style.display = 'block';
   } else {
     document.getElementById('lockTitle').textContent = 'Shelfmark is locked';
@@ -260,6 +260,23 @@ async function reencryptEverything(newKey, newAuthRec, onProgress){
     cryptoKey = newKey;
   });
 }
+
+// ---- Passcode & lock info panel (v1.47.1) -----------------------------------
+// In-app explanation of the two storage modes so people can find out the lock
+// is optional without reading the README. Reached from the command palette
+// ("Passcode & lock: info and settings"); shows the CURRENT mode and offers
+// the same switch actions as the palette's "Set/Remove passcode…" entries.
+function openSecInfo(){
+  const isDevice = authMode === 'device';
+  document.getElementById('secInfoStatus').innerHTML = isDevice
+    ? '<strong>Current mode: no passcode.</strong> Shelfmark opens straight to your shelf.'
+    : '<strong>Current mode: passcode.</strong> Shelfmark asks for your passcode each time you open it.';
+  const btn = document.getElementById('secInfoActionBtn');
+  btn.textContent = isDevice ? 'Set a passcode\u2026' : 'Remove passcode\u2026';
+  btn.onclick = ()=>{ closeSecInfo(); openAuthModal(isDevice ? 'set' : 'remove'); };
+  document.getElementById('secInfoOverlay').style.display = 'flex';
+}
+function closeSecInfo(){ document.getElementById('secInfoOverlay').style.display = 'none'; }
 
 let authModalMode = null; // 'set' (device -> passcode) | 'remove' (passcode -> device)
 function openAuthModal(mode){
@@ -4748,6 +4765,7 @@ function buildStaticCommands(){
     authMode === 'device'
       ? { id:'passcode-set', icon:'&#128274;', label:'Set a passcode\u2026', hint:'currently none', action: ()=>openAuthModal('set') }
       : { id:'passcode-remove', icon:'&#128275;', label:'Remove passcode\u2026', hint:'', action: ()=>openAuthModal('remove') },
+    { id:'passcode-info', icon:'&#128272;', label:'Passcode & lock: info and settings', hint: authMode === 'device' ? 'no passcode' : 'passcode on', action: ()=>openSecInfo() },
     { id:'storage', icon:'&#128190;', label:'Storage used', hint: storageHint, action: ()=>showStorageDetail() },
     { id:'md-help', icon:'?', label:'Markdown formatting help', hint:'', action: ()=>openMarkdownHelp() },
     ...themeCmds

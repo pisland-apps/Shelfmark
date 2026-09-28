@@ -866,6 +866,7 @@
   <div id="empty" class="empty" style="display:none;">
     <div class="serif">Your shelf is empty</div>
     <div>Add a PDF, a note, a picture, or a recording to begin.</div>
+    <div style="margin-top:10px;font-size:12.5px;">Tip: press <code>Ctrl+K</code> or tap &#128269; for every command &mdash; including passcode &amp; lock settings.</div>
   </div>
   <div id="noResults" class="no-results" style="display:none;">
     <div class="serif" id="noResultsText">No matches</div>
@@ -948,6 +949,30 @@
       <button class="save" id="expGoBtn" onclick="doExport()">Export</button>
     </div>
     <div class="lock-error" id="expError"></div>
+  </div>
+</div>
+
+<div id="secInfoOverlay" class="overlay" style="display:none;" onclick="if(event.target===this) closeSecInfo()">
+  <div class="sheet help-sheet">
+    <h2>Passcode &amp; lock</h2>
+    <div class="help-body mdbody">
+      <p id="secInfoStatus"></p>
+      <section class="hcard hc-n"><div class="hc-title"><span class="hc-ic">&#128273;</span>With a passcode</div>
+      <p>A lock screen appears every time you open Shelfmark. Your shelf is encrypted with a key made from your passcode, and that key is never saved &mdash; so nobody who gets hold of this device can read it without the passcode. There is <em>no recovery</em>: forget it and the only option is to erase the shelf (or restore from an encrypted export).</p>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128275;</span>Without a passcode</div>
+      <p>No lock screen &mdash; Shelfmark opens straight to your shelf. Your data is still stored encrypted, but the key is kept in this browser next to it, so <em>anyone who can open this browser on this device can read your shelf</em>. Best on a personal device you trust. If the browser ever loses that key (clearing site data, for example) the shelf can&rsquo;t be opened, so keep an encrypted export as a backup.</p>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128260;</span>Switching</div>
+      <p>You can switch at any time: every item is re-encrypted in one all-or-nothing step, so if anything goes wrong your current setup keeps working. Removing a passcode asks for it first.</p>
+      <p>Exports use their own passphrase and aren&rsquo;t affected by this setting.</p>
+      <p style="font-size:12.5px;color:var(--ink-soft);">Tip: press <code>Ctrl+K</code> (or tap &#128269;) and type &ldquo;passcode&rdquo; to get back here.</p>
+      </section>
+    </div>
+    <div class="row">
+      <button class="cancel" onclick="closeSecInfo()">Close</button>
+      <button class="save" id="secInfoActionBtn">Set a passcode&hellip;</button>
+    </div>
   </div>
 </div>
 

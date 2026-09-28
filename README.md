@@ -163,6 +163,14 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.47.1** (2026-09-28) — In-app explanation of the passcode options.
+  New command-palette entry "Passcode & lock: info and settings" opens a
+  panel showing the current mode, what each mode means (including the
+  tradeoffs and the browser-loses-its-key caveat), and a button to switch.
+  The first-run screen now mentions the skip option and where to change it
+  later, and the empty-shelf message points to Ctrl+K. Bump `CACHE_VERSION`
+  in `service-worker.js` to match on deploy.
+
 - **v1.47.0** (2026-09-28) — Passcode is now optional. First-run lock screen
   gets a "Continue without a passcode" link (device-key mode: random
   non-extractable AES-GCM key stored in IndexedDB, app opens straight to the
