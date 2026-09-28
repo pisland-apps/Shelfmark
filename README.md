@@ -26,7 +26,7 @@ and stored only in your browser's IndexedDB, on your own device.
   toolbar (and a "Markdown formatting help" entry in the command palette,
   reachable from anywhere) opens an overlay covering every syntax the
   editor supports — bold/italic/~~strikethrough~~/==highlight== (with the S / A toolbar buttons)/headings, lists and `- [ ]` checklists,
-  `> [!note]`-style callouts, fenced code blocks, tables, images/dividers,
+  `> [!note]`-style callouts (including foldable `[!note]-` / `[!note]+`), fenced code blocks, tables, images/dividers,
   external links, the three shelf-link pickers (🎵/🔗/📄), `[[Wiki links]]`,
   and `#tags` — each shown as the literal syntax next to its already-
   rendered result. Fully static and offline: no network fetch, and it
@@ -148,6 +148,24 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.35.0** (2026-09-28) — Foldable callouts, Obsidian syntax: `> [!note]-
+  Title` starts collapsed, `> [!note]+ Title` is foldable but starts open;
+  no `-`/`+` is the old static card, unchanged. Rendered as a native
+  `<details class="callout … callout-fold">` with the title row as
+  `<summary>` — no JS state, and keyboard / screen-reader folding comes free.
+  A callout with a fold marker but no body lines stays a plain card (nothing
+  to fold). Three integration points worth knowing about: (1) `summary` was
+  added to `PARAGRAPH_TAP_EXCLUDE`, otherwise tapping a title to unfold would
+  also jump into edit mode (tap-to-edit and the long-press menu share that
+  selector); tapping the callout *body* still edits that paragraph, same as
+  any other block. (2) Find-in-note counts hits inside folded callouts, and
+  `revealFindHit()` opens every enclosing `<details>` before stepping to one
+  — `scrollIntoView` on a hidden element silently does nothing. It only ever
+  opens; it never re-closes. (3) Fold state is not persisted: reopening or
+  re-rendering a note returns each callout to its `-`/`+` starting state.
+  The `[!type]±` character must come directly after the `]` — `[!note] - x`
+  is still a static card titled "- x". The Markdown formatting help has an
+  example of each.
 - **v1.34.0** (2026-09-28) — Markdown formatting help (the **?** button /
   command palette entry) now has its own "Strikethrough & highlight" section
   instead of a one-line mention: the two syntaxes rendered, the **S** / **A**

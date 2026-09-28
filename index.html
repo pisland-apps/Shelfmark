@@ -406,6 +406,19 @@
   .mdbody .callout-warning{--callout-color:var(--pdf);background:rgba(122,59,46,.12);}
   .mdbody .callout-idea{--callout-color:var(--audio);background:rgba(156,122,41,.12);}
   .mdbody .callout-other{--callout-color:var(--img);background:rgba(62,76,115,.12);}
+  /* Foldable callout (> [!type]- / > [!type]+): native <details>. Padding moves
+     onto the <summary> so the whole title row is the tap target. */
+  .mdbody .callout-fold{padding:0;}
+  .mdbody .callout-fold > summary.callout-title{
+    padding:10px 14px;cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent;
+  }
+  .mdbody .callout-fold > summary.callout-title::-webkit-details-marker{display:none;}
+  .mdbody .callout-fold > summary.callout-title::after{
+    content:'\25B8';margin-left:auto;padding-left:8px;font-size:13px;
+    transition:transform .15s;
+  }
+  .mdbody .callout-fold[open] > summary.callout-title::after{transform:rotate(90deg);}
+  .mdbody .callout-fold > .callout-body{margin-top:0;padding:0 14px 12px;}
   .mdbody ol{padding-left:1.4em;}
   .mdbody hr{border:none;border-top:1px solid var(--line);margin:20px 0;}
   .mdbody img.md-img{max-width:100%;height:auto;border-radius:8px;display:block;margin:10px 0;}
@@ -878,6 +891,9 @@
       <div class="callout callout-note"><div class="callout-title"><span class="callout-icon">&#128221;</span>Note</div><div class="callout-body"><code>&gt; [!note]</code> — general info</div></div>
       <div class="callout callout-warning"><div class="callout-title"><span class="callout-icon">&#9888;&#65039;</span>Watch out</div><div class="callout-body"><code>&gt; [!warning] Watch out</code> — the text after <code>[!warning]</code> becomes the card's title</div></div>
       <div class="callout callout-idea"><div class="callout-title"><span class="callout-icon">&#128161;</span>Idea</div><div class="callout-body"><code>&gt; [!idea]</code> — any other <code>[!type]</code> still renders a card, just in a neutral color</div></div>
+      <p>Add <code>-</code> or <code>+</code> right after the type to make the card foldable — <code>-</code> starts collapsed, <code>+</code> starts open. Tap the title row to fold or unfold:</p>
+      <details class="callout callout-note callout-fold"><summary class="callout-title"><span class="callout-icon">&#128221;</span>Tap to expand</summary><div class="callout-body"><code>&gt; [!note]- Tap to expand</code> — collapsed until tapped. Search matches inside a folded card open it automatically.</div></details>
+      <details class="callout callout-idea callout-fold" open><summary class="callout-title"><span class="callout-icon">&#128161;</span>Starts open</summary><div class="callout-body"><code>&gt; [!idea]+ Starts open</code> — foldable, but shown open. Fold state isn't saved: the card returns to its starting state whenever the note is reopened.</div></details>
 
       <h3>Code blocks</h3>
       <p>Fence a block with three backticks; an optional language name after the first fence is shown as a label. Every block gets a one-tap Copy button.</p>

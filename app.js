@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.34.0';
+const APP_VERSION = '1.35.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1897,7 +1897,8 @@ function editParagraphAt(idx){
 // that paragraph. Skips taps on anything with its own tap behavior (a link,
 // a button, a checkbox, an audio/note-link widget) so those keep working
 // exactly as before.
-const PARAGRAPH_TAP_EXCLUDE = 'button, a, input, .md-audio-inline, .md-note-link';
+// `summary` = the title row of a foldable callout: tapping it must fold/unfold, not open the editor.
+const PARAGRAPH_TAP_EXCLUDE = 'button, a, input, summary, .md-audio-inline, .md-note-link';
 let paragraphLongPressFired = false;
 function wireParagraphEdit(container){
   container.querySelectorAll('.mdblock').forEach(el=>{
@@ -2234,6 +2235,13 @@ function findEditOffsets(text, q){
   }
   return out;
 }
+// A find hit inside a collapsed foldable callout is in the DOM (and counted)
+// but not rendered, so scrollIntoView() on it does nothing. Open every
+// <details> around it first. Only ever opens, never re-closes: stepping past
+// the hit leaves the callout open, which is what you want when reading on.
+function revealFindHit(el){
+  for(let d = el && el.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+}
 function highlightReader(q){
   clearFindMarks();
   findHits = [];
@@ -2305,7 +2313,7 @@ function onFindInput(){
   findTagExact = false; // user is typing their own query now: back to plain substring find
   findRefresh();
   // reading view: bring the first hit into view as you type
-  if(!findIsEditing() && findIdx >= 0) findHits[findIdx].scrollIntoView({ block:'center' });
+  if(!findIsEditing() && findIdx >= 0){ revealFindHit(findHits[findIdx]); findHits[findIdx].scrollIntoView({ block:'center' }); }
 }
 function goToFindMatch(){
   const editing = findIsEditing();
@@ -2323,6 +2331,7 @@ function goToFindMatch(){
     curMark.classList.add('cur');
     void curMark.offsetWidth; // restart the animation if this mark was already current
     curMark.classList.add('pulse');
+    revealFindHit(curMark);
     curMark.scrollIntoView({ block:'center' });
   }
   updateFindCount();
@@ -3465,7 +3474,7 @@ function renderMarkdown(src, linkTypes){
       // plain quote. Reuses the same --pdf/--md/--img/--audio palette the
       // rest of the app already uses for item-type accents, so callouts
       // read as part of the same visual system rather than a new one.
-      const calloutMatch = lines[0] && lines[0].match(/^\[!(\w+)\]\s*(.*)$/);
+      const calloutMatch = lines[0] && lines[0].match(/^\[!(\w+)\]([+-]?)\s*(.*)$/);
       if(calloutMatch){
         const kind = calloutMatch[1].toLowerCase();
         const CALLOUT_INFO = {
@@ -3474,12 +3483,26 @@ function renderMarkdown(src, linkTypes){
           idea:    { icon:'&#128161;', label:'Idea' }
         };
         const info = CALLOUT_INFO[kind] || { icon:'&#128204;', label: kind.charAt(0).toUpperCase()+kind.slice(1) };
-        const titleText = calloutMatch[2].trim() || info.label;
+        const fold = calloutMatch[2];  // '' = static card, '-' = foldable starting closed, '+' = foldable starting open
+        const titleText = calloutMatch[3].trim() || info.label;
         const bodyHtml = lines.slice(1).join('<br>');
-        html = `<div class="callout callout-${/^(note|warning|idea)$/.test(kind) ? kind : 'other'}">`
-             + `<div class="callout-title"><span class="callout-icon">${info.icon}</span>${titleText}</div>`
-             + (bodyHtml ? `<div class="callout-body">${bodyHtml}</div>` : '')
-             + `</div>`;
+        const cls = `callout callout-${/^(note|warning|idea)$/.test(kind) ? kind : 'other'}`;
+        const titleInner = `<span class="callout-icon">${info.icon}</span>${titleText}`;
+        // Foldable callout (Obsidian's `[!type]-` / `[!type]+`): a native
+        // <details>, so the browser owns the open/closed state — no JS, and
+        // it works with keyboard and screen readers for free. A callout with
+        // no body has nothing to fold, so it stays a plain card.
+        if(fold && bodyHtml){
+          html = `<details class="${cls} callout-fold"${fold === '+' ? ' open' : ''}>`
+               + `<summary class="callout-title">${titleInner}</summary>`
+               + `<div class="callout-body">${bodyHtml}</div>`
+               + `</details>`;
+        } else {
+          html = `<div class="${cls}">`
+               + `<div class="callout-title">${titleInner}</div>`
+               + (bodyHtml ? `<div class="callout-body">${bodyHtml}</div>` : '')
+               + `</div>`;
+        }
       } else {
         html = `<blockquote>${lines.join('<br>')}</blockquote>`;
       }
