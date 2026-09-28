@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.49.1';
+const APP_VERSION = '1.50.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -702,6 +702,18 @@ async function putContentOnly(id, type, contentValue){
     const bytes = type === 'markdown' ? new TextEncoder().encode(contentValue) : await contentValue.arrayBuffer();
     const { iv, cipher } = await aesEncrypt(cryptoKey, bytes);
     rec.contentIv = iv; rec.contentCipher = cipher;
+    // Linked note (v1.50.0): write the file on disk FIRST; if that fails, throw
+    // so the caller keeps the editor open and nothing diverges.
+    let meta = null;
+    if(type === 'markdown'){
+      meta = await decryptJSON(cryptoKey, rec.metaIv, rec.metaCipher);
+      if(meta.extPath){
+        const mtime = await extWriteFile(meta.extPath, contentValue);
+        meta.extMtime = mtime;
+        const m = await encryptJSON(cryptoKey, meta);
+        rec.metaIv = m.iv; rec.metaCipher = m.cipher;
+      }
+    }
     await putRaw(rec);
   });
 }
@@ -1686,6 +1698,7 @@ async function saveEdit(){
 async function openReader(id){
   flushDraftNow(); // opening another item while a note is mid-edit (palette jump, note link…) must not lose that edit
   stopDraftTimer();
+  await extRefreshOne(id).catch(()=>{}); // linked note: pick up changes made outside (e.g. in Obsidian)
   const it = await getOne(id);
   if(!it) return;
   curId = id; curType = it.type;
@@ -4952,6 +4965,11 @@ function buildStaticCommands(){
     { id:'new-index', icon:'&#128450;&#65039;', label:'New index note (all categories)', hint:'', action: ()=>quickNewNote('Index', NOTE_TEMPLATES.index.content()) },
     { id:'add-item', icon:'&#10133;', label:'Add item\u2026', hint:'pdf / note / image / audio', action: ()=>openAdd() },
     { id:'import', icon:'&#8681;', label:'Import from JSON', hint:'', action: ()=>document.getElementById('importPick').click() },
+    ...(EXT_SUPPORTED ? [
+      { id:'ext-open', icon:'&#128193;', label: extRootName ? 'Change notes folder\u2026' : 'Open a notes folder\u2026', hint: extRootName || 'Obsidian-style', action: ()=>extPickFolder() },
+      ...(extRootName ? [{ id:'ext-sync', icon:'&#128260;', label:'Sync notes folder now', hint: extRootName, action: ()=>extSync(true) },
+                         { id:'ext-unlink', icon:'&#128279;', label:'Unlink notes folder', hint:'keeps files on disk', action: ()=>extUnlink() }] : [])
+    ] : []),
     { id:'export', icon:'&#8679;', label:'Export shelf as JSON', hint:'', action: ()=>openExportModal() },
     { id:'shelf-name', icon:'&#127991;&#65039;', label:'Shelf name\u2026', hint: prefs.shelfName || 'not set', action: ()=>renameShelf() },
     { id:'tags', icon:'#', label:'Browse tags', hint:'', action: ()=>openTagsPage() },
@@ -5093,3 +5111,121 @@ if('serviceWorker' in navigator){
     navigator.serviceWorker.register('service-worker.js').catch(()=>{});
   });
 }
+
+
+// ---- External notes folder (v1.50.0) ---------------------------------------
+// Pick a folder (e.g. an Obsidian vault). Every .md inside becomes a "linked"
+// note: reading refreshes it from the file, saving writes the file back. The
+// app keeps an encrypted mirror so list/search/tags/backlinks keep working;
+// the files on disk are ordinary plain text. Chromium browsers only.
+const EXT_SUPPORTED = typeof window.showDirectoryPicker === 'function';
+let extRoot = null, extRootName = '', extSyncing = false;
+function extDb(){
+  return new Promise((res,rej)=>{
+    const r = indexedDB.open('shelfmark-ext',1);
+    r.onupgradeneeded = ()=> r.result.createObjectStore('h');
+    r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error);
+  });
+}
+async function extIdb(mode, fn){
+  const d = await extDb();
+  return new Promise((res,rej)=>{
+    const t = d.transaction('h', mode); const out = fn(t.objectStore('h'));
+    t.oncomplete = ()=>res(out && out.result); t.onerror = ()=>rej(t.error);
+  });
+}
+async function extLoad(){
+  if(!EXT_SUPPORTED) return;
+  try{ extRoot = (await extIdb('readonly', st=>st.get('root'))) || null; extRootName = extRoot ? extRoot.name : ''; }catch(e){}
+}
+async function extPerm(ask){
+  if(!extRoot) return false;
+  const o = { mode:'readwrite' };
+  if((await extRoot.queryPermission(o)) === 'granted') return true;
+  return ask ? (await extRoot.requestPermission(o)) === 'granted' : false;
+}
+async function extPickFolder(){
+  try{
+    const h = await window.showDirectoryPicker({ mode:'readwrite' });
+    extRoot = h; extRootName = h.name;
+    await extIdb('readwrite', st=>st.put(h,'root'));
+    await extSync(true);
+  }catch(e){ if(e && e.name !== 'AbortError') alert('Could not open that folder: '+e.message); }
+}
+async function extUnlink(){
+  if(!confirm('Unlink the notes folder?\n\nFiles on disk are not touched. Notes already imported stay on your shelf as ordinary notes.')) return;
+  const all = await getAll();
+  for(const m of all){ if(m.extPath) await putMetaOnly(m.id, { extPath:null, extMtime:null }); }
+  extRoot = null; extRootName = '';
+  await extIdb('readwrite', st=>st.delete('root'));
+  render();
+}
+async function extWalk(dir, prefix, out){
+  for await (const [name, h] of dir.entries()){
+    if(name.startsWith('.')) continue; // .obsidian, .git, .trash …
+    if(h.kind === 'directory') await extWalk(h, prefix+name+'/', out);
+    else if(/\.md$/i.test(name)) out.push({ path: prefix+name, handle: h });
+  }
+}
+async function extFileHandle(path, create){
+  const parts = path.split('/'); let d = extRoot;
+  for(let i=0;i<parts.length-1;i++) d = await d.getDirectoryHandle(parts[i], { create });
+  return d.getFileHandle(parts[parts.length-1], { create });
+}
+async function extWriteFile(path, text){
+  if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
+  const fh = await extFileHandle(path, false);
+  const w = await fh.createWritable(); await w.write(text); await w.close();
+  return (await fh.getFile()).lastModified;
+}
+async function extRefreshOne(id){
+  if(!extRoot || !(await extPerm(false))) return;
+  const rec = await getOneRaw(id); if(!rec) return;
+  const meta = await decryptMeta(rec);
+  if(!meta.extPath) return;
+  let file; try{ file = await (await extFileHandle(meta.extPath, false)).getFile(); }catch(e){ return; }
+  if(file.lastModified === meta.extMtime) return;
+  await putContentOnlyRaw(id, await file.text());
+  await putMetaOnly(id, { extMtime: file.lastModified });
+}
+// Store text without writing back to disk (used only when the disk is the source).
+async function putContentOnlyRaw(id, text){
+  return serialized(async ()=>{
+    const rec = await getOneRaw(id); if(!rec) return;
+    const { iv, cipher } = await aesEncrypt(cryptoKey, new TextEncoder().encode(text));
+    rec.contentIv = iv; rec.contentCipher = cipher; await putRaw(rec);
+  });
+}
+async function extSync(interactive){
+  if(!extRoot || !cryptoKey || extSyncing) return;
+  if(!(await extPerm(interactive))) return;
+  extSyncing = true;
+  let added = 0, updated = 0;
+  try{
+    const files = []; await extWalk(extRoot, '', files);
+    const byPath = new Map((await getAll()).filter(m=>m.extPath).map(m=>[m.extPath, m]));
+    for(const f of files){
+      const file = await f.handle.getFile(); const cur = byPath.get(f.path);
+      if(cur){
+        if(cur.extMtime !== file.lastModified){
+          await putContentOnlyRaw(cur.id, await file.text());
+          await putMetaOnly(cur.id, { extMtime: file.lastModified }); updated++;
+        }
+      } else {
+        const dirPart = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+        await put({
+          id: Date.now()+'-'+Math.random().toString(36).slice(2),
+          title: f.path.split('/').pop().replace(/\.md$/i,''),
+          category: dirPart || 'Uncategorized', type:'markdown', mime:'text/markdown',
+          content: await file.text(), addedAt: file.lastModified, progress: null,
+          extPath: f.path, extMtime: file.lastModified
+        }); added++;
+      }
+    }
+    if(added || updated) await render();
+    if(interactive) alert(`Notes folder "${extRootName}": ${added} added, ${updated} updated, ${files.length} .md files in total.`);
+  }catch(e){ if(interactive) alert('Sync failed: '+e.message); }
+  finally{ extSyncing = false; }
+}
+extLoad();
+window.addEventListener('focus', ()=>{ extSync(false); }); // back from Obsidian: refresh (no prompt)

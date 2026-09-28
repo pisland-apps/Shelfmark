@@ -163,6 +163,15 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.50.0** (2026-09-28) — Notes folder (Obsidian-style). Ctrl+K → "Open a
+  notes folder…" and pick a folder/vault: every `.md` inside (subfolders
+  become categories; dot-folders are skipped) appears as a linked note.
+  Opening a note re-reads the file, Save writes it back, and the app
+  re-syncs when you switch back to it. Chromium browsers only. Files on disk
+  are plain text; the app keeps an encrypted copy for search/tags/links.
+  Not yet: renaming/deleting/creating files from the app, images/PDFs in
+  the folder, files deleted outside.
+
 - **v1.49.1** (2026-09-28) — Passphrase/passcode fields in dialogs (export,
   import, set/remove passcode) now use the same rounded style as the lock screen.
 
