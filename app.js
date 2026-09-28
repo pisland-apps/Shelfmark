@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.44.0';
+const APP_VERSION = '1.45.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2989,27 +2989,50 @@ function onNoteEditBeforeInput(e){
   else prefix = m[1] + m[2] + ' ' + (m[3] ? '[ ] ' : '');   // a new task starts unchecked
   noteReplaceRange(ta, pos, pos, '\n' + prefix);
 }
-// Tab / Shift+Tab on a list line: keep focus in the editor and indent /
-// outdent by two spaces. (The reading view still shows lists flat — the
-// indent is kept in the text for export and for other Markdown apps.)
-// Returns true if the key was handled. Quote lines and non-list lines are
-// left alone so Tab still moves focus, and Esc → Tab always lets you out.
+// Tab / Shift+Tab in the editor (v1.45.0: any line, not just list lines):
+// keep focus in the textarea and indent / outdent by two spaces.
+//  - multi-line selection: every selected line is indented / outdented
+//  - list line (or a single-line selection, or Shift+Tab): the LINE is
+//    indented / outdented, caret stays put relative to the text
+//  - any other line, no selection, Tab: two spaces are inserted at the caret
+// (The reading view still shows lists flat — the indent is kept in the text
+// for export and other Markdown apps.) Esc → Tab always lets focus out, so it
+// is never a keyboard trap. Returns true if the key was handled.
 function noteTabInList(e){
   const ta = e.target, v = ta.value, pos = ta.selectionStart, end = ta.selectionEnd;
-  if(v.slice(pos, end).includes('\n')) return false;
+  if(noteTabFree){ noteTabFree = false; return false; }
+  const shift = e.shiftKey;
+  const unindent = ln => { const m = ln.match(/^( {1,2}|\t)/); return m ? m[0].length : 0; };
+  e.preventDefault();
+  if(v.slice(pos, end).includes('\n')){
+    const ls = noteLineBounds(v, pos).ls;
+    const lastPos = (end > pos && v[end - 1] === '\n') ? end - 1 : end;   // selection ended at a line start → that line isn't included
+    const le = noteLineBounds(v, lastPos).le;
+    let first = 0, total = 0;
+    const out = v.slice(ls, le).split('\n').map((ln, i) => {
+      const d = shift ? -unindent(ln) : (ln.trim() ? 2 : 0);
+      if(i === 0) first = d;
+      total += d;
+      return shift ? ln.slice(-d) : (d ? '  ' + ln : ln);
+    });
+    noteReplaceRange(ta, ls, le, out.join('\n'));
+    ta.setSelectionRange(Math.max(ls, pos + first), Math.max(ls, end + total));
+    return true;
+  }
   const { ls, le } = noteLineBounds(v, pos);
   const line = v.slice(ls, le);
   const m = line.match(NOTE_LIST_RE);
-  if(!m || m[5] || noteInCodeFence(v, ls)) return false;
-  if(noteTabFree){ noteTabFree = false; return false; }
-  e.preventDefault();
-  if(!e.shiftKey){
+  const isList = !!(m && !m[5]);
+  if(!shift && pos === end && !isList){         // plain line: just insert two spaces at the caret
+    noteReplaceRange(ta, pos, pos, '  ');
+    return true;
+  }
+  if(!shift){
     noteReplaceRange(ta, ls, ls, '  ');
     ta.setSelectionRange(pos + 2, end + 2);
   } else {
-    const lead = line.match(/^( {1,2}|\t)/);
-    if(!lead) return true;
-    const k = lead[0].length;
+    const k = unindent(line);
+    if(!k) return true;
     noteReplaceRange(ta, ls, ls + k, '');
     ta.setSelectionRange(Math.max(ls, pos - k), Math.max(ls, end - k));
   }

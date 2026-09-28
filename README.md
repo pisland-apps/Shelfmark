@@ -154,6 +154,13 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.45.0** (2026-09-28) — Tab / Shift+Tab now indent on **every** line in
+  the note editor, not only list lines. Before, Tab on a plain line (or a
+  marker-less `*asdf`) still moved focus out of the textarea. Now: multi-line
+  selection → all selected lines indent / outdent two spaces; list line or
+  single-line selection → that line; plain line → two spaces at the caret;
+  Shift+Tab outdents the line. Esc then Tab still moves focus (no keyboard
+  trap). Help text updated.
 - **v1.44.0** (2026-09-28) — Drag-and-drop pictures into the note editor.
   Dropping image files on the textarea calls `insertNoteImageFile` (same path
   as paste and the 📷 button; several files go in one after another, each its
