@@ -486,7 +486,12 @@
   .mdbody .callout-fold > .callout-body{margin-top:0;padding:0 14px 12px;}
   .mdbody ol{padding-left:1.4em;}
   .mdbody hr{border:none;border-top:1px solid var(--line);margin:20px 0;}
-  .mdbody img.md-img{max-width:100%;height:auto;border-radius:8px;display:block;margin:10px 0;}
+  /* Thumbnail in reading view; tap to enlarge (v1.39.0, see openImageZoom) */
+  .mdbody img.md-img{max-width:min(100%,280px);max-height:200px;width:auto;height:auto;object-fit:contain;border-radius:8px;display:block;margin:10px 0;cursor:zoom-in;}
+  .img-zoom{position:fixed;top:0;left:0;right:0;bottom:0;z-index:1000;background:rgba(0,0,0,.88);display:flex;overflow:auto;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);}
+  .img-zoom img{margin:auto;max-width:96vw;max-height:92vh;border-radius:6px;cursor:zoom-in;}
+  .img-zoom.actual img{max-width:none;max-height:none;cursor:zoom-out;}
+  .img-zoom-x{position:fixed;top:calc(10px + env(safe-area-inset-top,0px));right:12px;width:40px;height:40px;border-radius:50%;border:none;background:rgba(255,255,255,.2);color:#fff;font-size:26px;line-height:1;cursor:pointer;}
   .md-table-wrap{overflow-x:auto;margin:14px 0;}
   /* Editing table cells in reading view (v1.38.0) */
   .mdbody td.tcell,.mdbody th.tcell{cursor:text;}
@@ -981,7 +986,7 @@
       <p>In reading view you can edit a table without opening the editor: tap a cell, type, then <b>Enter</b> to save (<b>Esc</b> cancels, <b>Tab</b> moves to the next cell — in the last cell it adds a row). While a cell is open, the bar under the table adds or deletes a row or column. Use <code>\|</code> for a literal pipe inside a cell.</p>
 
       <h3>Images &amp; dividers</h3>
-      <p><code>![alt](url)</code> for an image — or just tap the &#128247; toolbar button to insert one from your device. <code>---</code> on its own line draws a divider.</p>
+      <p><code>![alt](url)</code> for an image — or just tap the &#128247; toolbar button to insert one from your device. In reading view pictures show as small thumbnails — tap one to view it full-screen (tap it again for actual size, tap outside or press Esc to close). <code>---</code> on its own line draws a divider.</p>
 
       <h3>Links</h3>
       <p><code>[label](https://…)</code> — an ordinary link. Point it at an audio file URL (<code>.mp3</code>, <code>.m4a</code>, <code>.wav</code>, <code>.ogg</code>, <code>.oga</code>, <code>.opus</code>, <code>.aac</code>, <code>.flac</code>, <code>.weba</code>) and it renders as a playable widget instead — the one feature in Shelfmark that makes a live network request.</p>

@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.38.0';
+const APP_VERSION = '1.39.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1902,7 +1902,7 @@ function editParagraphAt(idx){
 // a button, a checkbox, an audio/note-link widget) so those keep working
 // exactly as before.
 // `summary` = the title row of a foldable callout: tapping it must fold/unfold, not open the editor.
-const PARAGRAPH_TAP_EXCLUDE = 'button, a, input, summary, td, th, .md-audio-inline, .md-note-link';
+const PARAGRAPH_TAP_EXCLUDE = 'button, a, input, summary, td, th, img.md-img, .md-audio-inline, .md-note-link';
 let paragraphLongPressFired = false;
 function wireParagraphEdit(container){
   container.querySelectorAll('.mdblock').forEach(el=>{
@@ -4020,7 +4020,7 @@ function wireTableEdit(container){
       }
     };
     cell.onclick = (e)=>{
-      if(e.target.closest('a, button, input, .md-audio-inline, .md-note-link')) return;
+      if(e.target.closest('a, button, input, img.md-img, .md-audio-inline, .md-note-link')) return;
       if(tableEdit || tableBusy || !cell.isConnected) return;
       const sel = window.getSelection();
       if(sel && sel.toString().length > 0) return; // dragging to select text to copy
@@ -4029,6 +4029,54 @@ function wireTableEdit(container){
   });
 }
 // @@TABLE-EDIT-END
+
+// @@IMGZOOM-START
+// ---- Picture thumbnails + tap to enlarge (v1.39.0) ----
+// In reading view a picture in a note is shown as a small thumbnail (CSS,
+// .mdbody img.md-img); tapping it opens it full-screen here. Tap the picture
+// again to switch between "fit to screen" and actual size (scrolls); tap the
+// backdrop, the x, or press Esc to close. Display only — the note text and
+// the stored / exported picture data are untouched. One delegated listener
+// (not per-render wiring) because mdView is re-rendered often.
+let imgZoomEl = null;
+function imgZoomKey(e){
+  if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); closeImageZoom(); }
+}
+function closeImageZoom(){
+  if(!imgZoomEl) return;
+  imgZoomEl.remove();
+  imgZoomEl = null;
+  document.removeEventListener('keydown', imgZoomKey, true);
+}
+function openImageZoom(src, alt){
+  closeImageZoom();
+  const ov = document.createElement('div');
+  ov.className = 'img-zoom';
+  ov.setAttribute('role', 'dialog');
+  ov.setAttribute('aria-label', alt || 'Picture');
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = alt || '';
+  img.onclick = (e)=>{ e.stopPropagation(); ov.classList.toggle('actual'); };
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'img-zoom-x';
+  x.textContent = '\u00d7';
+  x.setAttribute('aria-label', 'Close');
+  x.onclick = (e)=>{ e.stopPropagation(); closeImageZoom(); };
+  ov.onclick = closeImageZoom;
+  ov.append(img, x);
+  document.body.appendChild(ov);
+  imgZoomEl = ov;
+  document.addEventListener('keydown', imgZoomKey, true);
+}
+document.addEventListener('click', (e)=>{
+  const img = e.target.closest && e.target.closest('#mdView img.md-img');
+  if(!img) return;
+  e.preventDefault();
+  openImageZoom(img.currentSrc || img.src, img.alt);
+});
+// @@IMGZOOM-END
 
 // ---- Command palette (Ctrl+K) ----
 // Header used to carry one icon per action (storage/sort/loop/tags/select/

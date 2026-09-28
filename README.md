@@ -154,6 +154,17 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.39.0** (2026-09-28) — Pictures in notes are thumbnails in reading view
+  (max 280 × 200 px, aspect ratio kept); tap one to open it full-screen. In
+  the viewer, tap the picture again to toggle fit-to-screen / actual size
+  (scrolls), tap the backdrop, the x or press Esc to close. Display only: the
+  note text and the stored / exported picture data are unchanged (pictures are
+  still resized to 900 px on insert, as before). Implemented as one delegated
+  click listener on `#mdView img.md-img` (between the `@@IMGZOOM-START/END`
+  markers in `app.js`) rather than per-render wiring; `img.md-img` was added
+  to `PARAGRAPH_TAP_EXCLUDE` and the table-cell click guard so tapping a
+  picture no longer opens the paragraph editor. To edit a picture's line, use
+  the pencil button. Tested in Chromium at 420 px.
 - **v1.38.0** (2026-09-28) — Edit tables in reading view, no source mode.
   Tap a table cell to edit it in place; it shows its raw markdown while open
   (`**bold**` stays editable). **Enter** saves, **Esc** cancels, **Tab** /
