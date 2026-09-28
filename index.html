@@ -245,8 +245,16 @@
   .find-btn.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
   .find-btn:active{background:var(--line);}
   /* highlights inside the rendered note */
-  mark.find-hit{background:rgba(156,122,41,.35);color:inherit;border-radius:2px;padding:0;}
-  mark.find-hit.cur{background:var(--audio);color:#fff;}
+  /* every hit: a clear gold wash; the CURRENT hit: solid gold with dark text
+     (readable on every theme) plus a ring, and a short pulse when you jump to
+     it so the eye lands on it. Works inside code spans and tag pills too. */
+  mark.find-hit{background:rgba(212,175,55,.5);color:inherit;border-radius:3px;padding:0 1px;}
+  mark.find-hit.cur{background:#d4af37;color:#1a1408;font-weight:600;box-shadow:0 0 0 2px rgba(212,175,55,.65);}
+  mark.find-hit.cur.pulse{animation:findpulse .9s ease-out 1;}
+  @keyframes findpulse{
+    0%{box-shadow:0 0 0 2px rgba(212,175,55,.9),0 0 0 2px rgba(212,175,55,.7);}
+    100%{box-shadow:0 0 0 2px rgba(212,175,55,.65),0 0 0 14px rgba(212,175,55,0);}
+  }
   .bmrow{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line);font-size:13px;}
   .bmrow:last-child{border-bottom:none;}
   .bmrow .snip{flex:1;cursor:pointer;color:var(--ink);line-height:1.4;}

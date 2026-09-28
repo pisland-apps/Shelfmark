@@ -142,6 +142,11 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.30.2** (2026-09-28) — Find highlight made much easier to spot. Every
+  hit gets a gold wash; the current hit is solid gold (#d4af37, dark text so
+  it reads on every theme) with a ring, and pulses once each time you jump to
+  it. CSS + a two-line change in `goToFindMatch`; no behavior change.
+
 - **v1.30.1** (2026-09-28) — Fix: v1.30.0's tag jump highlighted nothing on a
   real note (0 hits, ↑/↓ dead). The Tags page listed `#lockOverlay`, but in
   the rendered note every occurrence sat inside an inline-code span, and the

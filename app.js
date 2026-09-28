@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.30.1';
+const APP_VERSION = '1.30.2';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2137,9 +2137,12 @@ function goToFindMatch(){
     ta.focus(); // focusing is what makes the browser scroll the selection into view
     ta.setSelectionRange(start, start + q.length);
   } else {
-    findHits.forEach(m=>m.classList.remove('cur'));
-    findHits[findIdx].classList.add('cur');
-    findHits[findIdx].scrollIntoView({ block:'center' });
+    findHits.forEach(m=>m.classList.remove('cur','pulse'));
+    const curMark = findHits[findIdx];
+    curMark.classList.add('cur');
+    void curMark.offsetWidth; // restart the animation if this mark was already current
+    curMark.classList.add('pulse');
+    curMark.scrollIntoView({ block:'center' });
   }
   updateFindCount();
 }
