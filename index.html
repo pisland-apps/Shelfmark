@@ -361,6 +361,7 @@
      border, so it adds nothing to a block's textContent (bookmark snippets,
      find, outline all read that). Points down = open, right = collapsed. */
   .mdblock.fold-hidden{display:none !important;}
+  .mdblock.fold-collapsed > .heading-rest{display:none;}
   .mdblock.foldable > :is(h1,h2,h3,h4,h5,h6){padding-right:34px;}
   .fold-btn{
     position:absolute;right:0;top:50%;transform:translateY(-50%);

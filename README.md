@@ -152,6 +152,15 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.37.1** (2026-09-28) — Fix: heading fold now works when the text sits
+  on the lines directly under a heading with no blank line (`# Trip` then
+  `daf` on the next line). That is one block in the renderer, so v1.37.0 gave
+  it no arrow (or left the text visible when folded). `renderMarkdown()` now
+  wraps such text in a `.heading-rest` div inside the same block (line breaks
+  are kept as `<br>`, like paragraphs), and folding hides it. Blocks are not
+  split or renumbered, so paragraph edit, bookmarks and checkboxes are
+  unaffected. A heading whose only content is that text is foldable even as
+  the last block of a note.
 - **v1.37.0** (2026-09-28) — Heading fold, Obsidian-style, for **H1–H6**. In
   reading view every heading that has something under it gets an arrow at the
   right of its row; tapping it hides everything up to the next heading of the

@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.37.0';
+const APP_VERSION = '1.37.1';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3419,7 +3419,9 @@ function wireHeadingFold(container){
     // Then there is nothing to fold, so no arrow.
     const next = blocks[i + 1];
     const nextLvl = next ? blockHeadingLevel(next) : -1;
-    if(!next || (nextLvl !== 0 && nextLvl <= lvl)) return;
+    const hasRest = !!block.querySelector(':scope > .heading-rest');
+    const hasBelow = !!next && !(nextLvl !== 0 && nextLvl <= lvl);
+    if(!hasRest && !hasBelow) return;
     const h = Array.from(block.children).find(c=>/^H[1-6]$/.test(c.tagName));
     const base = lvl + '|' + h.textContent.trim().toLowerCase();
     const nth = seen.get(base) || 0;
@@ -3644,7 +3646,19 @@ function renderMarkdown(src, linkTypes){
   codeBlocks.forEach((html, i)=>{ s = s.replace(`\u0000CODEBLOCK${i}\u0000`, html); });
   return s.split(/\n{2,}/).map((block,idx)=>{
     let html;
-    if(/^<h[1-6]|^<pre/.test(block)) html = block;
+    if(/^<h[1-6]/.test(block)){
+      // A heading with text on the lines right under it (no blank line) is
+      // ONE block. Split it into the heading row and a .heading-rest wrapper
+      // so folding the heading can hide that text too (v1.37.1). Blocks are
+      // never split or renumbered, so paragraph edit / bookmarks / task
+      // checkboxes keep addressing the same source blocks. If the rest holds
+      // real HTML (code block, table...), don't touch its newlines.
+      const nl = block.indexOf('\n');
+      const rest = nl === -1 ? '' : block.slice(nl + 1);
+      if(!rest.trim()) html = nl === -1 ? block : block.slice(0, nl);
+      else html = block.slice(0, nl) + `<div class="heading-rest">${/<(div|pre|table|ul|ol)\b/.test(rest) ? rest : rest.replace(/\n/g,'<br>')}</div>`;
+    }
+    else if(/^<pre/.test(block)) html = block;
     else if(/^<div class="md-audio/.test(block)) html = block;
     else if(/^<div class="md-note-link/.test(block)) html = block;
     else if(/^<div class="code-block"/.test(block)) html = block;
