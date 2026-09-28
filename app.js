@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.32.0';
+const APP_VERSION = '1.33.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1510,6 +1510,8 @@ async function openReader(id){
           <button class="tool" id="undoBtn" onclick="undoEdit()" title="Undo">&#8617;</button>
           <button class="tool" id="redoBtn" onclick="redoEdit()" title="Redo">&#8618;</button>
           <button class="tool" onclick="toggleBoldAtSelection()" title="Bold"><b>B</b></button>
+          <button class="tool" onclick="toggleStrikeAtSelection()" title="Strikethrough"><s>S</s></button>
+          <button class="tool" onclick="toggleHighlightAtSelection()" title="Highlight"><span class="tool-hl">A</span></button>
           <button class="tool" onclick="toggleHeadingAtLine()" title="Heading">H</button>
           <button class="tool" onclick="insertDivider()" title="Insert divider">&#8213;</button>
           <button class="tool" onclick="insertTimestamp()" title="Insert date/time">&#128197;</button>
@@ -2967,6 +2969,75 @@ function toggleBoldAtSelection(){
   ta.focus();
   ta.setSelectionRange(start + 2, start + 2 + text.length);
 }
+// ---- Strikethrough / highlight toolbar buttons (v1.33.0) ----
+// Same idea as the Bold button, but a real on/off toggle: tapping again on
+// text that is already wrapped removes the delimiters (whether the selection
+// is just the inside, or includes them). Two details come from the renderer
+// (applyInlineMarks): the text between delimiters may not start or end with
+// a space, so surrounding whitespace in the selection (a double-tap often
+// grabs the trailing space) is kept OUTSIDE the delimiters; and a mark never
+// spans a line break, so a multi-line selection is wrapped line by line,
+// leaving any list / checkbox / quote / heading prefix in front —
+// "- [ ] buy milk" becomes "- [ ] ~~buy milk~~", which still renders as a
+// checklist item. With nothing selected it drops a placeholder with the
+// words pre-selected, like Bold.
+const MARK_LINE_PREFIX = /^\s*(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+|>\s*|#{1,6}\s+)?/;
+function markSplitLine(line){
+  const prefix = line.match(MARK_LINE_PREFIX)[0];
+  const m = line.slice(prefix.length).match(/^(\s*)([\s\S]*?)(\s*)$/);
+  return { prefix, lead: m[1], inner: m[2], trail: m[3] };
+}
+function markInnerIsWrapped(inner, d){
+  return inner.length > 2*d.length && inner.startsWith(d) && inner.endsWith(d);
+}
+function toggleWrapAtSelection(d, placeholder){
+  pushUndoBeforeEdit();
+  const ta = document.getElementById('mdEditArea');
+  const v = ta.value, start = ta.selectionStart, end = ta.selectionEnd, n = d.length;
+  const sel = v.slice(start, end);
+  if(sel.includes('\n')){
+    const ls = start ? v.lastIndexOf('\n', start - 1) + 1 : 0;
+    let le = v.indexOf('\n', end); if(le === -1) le = v.length;
+    const parts = v.slice(ls, le).split('\n').map(l => ({ l, ...markSplitLine(l) }));
+    const live = parts.filter(x => x.inner);
+    const allWrapped = live.length > 0 && live.every(x => markInnerIsWrapped(x.inner, d));
+    const out = parts.map(x=>{
+      if(!x.inner) return x.l;
+      if(allWrapped) return x.prefix + x.lead + x.inner.slice(n, -n) + x.trail;
+      if(markInnerIsWrapped(x.inner, d)) return x.l;
+      return x.prefix + x.lead + d + x.inner + d + x.trail;
+    }).join('\n');
+    ta.value = v.slice(0, ls) + out + v.slice(le);
+    ta.focus();
+    ta.setSelectionRange(ls, ls + out.length);
+    return;
+  }
+  const m = sel.match(/^(\s*)([\s\S]*?)(\s*)$/);
+  const inner = m[2];
+  if(!inner){
+    ta.value = v.slice(0, end) + d + placeholder + d + v.slice(end);
+    ta.focus();
+    ta.setSelectionRange(end + n, end + n + placeholder.length);
+    return;
+  }
+  const is = start + m[1].length, ie = is + inner.length;
+  if(is >= n && v.slice(is - n, is) === d && v.slice(ie, ie + n) === d){
+    ta.value = v.slice(0, is - n) + inner + v.slice(ie + n);
+    ta.focus();
+    ta.setSelectionRange(is - n, ie - n);
+  } else if(markInnerIsWrapped(inner, d)){
+    const bare = inner.slice(n, -n);
+    ta.value = v.slice(0, is) + bare + v.slice(ie);
+    ta.focus();
+    ta.setSelectionRange(is, is + bare.length);
+  } else {
+    ta.value = v.slice(0, is) + d + inner + d + v.slice(ie);
+    ta.focus();
+    ta.setSelectionRange(is + n, is + n + inner.length);
+  }
+}
+function toggleStrikeAtSelection(){ toggleWrapAtSelection('~~', 'strikethrough'); }
+function toggleHighlightAtSelection(){ toggleWrapAtSelection('==', 'highlight'); }
 // Toggles a leading "## " on the current line — tapping again on an already-
 // headed line removes it rather than stacking another #, so the button
 // behaves like an on/off switch rather than only ever adding more.

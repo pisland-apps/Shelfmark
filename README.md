@@ -148,6 +148,18 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.33.0** (2026-09-28) — Editor toolbar buttons for `~~strikethrough~~`
+  (**S**) and `==highlight==` (highlighted **A**), next to Bold. Unlike Bold
+  (which only ever wraps) these are real toggles: tap again on wrapped text
+  and the delimiters come off, whether the selection is the inside or
+  includes them. Whitespace in the selection stays outside the delimiters
+  (the renderer refuses `== word ==`, and a double-tap often grabs a
+  trailing space). A multi-line selection is wrapped line by line — marks
+  never span a line break — and keeps each line's list / `- [ ]` checkbox /
+  `>` quote / heading prefix in front, so `- [ ] buy milk` becomes
+  `- [ ] ~~buy milk~~` and is still a checklist item. With nothing selected
+  it inserts a placeholder with the word pre-selected, like Bold. Logic is
+  `toggleWrapAtSelection()` in `app.js`; Bold itself is unchanged.
 - **v1.32.0** (2026-09-28) — `~~strikethrough~~` and `==highlight==` in
   notes. Rendered as `<del>` and `<mark class="md-mark">` by a new
   `applyInlineMarks()` that runs as the *last* inline pass in
@@ -163,7 +175,7 @@ most common reason the two look out of sync.
   soft yellow, deliberately different from the gold find-hit, and a find
   hit inside a highlight gets a stronger tone so it stays visible. The
   Markdown formatting help gained a row for both. No editor toolbar buttons
-  for them yet — type the delimiters by hand.
+  for them yet (added in v1.33.0).
 - **v1.31.0** (2026-09-28) — Draft autosave. Before: an edit lived only in the
   textarea until Save, so leaving mid-edit (back button, opening another
   note, the tab being killed) lost it. Now the editor writes a draft every 3 s
