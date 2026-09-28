@@ -163,6 +163,18 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.48.0** (2026-09-28) — Live category index, like an Obsidian index note.
+  Put a ```` ```index ```` block in a note and reading view shows a table: one
+  row per category (shelf order, Uncategorized last), the category count in
+  the header, an item count beside each name, and a tappable link to every
+  item in it (PDFs/pictures/recordings get a small icon). Rebuilt each time
+  the note opens, so nothing is stored and it can't go stale. Optional lines
+  inside the block: `types: notes, pdf, pictures, recordings`,
+  `exclude: Cat A, Cat B`, `columns: 分类 | 笔记` (rename the headers). Quick
+  ways to make one: Add → "Index of categories" template, or Ctrl+K → "New
+  index note". Also in the Markdown help. Bump `CACHE_VERSION` in
+  `service-worker.js` to match on deploy.
+
 - **v1.47.1** (2026-09-28) — In-app explanation of the passcode options.
   New command-palette entry "Passcode & lock: info and settings" opens a
   panel showing the current mode, what each mode means (including the

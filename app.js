@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.47.1';
+const APP_VERSION = '1.48.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -995,6 +995,10 @@ const NOTE_TEMPLATES = {
   todo: {
     title: ()=> 'To-do list',
     content: ()=> '- [ ] \n- [ ] \n- [ ] \n'
+  },
+  index: {
+    title: ()=> 'Index',
+    content: ()=> '```index\n```\n'
   }
 };
 let pendingNoteTemplate = null; // key into NOTE_TEMPLATES, read by saveItem()
@@ -1106,11 +1110,11 @@ async function saveItem(){
 // to "Untitled note") — an unresolved [[Wiki link]]'s missing-link pill also
 // calls this, passing the exact title it was written with, so a link-first
 // note gets created under the title the link already expects.
-async function quickNewNote(title){
+async function quickNewNote(title, content){
   const item = {
     id: Date.now()+'-'+Math.random().toString(36).slice(2),
     title: (title && title.trim()) || 'Untitled note', category: 'Uncategorized', type: 'markdown',
-    content: '', mime: 'text/markdown',
+    content: (typeof content === 'string') ? content : '', mime: 'text/markdown',
     addedAt: Date.now(), progress: null
   };
   try{
@@ -2623,9 +2627,9 @@ function wireInlineAudio(container){
 // since the link was made, this is where that's actually discovered and
 // reported — renderMarkdown itself has no way to know that ahead of time.
 function wireNoteLinks(container){
-  container.querySelectorAll('.md-note-link').forEach(el=>{
+  container.querySelectorAll('.md-note-link, .si-link').forEach(el=>{
     const id = el.dataset.noteId;
-    el.onclick = (e)=>{ e.stopPropagation(); openNoteLink(id); };
+    el.onclick = (e)=>{ e.preventDefault(); e.stopPropagation(); openNoteLink(id); };
   });
 }
 // Wires up every unresolved [[Wiki link]] pill (.wiki-link-missing) inside a
@@ -2681,6 +2685,7 @@ async function buildLinkTypeMap(){
     if(key && !byTitle.has(key)) byTitle.set(key, it);
   });
   map.__byTitle = byTitle;
+  map.__all = items; // metadata only (id/title/type/category) — used by ```index blocks
   return map;
 }
 
@@ -4076,6 +4081,69 @@ function mdLiOpen(line, cls){
   const em = mdIndentEm(line);
   return `<li${cls ? ` class="${cls}"` : ''}${em ? ` style="margin-left:${em}em"` : ''}>`;
 }
+
+// ---- Live category index: ```index (v1.48.0) --------------------------------
+// The Obsidian "one note that lists every folder and what's in it" page. Put
+//   ```index
+//   ```
+// in a note and reading view shows a table: one row per category (in the same
+// order as the shelf, Uncategorized last) with a count in the header, and a
+// tappable link to every item in that category. It's rebuilt from the shelf
+// every time the note is opened, so nothing is stored and it never goes stale.
+// Optional lines inside the block (all case-insensitive, all optional):
+//   types: notes, pdf, pictures, recordings   (default: everything)
+//   exclude: Category A, Category B
+//   columns: Category | Items                 (header labels; any language)
+const SHELF_INDEX_TYPE_ALIASES = {
+  note:'markdown', notes:'markdown', markdown:'markdown', md:'markdown', text:'markdown',
+  pdf:'pdf', pdfs:'pdf',
+  image:'image', images:'image', picture:'image', pictures:'image', photo:'image', photos:'image',
+  audio:'audio', recording:'audio', recordings:'audio', sound:'audio'
+};
+const SHELF_INDEX_ICON = { markdown:'', pdf:'&#128196; ', image:'&#128444;&#65039; ', audio:'&#127925; ' };
+function renderShelfIndex(optText, linkTypes){
+  const all = linkTypes && linkTypes.__all;
+  if(!all) return '<div class="shelf-index"><div class="si-note">The index is available when you open the note.</div></div>';
+  let types = null, exclude = new Set(), colCat = 'Category', colItems = 'Items';
+  for(const line of optText.split('\n')){
+    const m = line.match(/^\s*([A-Za-z]+)\s*:\s*(.*)$/);
+    if(!m) continue;
+    const key = m[1].toLowerCase(), val = m[2].trim();
+    if(key === 'types' || key === 'type'){
+      const t = val.split(/[,，]/).map(x=>SHELF_INDEX_TYPE_ALIASES[x.trim().toLowerCase()]).filter(Boolean);
+      if(t.length) types = new Set(t);
+    } else if(key === 'exclude'){
+      val.split(/[,，]/).map(x=>x.trim().toLowerCase()).filter(Boolean).forEach(x=>exclude.add(x));
+    } else if(key === 'columns' || key === 'column'){
+      const parts = val.split('|').map(x=>x.trim());
+      if(parts[0]) colCat = parts[0];
+      if(parts[1]) colItems = parts[1];
+    }
+  }
+  const groups = new Map();
+  for(const it of all){
+    if(types && !types.has(it.type)) continue;
+    const cat = it.category || 'Uncategorized';
+    if(exclude.has(cat.toLowerCase())) continue;
+    if(!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(it);
+  }
+  const real = [...groups.keys()].filter(c=>c!=='Uncategorized');
+  let order = (prefs.categoryOrder||[]).filter(c=>real.includes(c));
+  const known = new Set(order);
+  order = [...order, ...real.filter(c=>!known.has(c)).sort((a,b)=>a.localeCompare(b))];
+  if(groups.has('Uncategorized')) order.push('Uncategorized');
+  const byTitle = (a,b)=>(a.title||'').localeCompare(b.title||'', undefined, {numeric:true, sensitivity:'base'});
+  const head = `<thead><tr><th>${escapeHtml(colCat)} <span class="si-count">(${order.length})</span></th><th>${escapeHtml(colItems)}</th></tr></thead>`;
+  if(!order.length) return `<div class="shelf-index"><div class="si-note">Nothing to list yet — add something to your shelf.</div></div>`;
+  const rows = order.map(cat=>{
+    const list = groups.get(cat).slice().sort(byTitle);
+    const links = list.map(it=>`<li><a href="#" class="si-link" data-note-id="${escapeHtml(String(it.id))}">${SHELF_INDEX_ICON[it.type] || ''}${escapeHtml(it.title || 'Untitled')}</a></li>`).join('');
+    return `<tr><td class="si-cat">${escapeHtml(cat)} <span class="si-count">${list.length}</span></td><td><ul>${links}</ul></td></tr>`;
+  }).join('');
+  return `<div class="shelf-index"><table>${head}<tbody>${rows}</tbody></table></div>`;
+}
+
 function renderMarkdown(src, linkTypes){
   linkTypes = linkTypes || {};
   let s = escapeHtml(src);
@@ -4088,6 +4156,11 @@ function renderMarkdown(src, linkTypes){
   // safe marker.
   const codeBlocks = [];
   s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code)=>{
+    // ```index — a live category index (v1.48.0), not a code sample.
+    if(lang === 'index'){
+      codeBlocks.push(renderShelfIndex(unescapeHtml(code), linkTypes));
+      return `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
+    }
     const langLabel = lang ? escapeHtml(lang) : '';
     codeBlocks.push(
       `<div class="code-block">`
@@ -4211,6 +4284,7 @@ function renderMarkdown(src, linkTypes){
     else if(/^<div class="md-audio/.test(block)) html = block;
     else if(/^<div class="md-note-link/.test(block)) html = block;
     else if(/^<div class="code-block"/.test(block)) html = block;
+    else if(/^<div class="shelf-index"/.test(block)) html = block;
     else if(/^<img class="md-img"/.test(block)) html = block;
     else if(looksLikeTable(block)) html = tableToHtml(block);
     else if(/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(block)) html = '<hr>';
@@ -4755,6 +4829,7 @@ function buildStaticCommands(){
   }));
   return [
     { id:'new-note', icon:'&#128221;', label:'New note', hint:'', action: ()=>quickNewNote() },
+    { id:'new-index', icon:'&#128450;&#65039;', label:'New index note (all categories)', hint:'', action: ()=>quickNewNote('Index', NOTE_TEMPLATES.index.content()) },
     { id:'add-item', icon:'&#10133;', label:'Add item\u2026', hint:'pdf / note / image / audio', action: ()=>openAdd() },
     { id:'import', icon:'&#8681;', label:'Import from JSON', hint:'', action: ()=>document.getElementById('importPick').click() },
     { id:'export', icon:'&#8679;', label:'Export shelf as JSON', hint:'', action: ()=>openExportModal() },
