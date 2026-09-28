@@ -163,6 +163,12 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.2** (2026-09-28) — App guide: the Category index card now explains
+  each optional line (`types`, `exclude`, `columns`) on its own, says that
+  all of them are optional and what the default headers are, and adds tips
+  (shelf order, A–Z links, text around the block, several index blocks in one
+  note). The Markdown help card points to it. Text only, no logic change.
+
 - **v1.51.1** (2026-09-28) — Removed the grey background that appeared under
   the mouse when hovering a paragraph in reading view (it dimmed the text and
   emoji). Tap/click-to-edit still works; desktop just shows the pointer

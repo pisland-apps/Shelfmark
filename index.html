@@ -999,7 +999,13 @@ types: notes, pdf, pictures, recordings
 exclude: Category A, Category B
 columns: 分类 | 笔记
 ```</code></pre>
-      <p><code>types</code> limits what is listed (default: everything), <code>exclude</code> hides categories, <code>columns</code> renames the two headers.</p>
+      <p>Every line is optional &mdash; an empty block already lists everything, with the headers <em>Category</em> and <em>Items</em>. Put each setting on its own line:</p>
+      <ul style="margin:6px 0 8px 1.2em;padding:0;">
+        <li><code>types</code> &mdash; only list some kinds of items: <code>notes</code>, <code>pdf</code>, <code>pictures</code>, <code>recordings</code> (separate with commas). Default: everything.</li>
+        <li><code>exclude</code> &mdash; hide categories by name (separate with commas, not case-sensitive). Handy for private or scratch categories.</li>
+        <li><code>columns</code> &mdash; rename the two headers as <code>Left | Right</code>, in any language. Only needed if you don't want the default <em>Category | Items</em>.</li>
+      </ul>
+      <p><strong>Good to know:</strong> categories follow your shelf order (drag a category header on the shelf to reorder; <em>Uncategorized</em> is always last), and the links inside each one are sorted A&ndash;Z. You can write a heading or a short intro around the block, and use several index blocks in one note &mdash; for example one with <code>types: pdf</code> under a &ldquo;PDFs&rdquo; heading and another with <code>types: notes</code> under &ldquo;Notes&rdquo;.</p>
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128274;</span>Passcode is optional</div>
       <p>You can lock Shelfmark with a passcode or open it straight to your shelf. Either way your data is stored encrypted; a passcode also keeps other people on this device out. You can switch at any time.</p>
@@ -1167,7 +1173,7 @@ columns: 分类 | 笔记
       <details class="hc-more"><summary>Search note text from the shelf</summary><p>the shelf search box only looks at titles and categories. Tap the button beside it to also search inside your notes' text — slower, since every note has to be decrypted, so it switches itself off each time you reopen the app.</p></details>
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128450;&#65039;</span>Category index</div>
-      <details class="hc-more" open><summary>List every category and its items in one note</summary><p>type <code>```index</code> on its own line, then <code>```</code> on the next (or use <em>Add &rarr; Index of categories</em>, or Ctrl+K &rarr; <em>New index note</em>). In reading view it becomes a table with one row per category &mdash; the category count in the header, an item count beside each name &mdash; and a tappable link to every item inside. It is rebuilt each time you open the note, so it always matches your shelf.</p><p>Optional lines inside the block: <code>types: notes, pdf, pictures, recordings</code> (default is everything), <code>exclude: Category A, Category B</code>, and <code>columns: 分类 | 笔记</code> to rename the two headers.</p></details>
+      <details class="hc-more" open><summary>List every category and its items in one note</summary><p>type <code>```index</code> on its own line, then <code>```</code> on the next (or use <em>Add &rarr; Index of categories</em>, or Ctrl+K &rarr; <em>New index note</em>). In reading view it becomes a table with one row per category &mdash; the category count in the header, an item count beside each name &mdash; and a tappable link to every item inside. It is rebuilt each time you open the note, so it always matches your shelf.</p><p>All optional lines inside the block: <code>types: notes, pdf, pictures, recordings</code> (default is everything), <code>exclude: Category A, Category B</code>, and <code>columns: 分类 | 笔记</code> to rename the two headers (default: <em>Category | Items</em>). More in Ctrl+K &rarr; <em>App guide</em>.</p></details>
       </section>
       <div class="help-none" style="display:none;">No match — try another word.</div>
     </div>
