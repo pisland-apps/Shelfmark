@@ -154,6 +154,14 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.46.0** (2026-09-28) — Drag-and-drop audio into the note editor. Dropping
+  audio files (`audio/*` type or an .mp3/.m4a/.wav/.ogg/.oga/.opus/.aac/.flac/
+  .weba/.webm extension) on the textarea saves each one to the shelf as a new
+  audio item (Uncategorized, titled from the file name) via `insertNoteAudioFile`
+  and inserts a `[title](shelf://id)` link at the caret, which renders as the
+  inline player. The item is stored immediately, so it stays on the shelf even
+  if the note edit is cancelled. Pictures and audio can be mixed in one drop;
+  other files are skipped with a message. Help text updated.
 - **v1.45.2** (2026-09-28) — Quote (`> `) lines are easier to see in reading
   view: the left bar is now 4px in the note-green accent (`--md`, was a faint
   3px `--line`) on a light green tint with rounded right corners, matching the

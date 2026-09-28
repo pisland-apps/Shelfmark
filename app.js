@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.45.2';
+const APP_VERSION = '1.46.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3188,15 +3188,54 @@ function onNoteEditDragOver(e){
   e.currentTarget.classList.add('drag-over');
 }
 function onNoteEditDragLeave(e){ e.currentTarget.classList.remove('drag-over'); }
+const NOTE_AUDIO_EXT = /\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|weba|webm)$/i;
+function isDroppedAudio(f){ return (f.type && f.type.startsWith('audio/')) || NOTE_AUDIO_EXT.test(f.name || ''); }
+// Dropping an audio file (v1.46.0): the file is saved to the shelf as a NEW
+// audio item (Uncategorized, titled after the file name) and a
+// [title](shelf://id) link is inserted at the caret — which renders as the
+// inline player, exactly like a link picked with the audio toolbar button.
+// It is stored right away (not held until the note is saved), so it stays on
+// the shelf even if the note edit is cancelled.
+async function insertNoteAudioFile(f){
+  const title = (f.name || 'Recording').replace(/\.[^.]+$/, '') || 'Recording';
+  const ext = ((f.name || '').match(/\.(\w+)$/) || [])[1];
+  const item = {
+    id: Date.now()+'-'+Math.random().toString(36).slice(2),
+    title, category: 'Uncategorized', type: 'audio', content: f,
+    mime: f.type || ('audio/' + (ext ? ext.toLowerCase() : 'mpeg')),
+    addedAt: Date.now(), progress: null
+  };
+  try{ await put(item); }
+  catch(err){
+    alert(isQuotaError(err)
+      ? "Your device's storage is full, so this recording couldn't be saved. Free up space or remove a few items from your shelf, then try again."
+      : "Couldn't save that audio file \u2014 please try again.");
+    return false;
+  }
+  render();
+  pushUndoBeforeEdit();
+  const ta = document.getElementById('mdEditArea');
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  const md = `[${title.replace(/[[\]]/g,'')}](shelf://${item.id})\n`;
+  ta.value = ta.value.slice(0, start) + md + ta.value.slice(end);
+  ta.focus();
+  const newPos = start + md.length;
+  ta.setSelectionRange(newPos, newPos);
+  ta.dispatchEvent(new Event('input', { bubbles:true }));   // draft autosave, undo grouping
+  return true;
+}
 async function onNoteEditDrop(e){
   if(!dragHasFiles(e)) return;
   e.preventDefault();
   e.currentTarget.classList.remove('drag-over');
   const files = Array.from(e.dataTransfer.files || []);
-  const pics = files.filter(f=>f.type && f.type.startsWith('image/'));
-  if(!pics.length){ alert('Only picture files can be dropped into a note.'); return; }
-  for(const f of pics) await insertNoteImageFile(f);
-  if(pics.length < files.length) alert('Some dropped files were skipped \u2014 only pictures can be added to a note.');
+  let used = 0;
+  for(const f of files){
+    if(f.type && f.type.startsWith('image/')){ await insertNoteImageFile(f); used++; }
+    else if(isDroppedAudio(f)){ if(await insertNoteAudioFile(f)) used++; }
+  }
+  if(!used) alert('Only picture or audio files can be dropped into a note.');
+  else if(used < files.length) alert('Some dropped files were skipped \u2014 only pictures and audio can be added to a note.');
 }
 
 // ---- Inserting a table template into a note ----
