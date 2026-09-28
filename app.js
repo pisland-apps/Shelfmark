@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.48.0';
+const APP_VERSION = '1.48.1';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -277,6 +277,13 @@ function openSecInfo(){
   document.getElementById('secInfoOverlay').style.display = 'flex';
 }
 function closeSecInfo(){ document.getElementById('secInfoOverlay').style.display = 'none'; }
+
+// ---- App guide panel (v1.48.1) ----------------------------------------------
+// One in-app place that explains the newer features so people don't have to
+// find them in the README: Ctrl+K, the category index, the optional passcode.
+// Reached from the command palette ("App guide: index, passcode & tips").
+function openGuide(){ document.getElementById('guideOverlay').style.display = 'flex'; }
+function closeGuide(){ document.getElementById('guideOverlay').style.display = 'none'; }
 
 let authModalMode = null; // 'set' (device -> passcode) | 'remove' (passcode -> device)
 function openAuthModal(mode){
@@ -4840,6 +4847,7 @@ function buildStaticCommands(){
     authMode === 'device'
       ? { id:'passcode-set', icon:'&#128274;', label:'Set a passcode\u2026', hint:'currently none', action: ()=>openAuthModal('set') }
       : { id:'passcode-remove', icon:'&#128275;', label:'Remove passcode\u2026', hint:'', action: ()=>openAuthModal('remove') },
+    { id:'guide', icon:'&#128218;', label:'App guide: index, passcode & tips', hint:'', action: ()=>openGuide() },
     { id:'passcode-info', icon:'&#128272;', label:'Passcode & lock: info and settings', hint: authMode === 'device' ? 'no passcode' : 'passcode on', action: ()=>openSecInfo() },
     { id:'storage', icon:'&#128190;', label:'Storage used', hint: storageHint, action: ()=>showStorageDetail() },
     { id:'md-help', icon:'?', label:'Markdown formatting help', hint:'', action: ()=>openMarkdownHelp() },

@@ -163,6 +163,14 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.48.1** (2026-09-28) — New in-app "App guide" panel (Ctrl+K → "App
+  guide: index, passcode & tips") covering the command palette, the category
+  index (what it is, how to make one, the optional `types:` / `exclude:` /
+  `columns:` lines, plus a "Create an index note" button), the optional
+  passcode (with a shortcut to its settings) and note writing. The index card
+  in the Markdown help now opens expanded. Bump `CACHE_VERSION` in
+  `service-worker.js` to match on deploy.
+
 - **v1.48.0** (2026-09-28) — Live category index, like an Obsidian index note.
   Put a ```` ```index ```` block in a note and reading view shows a table: one
   row per category (shelf order, Uncategorized last), the category count in

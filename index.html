@@ -964,6 +964,41 @@
   </div>
 </div>
 
+<div id="guideOverlay" class="overlay" style="display:none;" onclick="if(event.target===this) closeGuide()">
+  <div class="sheet help-sheet">
+    <h2>App guide</h2>
+    <div class="help-body mdbody">
+      <section class="hcard hc-n"><div class="hc-title"><span class="hc-ic">&#128269;</span>Command palette</div>
+      <p>Press <code>Ctrl+K</code> (or tap &#128269; at the top) and start typing. Every action lives here &mdash; add, import/export, tags, sort, theme, storage, passcode settings and this guide. Type <code>#</code> to jump to a tag.</p>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128450;&#65039;</span>Category index &mdash; one note that lists everything</div>
+      <p>Like an Obsidian index page: a table with one row per category (same order as your shelf) and a tappable link to every item inside it. The header shows how many categories there are, and each row shows its item count. It is rebuilt each time you open the note, so it always matches your shelf &mdash; nothing to keep up to date.</p>
+      <p><strong>Make one:</strong> <em>Add &rarr; Index of categories</em>, or Ctrl+K &rarr; <em>New index note</em>, or type this into any note:</p>
+      <pre style="background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;overflow-x:auto;margin:6px 0;"><code>```index
+```</code></pre>
+      <p>It shows in reading view (the editor shows the plain block). Optional lines inside the block:</p>
+      <pre style="background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;overflow-x:auto;margin:6px 0;"><code>```index
+types: notes, pdf, pictures, recordings
+exclude: Category A, Category B
+columns: 分类 | 笔记
+```</code></pre>
+      <p><code>types</code> limits what is listed (default: everything), <code>exclude</code> hides categories, <code>columns</code> renames the two headers.</p>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128274;</span>Passcode is optional</div>
+      <p>You can lock Shelfmark with a passcode or open it straight to your shelf. Either way your data is stored encrypted; a passcode also keeps other people on this device out. You can switch at any time.</p>
+      <p><button type="button" class="cancel" style="width:auto;padding:8px 14px;" onclick="closeGuide();openSecInfo()">Passcode &amp; lock settings&hellip;</button></p>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#9997;&#65039;</span>Writing notes</div>
+      <p>Notes use Markdown &mdash; headings, lists, checklists, tables, <code>[[wiki links]]</code>, <code>#tags</code>, pictures and audio. The full cheat-sheet is in Ctrl+K &rarr; <em>Markdown formatting help</em>.</p>
+      </section>
+    </div>
+    <div class="row">
+      <button class="cancel" onclick="closeGuide()">Close</button>
+      <button class="save" onclick="closeGuide();quickNewNote('Index', NOTE_TEMPLATES.index.content())">Create an index note</button>
+    </div>
+  </div>
+</div>
+
 <div id="secInfoOverlay" class="overlay" style="display:none;" onclick="if(event.target===this) closeSecInfo()">
   <div class="sheet help-sheet">
     <h2>Passcode &amp; lock</h2>
@@ -1109,7 +1144,7 @@
       <details class="hc-more"><summary>Search note text from the shelf</summary><p>the shelf search box only looks at titles and categories. Tap the button beside it to also search inside your notes' text — slower, since every note has to be decrypted, so it switches itself off each time you reopen the app.</p></details>
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128450;&#65039;</span>Category index</div>
-      <details class="hc-more"><summary>List every category and its items in one note</summary><p>type <code>```index</code> on its own line, then <code>```</code> on the next (or use <em>Add &rarr; Index of categories</em>, or Ctrl+K &rarr; <em>New index note</em>). In reading view it becomes a table with one row per category &mdash; the category count in the header, an item count beside each name &mdash; and a tappable link to every item inside. It is rebuilt each time you open the note, so it always matches your shelf.</p><p>Optional lines inside the block: <code>types: notes, pdf, pictures, recordings</code> (default is everything), <code>exclude: Category A, Category B</code>, and <code>columns: 分类 | 笔记</code> to rename the two headers.</p></details>
+      <details class="hc-more" open><summary>List every category and its items in one note</summary><p>type <code>```index</code> on its own line, then <code>```</code> on the next (or use <em>Add &rarr; Index of categories</em>, or Ctrl+K &rarr; <em>New index note</em>). In reading view it becomes a table with one row per category &mdash; the category count in the header, an item count beside each name &mdash; and a tappable link to every item inside. It is rebuilt each time you open the note, so it always matches your shelf.</p><p>Optional lines inside the block: <code>types: notes, pdf, pictures, recordings</code> (default is everything), <code>exclude: Category A, Category B</code>, and <code>columns: 分类 | 笔记</code> to rename the two headers.</p></details>
       </section>
       <div class="help-none" style="display:none;">No match — try another word.</div>
     </div>
