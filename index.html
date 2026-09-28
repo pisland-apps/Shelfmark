@@ -382,6 +382,10 @@
   }
   .code-copy.copied{color:var(--ink);border-color:var(--ink);}
   .mdbody a{color:var(--md);}
+  .mdbody del{color:var(--ink-soft);text-decoration-thickness:1.5px;}
+  .mdbody mark.md-mark{background:rgba(255,213,74,.34);color:inherit;border-radius:3px;padding:0 2px;}
+  /* a find hit inside a ==highlight== must stay distinguishable from it */
+  .mdbody mark.md-mark mark.find-hit{background:rgba(212,175,55,.9);box-shadow:0 0 0 1px rgba(26,20,8,.4);}
   .mdbody blockquote{
     margin:14px 0; padding:2px 16px; border-left:3px solid var(--line);
     color:var(--ink-soft); font-style:italic;
@@ -850,6 +854,7 @@
     <div class="help-body mdbody">
       <h3>Text</h3>
       <p><strong>**bold**</strong> · <em>*italic*</em> · <code>`inline code`</code></p>
+      <p><del>~~strikethrough~~</del> · <mark class="md-mark">==highlight==</mark></p>
       <p><code># Heading 1</code> &nbsp; <code>## Heading 2</code> &nbsp; <code>### Heading 3</code></p>
 
       <h3>Lists</h3>

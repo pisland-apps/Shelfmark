@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.31.0';
+const APP_VERSION = '1.32.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3242,6 +3242,27 @@ function shelfLinkIcon(type){
   if(type === 'pdf') return '&#128196;';
   return '&#128220;';
 }
+// ~~strikethrough~~ and ==highlight== (v1.32.0). Runs late in renderMarkdown
+// (after inline code, images, links and widgets are already real HTML) so it
+// can't corrupt them: every <code>…</code> span and every HTML tag is swapped
+// for a placeholder first, the two regexes run on what's left, then the
+// placeholders go back. That matters most for "==": base64 padding in a
+// data: image URI or a query string in a link URL would otherwise pair up
+// into a stray <mark> inside an attribute, and `a == b == c` in an inline
+// code span would get highlighted. Placeholders (not a split on tags) also
+// let a mark wrap other formatting, e.g. ==**bold**==. The content must not
+// start or end with whitespace or the delimiter character, so "a == b" and a
+// bare "======" line are left alone.
+function applyInlineMarks(html){
+  const held = [];
+  let s = html.replace(/<code>[\s\S]*?<\/code>|<[^>]+>/g, m=>{
+    held.push(m);
+    return `\u0000T${held.length - 1}\u0000`;
+  });
+  s = s.replace(/~~([^\s~](?:.*?[^\s~])?)~~/g,'<del>$1</del>');
+  s = s.replace(/==([^\s=](?:.*?[^\s=])?)==/g,'<mark class="md-mark">$1</mark>');
+  return s.replace(/\u0000T(\d+)\u0000/g, (_, i)=>held[+i]);
+}
 function renderMarkdown(src, linkTypes){
   linkTypes = linkTypes || {};
   let s = escapeHtml(src);
@@ -3350,6 +3371,9 @@ function renderMarkdown(src, linkTypes){
     }
     return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`;
   });
+  // ~~strike~~ / ==highlight==: last inline pass, once links/images/widgets
+  // are already HTML (see applyInlineMarks for why the order matters).
+  s = applyInlineMarks(s);
   // Splice the real code-block HTML back in now that every other pass —
   // which would have mangled ** / ` / [..](..) if they'd appeared inside a
   // code sample — has already run.

@@ -25,7 +25,7 @@ and stored only in your browser's IndexedDB, on your own device.
 - **Markdown formatting help.** A new **?** button in the note editor
   toolbar (and a "Markdown formatting help" entry in the command palette,
   reachable from anywhere) opens an overlay covering every syntax the
-  editor supports — bold/italic/headings, lists and `- [ ]` checklists,
+  editor supports — bold/italic/~~strikethrough~~/==highlight==/headings, lists and `- [ ]` checklists,
   `> [!note]`-style callouts, fenced code blocks, tables, images/dividers,
   external links, the three shelf-link pickers (🎵/🔗/📄), `[[Wiki links]]`,
   and `#tags` — each shown as the literal syntax next to its already-
@@ -148,6 +148,22 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.32.0** (2026-09-28) — `~~strikethrough~~` and `==highlight==` in
+  notes. Rendered as `<del>` and `<mark class="md-mark">` by a new
+  `applyInlineMarks()` that runs as the *last* inline pass in
+  `renderMarkdown` (after inline code, images, links and the shelf widgets
+  are already HTML): every `<code>…</code>` span and every HTML tag is held
+  behind a placeholder while the two regexes run. That is deliberate — `==`
+  turns up in base64 padding (`data:` image URIs) and link query strings, and
+  in code like `a == b`, none of which may be turned into a mark. The text
+  between the delimiters must not start or end with a space (or the
+  delimiter itself), so `a == b == c` and a bare `======` line stay literal;
+  marks can wrap other formatting (`==**bold**==`, `~~==both==~~`) and work
+  inside table cells, headings and callout titles. The highlight color is a
+  soft yellow, deliberately different from the gold find-hit, and a find
+  hit inside a highlight gets a stronger tone so it stays visible. The
+  Markdown formatting help gained a row for both. No editor toolbar buttons
+  for them yet — type the delimiters by hand.
 - **v1.31.0** (2026-09-28) — Draft autosave. Before: an edit lived only in the
   textarea until Save, so leaving mid-edit (back button, opening another
   note, the tab being killed) lost it. Now the editor writes a draft every 3 s
