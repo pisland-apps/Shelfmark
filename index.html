@@ -953,6 +953,14 @@
       <label for="exppass2">Confirm passphrase</label>
       <input id="exppass2" type="password" autocomplete="off" placeholder="Confirm passphrase">
     </div>
+    <label for="expShelfName">Shelf name (optional)</label>
+    <input id="expShelfName" type="text" autocomplete="off" maxlength="60" placeholder="e.g. Ah Meng's shelf">
+    <div id="expNameToggleRow" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;">
+      <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
+        <input id="expNameInFile" type="checkbox" checked style="width:auto;margin-top:3px;">
+        <span>Show the name in the file name and in the file&rsquo;s header, so the backup can be identified without the passphrase. Untick to keep the name private &mdash; only a random shelf ID is then visible.</span>
+      </label>
+    </div>
     <div id="expPlainWarning" style="display:none;font-size:12.5px;color:var(--ink-soft);margin-top:14px;line-height:1.5;">
       This file will be fully readable by anyone who opens it — only choose this if you're storing it somewhere you already trust.
     </div>
@@ -1049,6 +1057,7 @@ columns: 分类 | 笔记
 <div id="importPassOverlay" class="overlay" style="display:none;">
   <div class="sheet">
     <h2>Encrypted backup</h2>
+    <div id="impSummary" style="display:none;font-size:13px;line-height:1.5;margin-bottom:10px;"></div>
     <label for="imppass">This backup is encrypted — enter its passphrase</label>
     <input id="imppass" type="password" autocomplete="off" placeholder="Passphrase">
     <div class="row">

@@ -163,6 +163,21 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.49.0** (2026-09-28) — Backups now say whose shelf they came from.
+  Each shelf gets a random `shelfId` (made once, kept in the encrypted
+  prefs) and an optional name (Export dialog, or Ctrl+K → "Shelf name…").
+  Backup files carry `shelfId`, `itemCount`, `appVersion` and `exportedAt` in
+  the plain header, plus `shelfName` and a name in the file name
+  (`Ah-Meng-shelfmark-2026-09-28.enc.json`) unless you untick "Show the name
+  in the file name and in the file's header" in the Export dialog (encrypted
+  exports only; the random ID is always there). Import compares the file's
+  `shelfId` with this shelf: a different shelf asks before merging, and
+  encrypted files show their origin before the passphrase prompt. Files from
+  older versions still import, with a note that they have no owner
+  information. Restoring onto an empty shelf skips the warning and adopts the
+  backup's shelf ID and name. Old app versions ignore the new header fields.
+  Bump `CACHE_VERSION` in `service-worker.js` to match on deploy.
+
 - **v1.48.2** (2026-09-28) — Reset without a lock screen. New Ctrl+K command
   "Erase this shelf and start over…" (also a button in the Passcode & lock
   panel), for no-passcode mode where the lock screen's "Forgot passcode?

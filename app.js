@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.48.2';
+const APP_VERSION = '1.49.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -212,6 +212,7 @@ async function unlockApp(){
   const saved = await getPrefsDecrypted();
   if(saved) prefs = { ...prefs, ...saved };
   applyPrefs(prefs);
+  await ensureShelfId();
   render();
   // Best-effort: ask the browser to protect this origin's storage from
   // automatic eviction under disk pressure. Silent either way — some
@@ -763,16 +764,78 @@ function setExportMode(m){
   document.getElementById('expModePlain').classList.toggle('active', m==='plain');
   document.getElementById('expPassFields').style.display = m==='enc' ? 'block' : 'none';
   document.getElementById('expPlainWarning').style.display = m==='plain' ? 'block' : 'none';
+  // The "put my name in the file" choice only matters for encrypted files:
+  // a plain file is readable anyway, so its header always carries the name.
+  document.getElementById('expNameToggleRow').style.display = m==='enc' ? 'block' : 'none';
   document.getElementById('expError').textContent = '';
 }
 function openExportModal(){
   document.getElementById('exppass').value = '';
   document.getElementById('exppass2').value = '';
   document.getElementById('expError').textContent = '';
+  document.getElementById('expShelfName').value = prefs.shelfName || '';
+  document.getElementById('expNameInFile').checked = prefs.exportShelfName !== false;
   setExportMode('enc');
   document.getElementById('exportOverlay').style.display = 'flex';
 }
 function closeExportModal(){ document.getElementById('exportOverlay').style.display = 'none'; }
+
+// ---- Shelf identity (v1.49.0) -----------------------------------------------
+// Every shelf has a random `shelfId` (made once, kept in the encrypted prefs)
+// and an optional human label `shelfName`. Backups carry both in a plain
+// header so a file can be told apart without opening it, and import warns
+// before merging a backup that came from a different shelf. The ID is the
+// real identity; the name is only for people.
+function newShelfId(){ return buf2b64(randomBytes(9)).replace(/\+/g,'-').replace(/\//g,'_'); }
+async function ensureShelfId(){
+  if(typeof prefs.shelfId === 'string' && prefs.shelfId) return;
+  prefs.shelfId = newShelfId();
+  try{ await putPrefs(prefs); }catch(e){}
+}
+function cleanShelfName(n){ return String(n == null ? '' : n).replace(/\s+/g,' ').trim().slice(0,60); }
+async function setShelfName(n){
+  prefs.shelfName = cleanShelfName(n);
+  try{ await putPrefs(prefs); }catch(e){}
+}
+function renameShelf(){
+  const n = prompt('Name this shelf (shown on backups so you can tell them apart).\n\nLeave empty to remove the name.', prefs.shelfName || '');
+  if(n === null) return;
+  setShelfName(n);
+}
+// Name as it appears in a file name: letters/digits only (any script), so a
+// name like "Ah Meng's shelf" becomes "Ah-Meng-s-shelf".
+function shelfNameForFile(n){
+  return cleanShelfName(n).replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-+|-+$/g,'').slice(0,40);
+}
+function backupHeader(itemCount, includeName){
+  const h = { app:'shelfmark', appVersion:APP_VERSION, exportedAt:Date.now(), itemCount, shelfId:prefs.shelfId };
+  if(includeName && prefs.shelfName) h.shelfName = prefs.shelfName;
+  return h;
+}
+function backupFilename(includeName, ext){
+  const day = new Date().toISOString().slice(0,10);
+  const nm = includeName ? shelfNameForFile(prefs.shelfName) : '';
+  return (nm ? nm+'-shelfmark-' : 'shelfmark-backup-') + day + ext;
+}
+// What a backup file says about its origin, or null (old files, bare arrays).
+function backupIdentity(parsed){
+  if(!parsed || Array.isArray(parsed) || typeof parsed.shelfId !== 'string' || !parsed.shelfId) return null;
+  const n = Number(parsed.itemCount), t = Number(parsed.exportedAt);
+  return {
+    id: parsed.shelfId.slice(0,40),
+    name: cleanShelfName(parsed.shelfName),
+    count: Number.isFinite(n) && n >= 0 ? n : null,
+    date: Number.isFinite(t) && t > 0 ? new Date(t).toISOString().slice(0,10) : ''
+  };
+}
+function describeBackupOwner(info){
+  const who = info.name ? '\u201c'+info.name+'\u201d' : 'another shelf (ID '+info.id.slice(0,6)+')';
+  const bits = [];
+  if(info.count != null) bits.push(info.count+' item'+(info.count===1?'':'s'));
+  if(info.date) bits.push(info.date);
+  return who + (bits.length ? ' ('+bits.join(', ')+')' : '');
+}
+const NO_OWNER_NOTE = 'This file has no owner information (it was made before v1.49.0), so it can\u2019t be checked against this shelf.';
 
 async function buildExportItems(){
   const metas = await getAll();
@@ -826,9 +889,16 @@ async function doExport(){
   const items = await buildExportItems();
   if(!items.length){ errEl.textContent = 'Your shelf is empty — nothing to export yet.'; return; }
 
+  await ensureShelfId();
+  // Save the name/choice typed in the modal so it sticks for next time.
+  prefs.shelfName = cleanShelfName(document.getElementById('expShelfName').value);
+  if(exportMode === 'enc') prefs.exportShelfName = document.getElementById('expNameInFile').checked;
+  putPrefs(prefs).catch(()=>{});
+  const includeName = exportMode === 'plain' ? true : prefs.exportShelfName !== false;
+
   if(exportMode === 'plain'){
-    await downloadJSON({app:'shelfmark', exportedAt:Date.now(), encrypted:false, items},
-      'shelfmark-backup-'+new Date().toISOString().slice(0,10)+'.json');
+    await downloadJSON({...backupHeader(items.length, includeName), encrypted:false, items},
+      backupFilename(includeName, '.json'));
     closeExportModal();
     return;
   }
@@ -842,13 +912,14 @@ async function doExport(){
   const key = await deriveKey(pass, salt, PBKDF2_ITERATIONS);
   const { iv, cipher } = await encryptJSON(key, { items });
   await downloadJSON({
-    app:'shelfmark', exportedAt:Date.now(), encrypted:true,
+    ...backupHeader(items.length, includeName), encrypted:true,
     kdf:'PBKDF2', iterations: PBKDF2_ITERATIONS,
     salt: buf2b64(salt), iv: buf2b64(iv), cipher: buf2b64(cipher)
-  }, 'shelfmark-backup-'+new Date().toISOString().slice(0,10)+'.enc.json');
+  }, backupFilename(includeName, '.enc.json'));
   closeExportModal();
 }
 
+let pendingImportInfo = null;
 async function onImportFile(e){
   const f = e.target.files[0];
   e.target.value = '';
@@ -857,16 +928,36 @@ async function onImportFile(e){
   try{ parsed = JSON.parse(await f.text()); }
   catch(err){ alert("Couldn't read that file — make sure it's a Shelfmark export."); return; }
 
+  const info = backupIdentity(parsed);
+  let shelfEmpty = false;
+  try{ shelfEmpty = (await getAll()).length === 0; }catch(err){}
+  const differs = !!info && info.id !== prefs.shelfId && !shelfEmpty;
+
   if(parsed && parsed.encrypted === true){
+    // Show where it came from BEFORE asking for the passphrase.
     pendingImportBackup = parsed;
+    pendingImportInfo = info;
+    const sum = document.getElementById('impSummary');
+    if(!info){
+      sum.textContent = shelfEmpty ? '' : NO_OWNER_NOTE;
+      sum.style.color = 'var(--ink-soft)';
+    } else if(differs){
+      sum.textContent = 'This backup is from '+describeBackupOwner(info)+', not this shelf. Importing will merge its items into this shelf.';
+      sum.style.color = '#b23b3b';
+    } else {
+      sum.textContent = 'This backup is from '+(info.id === prefs.shelfId ? 'this shelf' : describeBackupOwner(info))+(info.id === prefs.shelfId && (info.count != null || info.date) ? ' ('+[info.count != null ? info.count+' item'+(info.count===1?'':'s') : '', info.date].filter(Boolean).join(', ')+')' : '')+'.';
+      sum.style.color = 'var(--ink-soft)';
+    }
+    sum.style.display = sum.textContent ? 'block' : 'none';
     document.getElementById('imppass').value = '';
     document.getElementById('impError').textContent = '';
     document.getElementById('importPassOverlay').style.display = 'flex';
     return;
   }
-  await mergeImportedItems(Array.isArray(parsed) ? parsed : (parsed.items || []));
+  if(differs && !confirm('This backup is from '+describeBackupOwner(info)+', not this shelf.\n\nMerge its items into this shelf?')) return;
+  await mergeImportedItems(Array.isArray(parsed) ? parsed : (parsed.items || []), info);
 }
-function closeImportPassModal(){ document.getElementById('importPassOverlay').style.display = 'none'; pendingImportBackup = null; }
+function closeImportPassModal(){ document.getElementById('importPassOverlay').style.display = 'none'; pendingImportBackup = null; pendingImportInfo = null; }
 
 async function doImportDecrypt(){
   const errEl = document.getElementById('impError');
@@ -877,18 +968,20 @@ async function doImportDecrypt(){
     const salt = b642buf(pendingImportBackup.salt);
     const key = await deriveKey(pass, salt, pendingImportBackup.iterations || PBKDF2_ITERATIONS);
     const { items } = await decryptJSON(key, b642buf(pendingImportBackup.iv), b642buf(pendingImportBackup.cipher));
+    const info = pendingImportInfo;
     document.getElementById('importPassOverlay').style.display = 'none';
-    pendingImportBackup = null;
-    await mergeImportedItems(items || []);
+    pendingImportBackup = null; pendingImportInfo = null;
+    await mergeImportedItems(items || [], info);
   }catch(err){
     errEl.textContent = 'Incorrect passphrase.';
   }
 }
 
-async function mergeImportedItems(items){
+async function mergeImportedItems(items, info){
   let added = 0, updated = 0, stoppedOnQuota = false;
   try{
     const existingItems = await getAll();
+    const wasEmpty = existingItems.length === 0;
     for(const it of items){
       let existing = it.id ? existingItems.find(x=>x.id===it.id) : null;
       if(!existing){
@@ -914,14 +1007,22 @@ async function mergeImportedItems(items){
       }
       if(existing){ updated++; } else { added++; existingItems.push(record); }
     }
+    // Restoring onto an empty shelf (new device, after an erase): take on the
+    // backup's identity so later backups from here match the original shelf.
+    if(wasEmpty && added && info){
+      prefs.shelfId = info.id;
+      if(info.name && !prefs.shelfName) prefs.shelfName = info.name;
+      putPrefs(prefs).catch(()=>{});
+    }
     render();
+    const tail = (!info && !wasEmpty) ? '\n\n'+NO_OWNER_NOTE : '';
     const parts = [];
     if(added) parts.push(`added ${added} new item${added===1?'':'s'}`);
     if(updated) parts.push(`updated ${updated} existing item${updated===1?'':'s'}`);
     if(stoppedOnQuota){
-      alert((parts.length ? parts.join(', ')+', then s' : 'S')+"topped partway through — your device's storage is full. Free up space or remove a few items, then re-import the same file to pick up the rest (already-imported items will be skipped).");
+      alert((parts.length ? parts.join(', ')+', then s' : 'S')+"topped partway through — your device's storage is full. Free up space or remove a few items, then re-import the same file to pick up the rest (already-imported items will be skipped)."+tail);
     } else {
-      alert(parts.length ? parts.join(', ')+'.' : "That file didn't contain any recognizable items.");
+      alert((parts.length ? parts.join(', ')+'.' : "That file didn't contain any recognizable items.")+tail);
     }
   }catch(err){
     alert("Couldn't read that file — make sure it's a Shelfmark export.");
@@ -930,7 +1031,7 @@ async function mergeImportedItems(items){
 
 const FONT_MAP = {serif:"Georgia,'Times New Roman',serif", sans:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", mono:"'SFMono-Regular',Consolas,Menlo,monospace", zh:"'PingFang SC','Heiti SC','Microsoft YaHei',sans-serif"};
 const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
-let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, categoryOrder:[]};
+let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -4852,6 +4953,7 @@ function buildStaticCommands(){
     { id:'add-item', icon:'&#10133;', label:'Add item\u2026', hint:'pdf / note / image / audio', action: ()=>openAdd() },
     { id:'import', icon:'&#8681;', label:'Import from JSON', hint:'', action: ()=>document.getElementById('importPick').click() },
     { id:'export', icon:'&#8679;', label:'Export shelf as JSON', hint:'', action: ()=>openExportModal() },
+    { id:'shelf-name', icon:'&#127991;&#65039;', label:'Shelf name\u2026', hint: prefs.shelfName || 'not set', action: ()=>renameShelf() },
     { id:'tags', icon:'#', label:'Browse tags', hint:'', action: ()=>openTagsPage() },
     { id:'select', icon: selectMode ? '&times;' : '&#9745;', label: selectMode ? 'Exit selection mode' : 'Select multiple items', hint:'', action: ()=>toggleSelectMode() },
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
