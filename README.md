@@ -154,6 +154,10 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.45.2** (2026-09-28) — Quote (`> `) lines are easier to see in reading
+  view: the left bar is now 4px in the note-green accent (`--md`, was a faint
+  3px `--line`) on a light green tint with rounded right corners, matching the
+  callout cards. CSS only.
 - **v1.45.1** (2026-09-28) — Indentation now shows in reading view. Leading
   spaces / tabs were being collapsed by HTML, so Tab indent (v1.45.0) only
   showed in the editor. `mdIndentEm` counts 0.75em per leading space (tab = 4
