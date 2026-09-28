@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.29.3';
+const APP_VERSION = '1.30.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1962,6 +1962,11 @@ async function saveEditNote(){
 // known limit of walking text nodes; edit-mode search has no such gap.
 let findOpen = false;
 let findCase = false;
+// Set only by openNoteAtTag(): the query is a #tag and should match that WHOLE
+// tag ('#idea' must not light up '#ideas'), skipping code, exactly the way
+// TAG_RE decides what counts as a tag. Cleared the moment the user edits the
+// query, so ordinary find stays a plain substring search.
+let findTagExact = false;
 let findHits = [];       // reading view: the <mark> elements
 let findEditMatches = []; // editing view: start offsets into the textarea
 let findIdx = -1;
@@ -1971,9 +1976,13 @@ function findIsEditing(){
   return !!w && w.style.display === 'flex';
 }
 function escapeRegExp(str){ return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-function findRegex(q){ return new RegExp(escapeRegExp(q), findCase ? 'g' : 'gi'); }
+function findRegex(q){
+  if(findTagExact && /^#[\p{L}\p{N}_-]+$/u.test(q))
+    return new RegExp('(?<![\\w/#])' + escapeRegExp(q) + '(?![\\p{L}\\p{N}_-])', findCase ? 'gu' : 'giu');
+  return new RegExp(escapeRegExp(q), findCase ? 'g' : 'gi');
+}
 function toggleFindBar(){ findOpen ? closeFindBar() : openFindBar(); }
-function openFindBar(){
+function openFindBar(noFocus){
   if(curType !== 'markdown') return;
   findOpen = true;
   document.getElementById('findBar').style.display = 'flex';
@@ -1987,11 +1996,12 @@ function openFindBar(){
     const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
     if(sel && sel.length < 100 && !sel.includes('\n')) inp.value = sel;
   }
-  inp.focus(); inp.select();
+  if(!noFocus){ inp.focus(); inp.select(); } // a programmatic jump shouldn't raise the phone keyboard
   findRefresh();
 }
 function closeFindBar(){
   findOpen = false;
+  findTagExact = false;
   clearFindMarks();
   findHits = []; findEditMatches = []; findIdx = -1;
   const bar = document.getElementById('findBar');
@@ -2048,7 +2058,10 @@ function highlightReader(q){
   const walker = document.createTreeWalker(view, NodeFilter.SHOW_TEXT, {
     acceptNode(n){
       const tag = n.parentNode && n.parentNode.nodeName;
-      if(tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SCRIPT' || tag === 'STYLE') return NodeFilter.FILTER_REJECT;
+      // tag pills are <button>s but hold real note text ("#idea"), so they stay searchable
+      const pill = n.parentNode.classList && n.parentNode.classList.contains('tag-pill');
+      if(findTagExact && n.parentNode.closest && n.parentNode.closest('code, pre')) return NodeFilter.FILTER_REJECT;
+      if((tag === 'BUTTON' && !pill) || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SCRIPT' || tag === 'STYLE') return NodeFilter.FILTER_REJECT;
       return n.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     }
   });
@@ -2106,6 +2119,7 @@ function findRefresh(){
   updateFindCount();
 }
 function onFindInput(){
+  findTagExact = false; // user is typing their own query now: back to plain substring find
   findRefresh();
   // reading view: bring the first hit into view as you type
   if(!findIsEditing() && findIdx >= 0) findHits[findIdx].scrollIntoView({ block:'center' });
@@ -2364,6 +2378,27 @@ async function openTagsPage(tag){
 function closeTagsPage(){
   document.getElementById('tagsPage').classList.remove('open');
 }
+// Opens a note scrolled to where a #tag actually sits, with every occurrence
+// highlighted and the find bar's ↑/↓ ready to step between them. Built on the
+// find bar rather than a separate scroll-to mechanism so highlighting,
+// stepping and dismissing all behave exactly as they already do.
+async function openNoteAtTag(id, tagKey){
+  await openReader(id);
+  if(curId !== id || curType !== 'markdown') return;
+  findCase = false;
+  const cb = document.getElementById('findCaseBtn');
+  cb.classList.remove('active'); cb.setAttribute('aria-pressed', 'false');
+  document.getElementById('findInput').value = '#' + tagKey;
+  findTagExact = true;
+  openFindBar(true);
+  goToFindMatch();
+}
+// Palette "Jump to #tag": one note has it -> go straight to the tag inside
+// that note; several -> you have to pick which note, so show the Tags page.
+function jumpToTag(tagKey, items){
+  if(items.length === 1) openNoteAtTag(items[0].id, tagKey);
+  else openTagsPage(tagKey);
+}
 async function renderTagsPage(){
   const index = await buildTagIndex();
   const titleEl = document.getElementById('tagsPageTitle');
@@ -2401,7 +2436,8 @@ async function renderTagsPage(){
       </div>`
     ).join('') + `</div>`;
     body.querySelectorAll('.tag-result-row').forEach(row=>{
-      row.onclick = ()=>{ closeTagsPage(); openReader(row.dataset.id); };
+      const tagForRow = tagsPageTag;
+      row.onclick = ()=>{ closeTagsPage(); openNoteAtTag(row.dataset.id, tagForRow); };
     });
   }
   document.getElementById('tagBackBtn').onclick = ()=>{ tagsPageTag = null; renderTagsPage(); };
@@ -3285,7 +3321,7 @@ async function loadCommandPaletteTags(){
     .map(([key, info])=>({
       id:'tag-'+key, icon:'#', label:'Jump to #'+info.display,
       hint: info.items.length + (info.items.length === 1 ? ' note' : ' notes'),
-      action: ()=>openTagsPage(key)
+      action: ()=>jumpToTag(key, info.items)
     }))
     .sort((a,b)=>a.label.localeCompare(b.label, undefined, {numeric:true, sensitivity:'base'}));
   if(cmdPaletteOpen) renderCommandPalette();

@@ -142,6 +142,19 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.30.0** (2026-09-28) — Jump straight to a tag's position. Palette
+  "Jump to #tag" used to always open the Tags page; if only one note has the
+  tag it now opens that note scrolled to the tag with every occurrence
+  highlighted (find bar's ↑/↓ step between them). With several notes it still
+  shows the Tags page to pick one, and tapping a note there now also lands
+  on the tag inside it. Built on the find bar (`openNoteAtTag`), with a
+  whole-tag mode (`findTagExact`: '#idea' doesn't match '#ideas', code is
+  skipped, tag pills — which are buttons — are searchable) that switches off
+  as soon as the user types their own query. Tapping a tag pill inside a
+  note is unchanged (opens the Tags page — you're already at that spot; the
+  useful thing is the other notes). Side effect: jumping scrolls the note,
+  which overwrites its saved reading position.
+
 - **v1.29.3** (2026-09-28) — Command palette no longer lists every tag as a
   "Jump to #tag" row when opened; with many tags they pushed the real
   commands off-screen, and "Browse tags" already covers browsing. Tag rows
