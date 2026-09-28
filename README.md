@@ -154,6 +154,11 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.46.2** (2026-09-28) — The 🔗 / 🎵 / 📄 link buttons no longer swallow
+  selected text. Select "meeting notes", tap a button, pick a target → you get
+  `[meeting notes](shelf://id)`; before, the selection was replaced by the
+  target's title. A multi-line selection can't be a link label, so it still
+  falls back to the target's title. Nothing selected: unchanged.
 - **v1.46.1** (2026-09-28) — Dropped audio is now embedded in the note itself,
   like a dropped picture, instead of becoming a separate shelf item (that was
   v1.46.0). The file is read as a `data:audio/...` URI and stored inline in the

@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.46.1';
+const APP_VERSION = '1.46.2';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2803,9 +2803,15 @@ function insertShelfLink(id, title){
   // Square brackets in the title would break the [label] part of the link
   // syntax — strip them from the inserted label only, the stored item title
   // itself is untouched.
-  const safeLabel = title.replace(/[[\]]/g,'');
-  const markdown = `[${safeLabel}](shelf://${id})`;
   const { start, end } = mdLinkCursor || { start: ta.value.length, end: ta.value.length };
+  // v1.46.2: if text was selected when the picker opened, the selection
+  // becomes the link label (select "meeting notes" -> [meeting notes](shelf://id))
+  // instead of being overwritten by the target's title. A selection that
+  // spans lines can't be a link label, so it falls back to the title.
+  const sel = start !== end ? ta.value.slice(start, end) : '';
+  const useSel = sel.trim() && !sel.includes('\n');
+  const safeLabel = (useSel ? sel.trim() : title).replace(/[[\]]/g,'');
+  const markdown = `[${safeLabel}](shelf://${id})`;
   ta.value = ta.value.slice(0, start) + markdown + ta.value.slice(end);
   closeAudioLinkPicker();
   ta.focus();
