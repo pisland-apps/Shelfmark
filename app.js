@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.40.0';
+const APP_VERSION = '1.41.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2758,6 +2758,26 @@ function openMarkdownHelp(){
 function toggleMarkdownHelp(){
   if(noteEditActive() && isHelpDockOpen()) closeHelpDock();
   else openMarkdownHelp();
+}
+// Search box at the top of the help (v1.41.0). Inline oninput on the input, and
+// it finds its own .help-body via closest(), so it works identically in the
+// overlay and in the docked clone (no ids that would be duplicated).
+// Every word must appear somewhere in a card (folded "More details" text
+// counts); matching cards are shown with their folded parts opened.
+function filterHelp(input){
+  const body = input.closest('.help-body');
+  if(!body) return;
+  const terms = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+  let shown = 0;
+  body.querySelectorAll('.hcard').forEach(card=>{
+    const text = card.textContent.toLowerCase();
+    const hit = terms.every(w => text.includes(w));
+    card.style.display = hit ? '' : 'none';
+    if(hit) shown++;
+    card.querySelectorAll('details.hc-more').forEach(d=>{ d.open = terms.length > 0 && hit; });
+  });
+  const none = body.querySelector('.help-none');
+  if(none) none.style.display = shown ? 'none' : '';
 }
 function closeMarkdownHelp(){
   document.getElementById('mdHelpOverlay').style.display = 'none';

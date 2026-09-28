@@ -162,6 +162,25 @@
   .help-body h3{margin:22px 0 8px;font-size:15px;}
   .help-body h3:first-child{margin-top:0;}
   .help-body table{font-size:0.85em;}
+  /* Help as scannable cards (v1.41.0): one tinted, colour-edged card per topic,
+     same look as the callout cards; long text is folded into "More details". */
+  .help-search{position:sticky;top:0;z-index:2;background:var(--paper2);padding:0 0 8px;}
+  .help-dock .help-search{background:var(--card);}
+  .help-search input{width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--paper);color:var(--ink);font-size:14px;font-family:inherit;}
+  .hcard{--hc:var(--ink-soft);--hcbg:rgba(0,0,0,.05);margin:0 0 12px;padding:10px 12px 12px;border-radius:8px;border-left:4px solid var(--hc);background:var(--hcbg);}
+  .hcard.hc-w{--hc:var(--md);--hcbg:rgba(69,97,76,.12);}
+  .hcard.hc-i{--hc:var(--img);--hcbg:rgba(62,76,115,.12);}
+  .hcard.hc-l{--hc:var(--audio);--hcbg:rgba(156,122,41,.12);}
+  .hcard.hc-s{--hc:var(--pdf);--hcbg:rgba(122,59,46,.12);}
+  .hc-title{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;color:var(--hc);margin:0 0 4px;}
+  .hc-ic{font-size:15px;line-height:1;}
+  .hcard p{margin:6px 0;}
+  .hc-more{margin-top:6px;}
+  .hc-more > summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ink-soft);padding:4px 0;}
+  .hq-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));gap:6px;}
+  .hq-item{background:var(--paper);border-radius:6px;padding:6px 8px;font-size:12px;color:var(--ink-soft);}
+  .hq-item code{display:block;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);}
+  .help-none{padding:16px 4px;text-align:center;color:var(--ink-soft);font-size:13px;}
   label{display:block;font-size:12px;color:var(--ink-soft);margin:14px 0 6px;}
   input[type=text]{
     width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line);
@@ -946,30 +965,33 @@
   <div class="sheet help-sheet">
     <h2>Markdown formatting help</h2>
     <div class="help-body mdbody">
-      <h3>Text</h3>
-      <p><strong>**bold**</strong> · <em>*italic*</em> · <code>`inline code`</code></p>
+      <div class="help-search"><input type="search" placeholder="Search help… (e.g. table, bold, tab)" aria-label="Search Markdown help" autocomplete="off" oninput="filterHelp(this)"></div>
+      <section class="hcard hc-n"><div class="hc-title"><span class="hc-ic">⚡</span>Quick reference</div>
+      <div class="hq-grid"><div class="hq-item"><code>**bold**</code>Bold</div><div class="hq-item"><code>*italic*</code>Italic</div><div class="hq-item"><code>~~text~~</code>Strikethrough</div><div class="hq-item"><code>==text==</code>Highlight</div><div class="hq-item"><code>## Title</code>Heading</div><div class="hq-item"><code>- item</code>Bullet list</div><div class="hq-item"><code>1. item</code>Numbered list</div><div class="hq-item"><code>- [ ] task</code>Checklist</div><div class="hq-item"><code>&gt; quote</code>Quote</div><div class="hq-item"><code>&gt; [!note]</code>Callout card</div><div class="hq-item"><code>`code`</code>Inline code</div><div class="hq-item"><code>```</code>Code block</div><div class="hq-item"><code>| a | b |</code>Table</div><div class="hq-item"><code>[[Title]]</code>Wiki link</div><div class="hq-item"><code>#tag</code>Tag</div><div class="hq-item"><code>---</code>Divider</div></div>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">✏️</span>Text</div>
+            <p><strong>**bold**</strong> · <em>*italic*</em> · <code>`inline code`</code></p>
       <p><code># Heading 1</code> &nbsp; <code>## Heading 2</code> &nbsp; <code>### Heading 3</code> &nbsp; … &nbsp; <code>###### Heading 6</code></p>
-      <p>The <b>B</b> and <b>H</b> toolbar buttons insert bold and a heading for you. <b>B</b> is an on/off switch — select bold text and tap it again to remove the <code>**</code>. Italic has no button: use <b>Ctrl/⌘+I</b> (see <em>Typing shortcuts</em> below).</p>
-      <p>In reading view, tap the arrow at the right of a heading to fold everything under it, up to the next heading of the same or higher level. The outline (☰) has Collapse all / Expand all. Folds are remembered per note and don't change the text.</p>
-
-      <h3>Strikethrough &amp; highlight</h3>
-      <p><del>~~strikethrough~~</del> · <mark class="md-mark">==highlight==</mark></p>
+      <details class="hc-more"><summary>More details</summary><p>The <b>B</b> and <b>H</b> toolbar buttons insert bold and a heading for you. <b>B</b> is an on/off switch — select bold text and tap it again to remove the <code>**</code>. Italic has no button: use <b>Ctrl/⌘+I</b> (see <em>Typing shortcuts</em> below).</p><p>In reading view, tap the arrow at the right of a heading to fold everything under it, up to the next heading of the same or higher level. The outline (☰) has Collapse all / Expand all. Folds are remembered per note and don't change the text.</p></details>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">🖍️</span>Strikethrough &amp; highlight</div>
+            <p><del>~~strikethrough~~</del> · <mark class="md-mark">==highlight==</mark></p>
       <p>Or select some text in the editor and tap the <del>S</del> or <mark class="md-mark">A</mark> toolbar button — tap it again on the same text to take the marks off.</p>
-      <p>Select several lines and tap once to mark each line separately; list, checkbox and quote markers stay in front, so <code>- [ ] buy milk</code> becomes <code>- [ ] ~~buy milk~~</code> and is still a tappable checklist item.</p>
-      <p>They combine with other formatting (<code>==**bold**==</code>) and work inside tables and callout titles. Keep the text snug against the marks — <code>== word ==</code> with spaces inside stays as typed — and nothing is marked inside code.</p>
-
-      <h3>Lists</h3>
-      <p><code>- item</code> for a bullet list, <code>1. item</code> for a numbered list.</p>
-      <p>Press <b>Enter</b> at the end of a list line and the next line starts with the same marker — <code>- </code>, <code>* </code>, the next number (<code>2. </code>) or, for a checklist, a fresh unchecked <code>- [ ] </code>. Press <b>Enter</b> again on the empty item to end the list. Inside a fenced code block nothing is added.</p>
-      <p><b>Tab</b> / <b>Shift+Tab</b> on a list line indent / outdent it by two spaces instead of jumping focus out of the editor (reading view still shows lists flat). Press <b>Esc</b> and then <b>Tab</b> if you do want to move focus to the toolbar.</p>
+      <details class="hc-more"><summary>More details</summary><p>Select several lines and tap once to mark each line separately; list, checkbox and quote markers stay in front, so <code>- [ ] buy milk</code> becomes <code>- [ ] ~~buy milk~~</code> and is still a tappable checklist item.</p><p>They combine with other formatting (<code>==**bold**==</code>) and work inside tables and callout titles. Keep the text snug against the marks — <code>== word ==</code> with spaces inside stays as typed — and nothing is marked inside code.</p></details>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">📋</span>Lists</div>
+            <p><code>- item</code> for a bullet list, <code>1. item</code> for a numbered list.</p>
+      
+      
       <p>Tappable checklist — tap in the reader to check it off, no need to open the editor:</p>
       <ul class="task-list">
         <li class="task-item"><label><input type="checkbox" disabled><span>Type <code>- [ ] text</code> for this</span></label></li>
         <li class="task-item"><label><input type="checkbox" disabled checked><span class="done">Type <code>- [x] text</code> for this</span></label></li>
       </ul>
-
-      <h3>Quotes &amp; callouts</h3>
-      <p><code>&gt; text</code> makes a plain quote. Start it with <code>[!type]</code> for a colored callout card instead. <b>Enter</b> at the end of a quote line continues it with <code>&gt; </code>; <b>Enter</b> on an empty <code>&gt; </code> line ends the quote:</p>
+      <details class="hc-more"><summary>More details</summary><p>Press <b>Enter</b> at the end of a list line and the next line starts with the same marker — <code>- </code>, <code>* </code>, the next number (<code>2. </code>) or, for a checklist, a fresh unchecked <code>- [ ] </code>. Press <b>Enter</b> again on the empty item to end the list. Inside a fenced code block nothing is added.</p><p><b>Tab</b> / <b>Shift+Tab</b> on a list line indent / outdent it by two spaces instead of jumping focus out of the editor (reading view still shows lists flat). Press <b>Esc</b> and then <b>Tab</b> if you do want to move focus to the toolbar.</p></details>
+      </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">💬</span>Quotes &amp; callouts</div>
+            <p><code>&gt; text</code> makes a plain quote. Start it with <code>[!type]</code> for a colored callout card instead. <b>Enter</b> at the end of a quote line continues it with <code>&gt; </code>; <b>Enter</b> on an empty <code>&gt; </code> line ends the quote:</p>
       <blockquote>&gt; A plain quote looks like this</blockquote>
       <div class="callout callout-note"><div class="callout-title"><span class="callout-icon">&#128221;</span>Note</div><div class="callout-body"><code>&gt; [!note]</code> — general info</div></div>
       <div class="callout callout-warning"><div class="callout-title"><span class="callout-icon">&#9888;&#65039;</span>Watch out</div><div class="callout-body"><code>&gt; [!warning] Watch out</code> — the text after <code>[!warning]</code> becomes the card's title</div></div>
@@ -977,45 +999,47 @@
       <p>Add <code>-</code> or <code>+</code> right after the type to make the card foldable — <code>-</code> starts collapsed, <code>+</code> starts open. Tap the title row to fold or unfold:</p>
       <details class="callout callout-note callout-fold"><summary class="callout-title"><span class="callout-icon">&#128221;</span>Tap to expand</summary><div class="callout-body"><code>&gt; [!note]- Tap to expand</code> — collapsed until tapped. Search matches inside a folded card open it automatically.</div></details>
       <details class="callout callout-idea callout-fold" open><summary class="callout-title"><span class="callout-icon">&#128161;</span>Starts open</summary><div class="callout-body"><code>&gt; [!idea]+ Starts open</code> — foldable, but shown open. Fold state isn't saved: the card returns to its starting state whenever the note is reopened.</div></details>
-
-      <h3>Code blocks</h3>
-      <p>Fence a block with three backticks; an optional language name after the first fence is shown as a label. Every block gets a one-tap Copy button.</p>
+      </section>
+      <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">💻</span>Code blocks</div>
+            <p>Fence a block with three backticks; an optional language name after the first fence is shown as a label. Every block gets a one-tap Copy button.</p>
       <div class="code-block"><div class="code-bar"><span class="code-lang">js</span><button class="code-copy" disabled>Copy</button></div><pre><code>console.log("hello");</code></pre></div>
-
-      <h3>Tables</h3>
-      <p><code>| Col | Col |</code> then a <code>| --- | --- |</code> row, then your data rows:</p>
+      </section>
+      <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">▦</span>Tables</div>
+            <p><code>| Col | Col |</code> then a <code>| --- | --- |</code> row, then your data rows:</p>
       <div class="md-table-wrap"><table><thead><tr><th>Name</th><th>Age</th></tr></thead><tbody><tr><td>Ann</td><td>29</td></tr></tbody></table></div>
-      <p>In reading view you can edit a table without opening the editor: tap a cell, type, then <b>Enter</b> to save (<b>Esc</b> cancels, <b>Tab</b> moves to the next cell — in the last cell it adds a row). While a cell is open, the bar under the table adds or deletes a row or column. Use <code>\|</code> for a literal pipe inside a cell.</p>
-
-      <h3>Images &amp; dividers</h3>
-      <p><code>![alt](url)</code> for an image — or just tap the &#128247; toolbar button to insert one from your device. In reading view pictures show as small thumbnails — tap one to view it full-screen (tap it again for actual size, tap outside or press Esc to close). <code>---</code> on its own line draws a divider.</p>
-
-      <h3>Links</h3>
-      <p><code>[label](https://…)</code> — an ordinary link. Point it at an audio file URL (<code>.mp3</code>, <code>.m4a</code>, <code>.wav</code>, <code>.ogg</code>, <code>.oga</code>, <code>.opus</code>, <code>.aac</code>, <code>.flac</code>, <code>.weba</code>) and it renders as a playable widget instead — the one feature in Shelfmark that makes a live network request.</p>
-
-      <h3>Link something already on your shelf</h3>
-      <p>Use the &#127925; / &#128279; / &#128196; toolbar buttons to pick a recording, note, or PDF and drop in a working link — no syntax to remember:</p>
+      <details class="hc-more"><summary>More details</summary><p>In reading view you can edit a table without opening the editor: tap a cell, type, then <b>Enter</b> to save (<b>Esc</b> cancels, <b>Tab</b> moves to the next cell — in the last cell it adds a row). While a cell is open, the bar under the table adds or deletes a row or column. Use <code>\|</code> for a literal pipe inside a cell.</p></details>
+      </section>
+      <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">🖼️</span>Images &amp; dividers</div>
+            <p><code>![alt](url)</code> for an image — or just tap the &#128247; toolbar button to insert one from your device. In reading view pictures show as small thumbnails — tap one to view it full-screen (tap it again for actual size, tap outside or press Esc to close). <code>---</code> on its own line draws a divider.</p>
+      </section>
+      <section class="hcard hc-l"><div class="hc-title"><span class="hc-ic">🔗</span>Links</div>
+            <p><code>[label](https://…)</code> — an ordinary link. Point it at an audio file URL (<code>.mp3</code>, <code>.m4a</code>, <code>.wav</code>, <code>.ogg</code>, <code>.oga</code>, <code>.opus</code>, <code>.aac</code>, <code>.flac</code>, <code>.weba</code>) and it renders as a playable widget instead — the one feature in Shelfmark that makes a live network request.</p>
+      </section>
+      <section class="hcard hc-l"><div class="hc-title"><span class="hc-ic">📎</span>Link something already on your shelf</div>
+            <p>Use the &#127925; / &#128279; / &#128196; toolbar buttons to pick a recording, note, or PDF and drop in a working link — no syntax to remember:</p>
       <div class="md-audio-inline"><button class="inline-play" disabled>&#9658;</button><div class="meta"><div class="title">&#127925; Audio &rarr; inline player</div><div class="inline-bar"><div class="inline-bar-fill"></div></div><div class="inline-time"></div></div><button class="expand" disabled title="Open full player">&#8599;</button></div>
       <div class="md-note-link"><span class="note-link-icon">&#128220;</span><span class="note-link-title">&#128279; Note &rarr; jump-to-note card</span><span class="note-link-go">&#8594;</span></div>
       <div class="md-note-link pdf-target"><span class="note-link-icon">&#128196;</span><span class="note-link-title">&#128196; PDF &rarr; jump-to-PDF card</span><span class="note-link-go">&#8594;</span></div>
-      <p>These stay linked even if you rename the target later — only deleting it breaks the link (tapping it will say so).</p>
-
-      <h3>Wiki-style links</h3>
-      <p>Type <code>[[</code> and start typing a title for an autocomplete dropdown, or write it by hand: <code>[[Note title]]</code>, or <code>[[Note title|shown text]]</code> to display something else. Unlike the picker links above, this one is matched by title, so renaming the target note keeps it working automatically — but renaming <em>this</em> note's own reference breaks it. Linking a title that doesn't exist yet shows a dashed "missing" pill you can tap to create that note on the spot.</p>
-
-      <h3>Tags</h3>
-      <p>Write <code>#word</code> anywhere in the text to tag the note — as many as you like, alongside its one category. Browse them all from the &#128269; command palette &rarr; <em>Browse tags</em>.</p>
-
-      <h3>Typing shortcuts</h3>
-      <p><b>Ctrl/⌘+B</b> bold · <b>Ctrl/⌘+I</b> italic — both switch on and off, like the toolbar buttons, and work line by line on a multi-line selection.</p>
+      <details class="hc-more"><summary>More details</summary><p>These stay linked even if you rename the target later — only deleting it breaks the link (tapping it will say so).</p></details>
+      </section>
+      <section class="hcard hc-l"><div class="hc-title"><span class="hc-ic">[[ ]]</span>Wiki-style links</div>
+            <p>Type <code>[[</code> and start typing a title for an autocomplete dropdown, or write it by hand: <code>[[Note title]]</code>, or <code>[[Note title|shown text]]</code> to display something else. Unlike the picker links above, this one is matched by title, so renaming the target note keeps it working automatically — but renaming <em>this</em> note's own reference breaks it. Linking a title that doesn't exist yet shows a dashed "missing" pill you can tap to create that note on the spot.</p>
+      </section>
+      <section class="hcard hc-l"><div class="hc-title"><span class="hc-ic">#</span>Tags</div>
+            <p>Write <code>#word</code> anywhere in the text to tag the note — as many as you like, alongside its one category. Browse them all from the &#128269; command palette &rarr; <em>Browse tags</em>.</p>
+      </section>
+      <section class="hcard hc-s"><div class="hc-title"><span class="hc-ic">⌨️</span>Typing shortcuts</div>
+            <p><b>Ctrl/⌘+B</b> bold · <b>Ctrl/⌘+I</b> italic — both switch on and off, like the toolbar buttons, and work line by line on a multi-line selection.</p>
       <p><b>Ctrl+Alt+H</b> (Ctrl+Option+H on Mac) toggles a heading on the current line.</p>
       <p><b>Ctrl/⌘+Z</b> undo · <b>Ctrl/⌘+Shift+Z</b> or <b>Ctrl/⌘+Y</b> redo · <b>Ctrl/⌘+F</b> find.</p>
       <p><b>Enter</b> / <b>Tab</b> in lists and quotes: see <em>Lists</em> and <em>Quotes &amp; callouts</em> above.</p>
-
-      <h3>Tips</h3>
-      <p><strong>Find in a note:</strong> tap &#128269; in the note's top bar (or press Ctrl/Cmd+F). Matches are highlighted, with &uarr; &darr; buttons to step through them and <code>Aa</code> to match case. While editing, the bar also has <em>Replace</em> and <em>All</em> — Replace All can be undone in one step with &#8617;. In reading view, <em>Replace&hellip;</em> opens the editor with your search carried over.</p>
-      <p><strong>Drafts:</strong> while you edit, your text is saved automatically every few seconds as a draft. If you leave without saving, the note shows an <em>Unsaved draft</em> banner next time so you can continue or discard it. Only <em>Save</em> changes the note itself.</p>
-      <p><strong>Search note text from the shelf:</strong> the shelf search box only looks at titles and categories. Tap the button beside it to also search inside your notes' text — slower, since every note has to be decrypted, so it switches itself off each time you reopen the app.</p>
+      </section>
+      <section class="hcard hc-n"><div class="hc-title"><span class="hc-ic">💡</span>Tips</div>
+      <details class="hc-more"><summary>Find in a note</summary><p>tap &#128269; in the note's top bar (or press Ctrl/Cmd+F). Matches are highlighted, with &uarr; &darr; buttons to step through them and <code>Aa</code> to match case. While editing, the bar also has <em>Replace</em> and <em>All</em> — Replace All can be undone in one step with &#8617;. In reading view, <em>Replace&hellip;</em> opens the editor with your search carried over.</p></details>
+      <details class="hc-more"><summary>Drafts</summary><p>while you edit, your text is saved automatically every few seconds as a draft. If you leave without saving, the note shows an <em>Unsaved draft</em> banner next time so you can continue or discard it. Only <em>Save</em> changes the note itself.</p></details>
+      <details class="hc-more"><summary>Search note text from the shelf</summary><p>the shelf search box only looks at titles and categories. Tap the button beside it to also search inside your notes' text — slower, since every note has to be decrypted, so it switches itself off each time you reopen the app.</p></details>
+      </section>
+      <div class="help-none" style="display:none;">No match — try another word.</div>
     </div>
     <div class="row">
       <button class="cancel" onclick="closeMarkdownHelp()">Close</button>

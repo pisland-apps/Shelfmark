@@ -154,6 +154,14 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.41.0** (2026-09-28) — Markdown help redesigned to be scannable: a sticky
+  search box (all words must match; matching cards open their folded text),
+  a *Quick reference* grid of the most-used syntax, and one colour-edged card
+  per topic in the same style as callout cards (green = writing, blue =
+  inserts, gold = links, red = shortcuts). Secondary paragraphs are folded
+  into *More details*. Still one copy of the content: the docked help clones
+  the overlay, so the search box uses an inline `oninput` + `closest()`
+  (`filterHelp`) instead of ids.
 - **v1.40.0** (2026-09-28) — Editor keyboard aids. **Enter** at the end of a
   list / task / numbered / quote line continues it (`- `, `* `, next number,
   fresh `- [ ] `, `> `); Enter on the empty item ends the list. Not applied
