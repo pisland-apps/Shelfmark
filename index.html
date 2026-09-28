@@ -525,6 +525,7 @@
   .mdbody table{border-collapse:collapse;width:100%;font-size:0.92em;}
   .mdbody table th,.mdbody table td{border:1px solid var(--line);padding:6px 10px;text-align:left;}
   .mdbody table th{background:var(--card);font-weight:600;}
+  .mdbody table td[rowspan],.mdbody table th[rowspan]{vertical-align:middle;}
   .mdbody ul.task-list{list-style:none;padding-left:0;}
   .mdbody .task-item{display:flex;align-items:flex-start;gap:8px;margin:4px 0;}
   .mdbody .task-item label{display:flex;align-items:flex-start;gap:8px;cursor:pointer;}
@@ -967,7 +968,7 @@
     <div class="help-body mdbody">
       <div class="help-search"><input type="search" placeholder="Search help… (e.g. table, bold, tab)" aria-label="Search Markdown help" autocomplete="off" oninput="filterHelp(this)"></div>
       <section class="hcard hc-n"><div class="hc-title"><span class="hc-ic">⚡</span>Quick reference</div>
-      <div class="hq-grid"><div class="hq-item"><code>**bold**</code>Bold</div><div class="hq-item"><code>*italic*</code>Italic</div><div class="hq-item"><code>~~text~~</code>Strikethrough</div><div class="hq-item"><code>==text==</code>Highlight</div><div class="hq-item"><code>## Title</code>Heading</div><div class="hq-item"><code>- item</code>Bullet list</div><div class="hq-item"><code>1. item</code>Numbered list</div><div class="hq-item"><code>- [ ] task</code>Checklist</div><div class="hq-item"><code>&gt; quote</code>Quote</div><div class="hq-item"><code>&gt; [!note]</code>Callout card</div><div class="hq-item"><code>`code`</code>Inline code</div><div class="hq-item"><code>```</code>Code block</div><div class="hq-item"><code>| a | b |</code>Table</div><div class="hq-item"><code>[[Title]]</code>Wiki link</div><div class="hq-item"><code>#tag</code>Tag</div><div class="hq-item"><code>---</code>Divider</div></div>
+      <div class="hq-grid"><div class="hq-item"><code>**bold**</code>Bold</div><div class="hq-item"><code>*italic*</code>Italic</div><div class="hq-item"><code>~~text~~</code>Strikethrough</div><div class="hq-item"><code>==text==</code>Highlight</div><div class="hq-item"><code>## Title</code>Heading</div><div class="hq-item"><code>- item</code>Bullet list</div><div class="hq-item"><code>1. item</code>Numbered list</div><div class="hq-item"><code>- [ ] task</code>Checklist</div><div class="hq-item"><code>&gt; quote</code>Quote</div><div class="hq-item"><code>&gt; [!note]</code>Callout card</div><div class="hq-item"><code>`code`</code>Inline code</div><div class="hq-item"><code>```</code>Code block</div><div class="hq-item"><code>| a | b |</code>Table</div><div class="hq-item"><code>&lt;&lt; &nbsp;^^</code>Merged cell</div><div class="hq-item"><code>[[Title]]</code>Wiki link</div><div class="hq-item"><code>#tag</code>Tag</div><div class="hq-item"><code>---</code>Divider</div></div>
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">✏️</span>Text</div>
             <p><strong>**bold**</strong> · <em>*italic*</em> · <code>`inline code`</code></p>
@@ -1007,6 +1008,7 @@
       <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">▦</span>Tables</div>
             <p><code>| Col | Col |</code> then a <code>| --- | --- |</code> row, then your data rows:</p>
       <div class="md-table-wrap"><table><thead><tr><th>Name</th><th>Age</th></tr></thead><tbody><tr><td>Ann</td><td>29</td></tr></tbody></table></div>
+      <p><b>Merge cells:</b> tap a cell, then <b>Merge →</b> (join it with the cell on its right) or <b>Merge ↓</b> (with the cell below); <b>Unmerge</b> splits it again. Repeat to build bigger blocks. The neighbour has to line up exactly with the cell (same rows for →, same columns for ↓), only the top-left text is kept, and the header row can merge sideways but not down. In the note text a merged-away cell is written <code>&lt;&lt;</code> (merged into the cell on its left) or <code>^^</code> (merged into the cell above), so you can also type them yourself; other Markdown apps will show them as plain text.</p>
       <details class="hc-more"><summary>More details</summary><p>In reading view you can edit a table without opening the editor: tap a cell and type. <b>Enter</b> starts a new line inside the cell; save with <b>Ctrl/⌘+Enter</b>, the <b>✓ Done</b> button, or by tapping elsewhere (<b>Esc</b> cancels, <b>Tab</b> moves to the next cell — in the last cell it adds a row). While a cell is open, the bar under the table adds or deletes a row or column. Use <code>\|</code> for a literal pipe inside a cell. A multi-line cell is stored as <code>line one&lt;br&gt;line two</code> — you can type <code>&lt;br&gt;</code> yourself in the note editor to get the same result.</p></details>
       </section>
       <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">🖼️</span>Images &amp; dividers</div>

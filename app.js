@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.42.0';
+const APP_VERSION = '1.43.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3626,12 +3626,95 @@ function splitTableRow(line){
 // is HTML-escaped before it gets here, so a typed <br> arrives as &lt;br&gt;;
 // turn just that back into a real break and leave every other tag escaped.
 function cellBreaks(c){ return c.replace(/&lt;br\s*\/?&gt;/gi, '<br>'); }
+
+// ---- Merged cells (v1.43.0) ----
+// Pipe tables have no spans, so two marker cells are used (the second is
+// MultiMarkdown's own rowspan marker): a cell that is exactly "<<" is merged
+// into the cell on its LEFT, and one that is exactly "^^" is merged into the
+// cell ABOVE. Following those markers from any cell leads to its "root" (the
+// real cell that holds the text); the root's colspan / rowspan is the extent
+// of everything that leads back to it. "^^" in the header row or the first
+// body row, and "<<" in the first column, have nothing to merge into and are
+// kept as ordinary text. isL / isU test a cell's text, so the same code can
+// run on raw cells (editing) and on HTML-escaped cells (rendering).
+const MERGE_L = '<<', MERGE_U = '^^';
+function tableSpans(grid, isL, isU){
+  const at = (r, c)=>{ const v = grid[r][c]; return v == null ? '' : v; };
+  const find = (r, c)=>{
+    for(let g = 0; g < 2000; g++){
+      const v = at(r, c);
+      if(c > 0 && isL(v)) c--;
+      else if(r >= 2 && c < grid[r - 1].length && isU(v)) r--;
+      else break;
+    }
+    return [r, c];
+  };
+  const info = grid.map(row=>row.map(()=>null));
+  const roots = grid.map((row, r)=>row.map((_, c)=>find(r, c)));
+  grid.forEach((row, r)=>row.forEach((_, c)=>{
+    if(roots[r][c][0] === r && roots[r][c][1] === c) info[r][c] = { covered:false, rs:1, cs:1 };
+  }));
+  grid.forEach((row, r)=>row.forEach((_, c)=>{
+    const [rr, cc] = roots[r][c];
+    if(rr === r && cc === c) return;
+    info[r][c] = { covered:true };
+    const f = info[rr][cc];
+    f.rs = Math.max(f.rs, r - rr + 1);
+    f.cs = Math.max(f.cs, c - cc + 1);
+  }));
+  return info;
+}
+const rawIsL = v => String(v == null ? '' : v).trim() === MERGE_L;
+const rawIsU = v => String(v == null ? '' : v).trim() === MERGE_U;
+const rawHasText = v => { const t = String(v == null ? '' : v).trim(); return !!t && t !== MERGE_L && t !== MERGE_U; };
+// What can the root cell at (m,c) of a padded, rectangular raw matrix do?
+// A neighbour can be merged in only if it is itself an unmerged-into root and
+// lines up exactly (same rows for "right", same columns for "down"); the
+// header row can't be merged downwards into the body.
+function tableMergeState(matrix, m, c){
+  const info = tableSpans(matrix, rawIsL, rawIsU);
+  const f = info[m] && info[m][c];
+  if(!f || f.covered) return null;
+  let canRight = false, canDown = false, right = null, down = null;
+  if(c + f.cs < matrix[m].length){ right = info[m][c + f.cs]; canRight = !!right && !right.covered && right.rs === f.rs; }
+  if(m > 0 && m + f.rs < matrix.length){ down = info[m + f.rs][c]; canDown = !!down && !down.covered && down.cs === f.cs; }
+  return { rs:f.rs, cs:f.cs, merged: f.rs > 1 || f.cs > 1, canRight, canDown, right, down };
+}
+// dir 'R' or 'D'. dry=true only reports whether text would be lost.
+function tableMerge(matrix, m, c, dir, dry){
+  const st = tableMergeState(matrix, m, c);
+  if(!st || !(dir === 'R' ? st.canRight : st.canDown)) return { ok:false, lost:false };
+  const n = dir === 'R' ? st.right : st.down;
+  const r0 = dir === 'R' ? m : m + st.rs, c0 = dir === 'R' ? c + st.cs : c;
+  const lost = rawHasText(matrix[r0][c0]);
+  if(!dry){
+    const rows = dir === 'R' ? st.rs : n.rs, cols = dir === 'R' ? n.cs : st.cs;
+    for(let r = r0; r < r0 + rows; r++)
+      for(let cc = c0; cc < c0 + cols; cc++) matrix[r][cc] = dir === 'R' ? MERGE_L : MERGE_U;
+  }
+  return { ok:true, lost };
+}
+function tableSplit(matrix, m, c){
+  const st = tableMergeState(matrix, m, c);
+  if(!st || !st.merged) return false;
+  for(let r = m; r < m + st.rs; r++)
+    for(let cc = c; cc < c + st.cs; cc++) if(r !== m || cc !== c) matrix[r][cc] = '';
+  return true;
+}
 function tableToHtml(block){
   const lines = block.split('\n').filter(l=>l.trim());
-  const header = splitTableRow(lines[0]).map(cellBreaks);
-  const rows = lines.slice(2).map(splitTableRow).map(r=>r.map(cellBreaks));
-  const thead = `<tr>${header.map(h=>`<th>${h}</th>`).join('')}</tr>`;
-  const tbody = rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('');
+  const grid = [splitTableRow(lines[0]), ...lines.slice(2).map(splitTableRow)];
+  // rendering runs on HTML-escaped text, where "<<" has become "&lt;&lt;"
+  const info = tableSpans(grid, v=>v === '&lt;&lt;', v=>v === '^^');
+  const rowHtml = r => grid[r].map((c, ci)=>{
+    const f = info[r][ci];
+    if(f.covered) return '';
+    const tag = r === 0 ? 'th' : 'td';
+    const span = (f.cs > 1 ? ` colspan="${f.cs}"` : '') + (f.rs > 1 ? ` rowspan="${f.rs}"` : '');
+    return `<${tag}${span} data-r="${r}" data-c="${ci}">${cellBreaks(c)}</${tag}>`;
+  }).join('');
+  const thead = `<tr>${rowHtml(0)}</tr>`;
+  const tbody = grid.slice(1).map((_, i)=>`<tr>${rowHtml(i + 1)}</tr>`).join('');
   return `<div class="md-table-wrap"><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
 }
 
@@ -4074,24 +4157,64 @@ async function applyTableEdit(edit, op){
       if(curText !== edit.loaded) matrix[edit.m][edit.c] = curText.split('\n').join('<br>');
       let cancelled = false;
       if(op.type === 'rowAfter'){
-        matrix.splice(edit.m + 1, 0, new Array(ncols).fill(''));
+        // A merged cell that continues into the row below keeps continuing
+        // through the new row ("^^" / "<<" are copied down), so inserting a
+        // row inside a merged block never tears it apart.
+        const below = matrix[edit.m + 1];
+        const nr = [];
+        for(let cc = 0; cc < ncols; cc++){
+          const bv = below && edit.m >= 1 ? below[cc] : '';
+          const prev = nr[cc - 1];
+          nr[cc] = rawIsU(bv) ? MERGE_U : (rawIsL(bv) && cc > 0 && (prev === MERGE_U || prev === MERGE_L) ? MERGE_L : '');
+        }
+        matrix.splice(edit.m + 1, 0, nr);
         target = { m: edit.m + 1, c: edit.c };
       } else if(op.type === 'colAfter'){
-        matrix.forEach(r=>{ pad(r, ncols); r.splice(edit.c + 1, 0, ''); });
+        const nc = [];
+        matrix.forEach((r, ri)=>{
+          pad(r, ncols);
+          const rv = r[edit.c + 1], prev = nc[ri - 1];
+          nc[ri] = rawIsL(rv) ? MERGE_L : (rawIsU(rv) && ri >= 2 && (prev === MERGE_L || prev === MERGE_U) ? MERGE_U : '');
+        });
+        matrix.forEach((r, ri)=>r.splice(edit.c + 1, 0, nc[ri]));
         pad(sep, ncols); sep.splice(edit.c + 1, 0, '---');
         target = { m: edit.m, c: edit.c + 1 };
       } else if(op.type === 'rowDel'){
-        const has = matrix[edit.m].some(v=>String(v).trim());
+        const has = matrix[edit.m].some(rawHasText);
         if(edit.m === 0 || (has && !confirm('Delete this row?'))) cancelled = true;
-        else { matrix.splice(edit.m, 1); target = { m: Math.min(edit.m, matrix.length - 1), c: edit.c }; }
+        else {
+          // The row below may be merged INTO this one; hand the text (or the
+          // "<<" of a wider merge) down so that merged block survives.
+          const o = matrix[edit.m], n = matrix[edit.m + 1];
+          if(n) for(let cc = 0; cc < n.length; cc++){
+            if(rawIsU(n[cc]) && !rawIsU(o[cc])) n[cc] = rawIsL(o[cc]) ? MERGE_L : (o[cc] == null ? '' : o[cc]);
+          }
+          matrix.splice(edit.m, 1); target = { m: Math.min(edit.m, matrix.length - 1), c: edit.c };
+        }
       } else if(op.type === 'colDel'){
-        const has = matrix.some(r=>String(r[edit.c] || '').trim());
+        const has = matrix.some(r=>rawHasText(r[edit.c]));
         if(ncols <= 1 || (has && !confirm('Delete this column?'))) cancelled = true;
         else {
-          matrix.forEach(r=>{ pad(r, ncols); r.splice(edit.c, 1); });
+          matrix.forEach(r=>{
+            pad(r, ncols);
+            const o = r[edit.c], n = r[edit.c + 1];
+            if(rawIsL(n) && !rawIsL(o)) r[edit.c + 1] = rawIsU(o) ? MERGE_U : (o == null ? '' : o);
+            r.splice(edit.c, 1);
+          });
           pad(sep, ncols); sep.splice(edit.c, 1);
           target = { m: edit.m, c: Math.min(edit.c, ncols - 2) };
         }
+      } else if(op.type === 'mergeR' || op.type === 'mergeD' || op.type === 'split'){
+        const nw = Math.max(ncols, ...matrix.map(r=>r.length));
+        matrix.forEach(r=>pad(r, nw));
+        if(op.type === 'split') tableSplit(matrix, edit.m, edit.c);
+        else {
+          const dir = op.type === 'mergeR' ? 'R' : 'D';
+          const dry = tableMerge(matrix, edit.m, edit.c, dir, true);
+          if(!dry.ok) alert("These cells can't be merged: the neighbour has to line up exactly with this cell (same rows / columns), and the header row can't merge downwards.");
+          else if(!dry.lost || confirm("Merging keeps only this cell's text and discards the other cell's text. Continue?")) tableMerge(matrix, edit.m, edit.c, dir, false);
+        }
+        target = { m: edit.m, c: edit.c };
       } else if(op.type === 'move'){
         target = op.target;
       }
@@ -4130,8 +4253,14 @@ async function applyTableEdit(edit, op){
 function openTableCellAt(pos){
   const block = document.querySelector(`.mdblock[data-idx="${pos.blockIdx}"]`);
   const table = block && block.querySelector('table');
-  const row = table && table.rows[pos.m];
-  const cell = row && row.cells[pos.c];
+  // Cells carry their logical position (data-r / data-c) because merged cells
+  // make DOM row/cell indexes differ from it. A target inside a merged block
+  // resolves to the nearest cell to its left in that row.
+  let cell = table && table.querySelector(`[data-r="${pos.m}"][data-c="${pos.c}"]`);
+  if(!cell && table){
+    const same = [...table.querySelectorAll(`[data-r="${pos.m}"]`)].filter(x=>Number(x.dataset.c) <= pos.c);
+    cell = same[same.length - 1] || null;
+  }
   if(cell) startTableCellEdit(cell);
 }
 function startTableCellEdit(td){
@@ -4140,7 +4269,7 @@ function startTableCellEdit(td){
   if(!block) return;
   if(td.querySelector('img')){ alert('This cell holds a picture — use the pencil button to edit it as text.'); return; }
   const blockIdx = Number(block.dataset.idx);
-  const m = td.parentElement.rowIndex, c = td.cellIndex;
+  const m = Number(td.dataset.r), c = Number(td.dataset.c);
   const model = readTableModel(blockIdx);
   const row = model && (m === 0 ? model.header : model.rows[m - 1]);
   if(!row){ alert("Couldn't match this table to the note text — use the pencil button to edit it as text."); return; }
@@ -4174,16 +4303,14 @@ function startTableCellEdit(td){
     else if(e.key === 'Escape'){ e.preventDefault(); cancelTableEdit(edit); }
     else if(e.key === 'Tab'){
       e.preventDefault();
-      const table = td.closest('table'), tr = td.parentElement;
+      const cellsInOrder = [...td.closest('table').querySelectorAll('th, td')];
+      const i = cellsInOrder.indexOf(td);
+      const at = x=>({ m: Number(x.dataset.r), c: Number(x.dataset.c) });
       let t = null, type = 'move';
       if(!e.shiftKey){
-        if(c + 1 < tr.cells.length) t = { m, c: c + 1 };
-        else if(m + 1 < table.rows.length) t = { m: m + 1, c: 0 };
+        if(i + 1 < cellsInOrder.length) t = at(cellsInOrder[i + 1]);
         else { type = 'rowAfter'; t = { m: m + 1, c: 0 }; }
-      } else {
-        if(c > 0) t = { m, c: c - 1 };
-        else if(m > 0) t = { m: m - 1, c: table.rows[m - 1].cells.length - 1 };
-      }
+      } else if(i > 0) t = at(cellsInOrder[i - 1]);
       applyTableEdit(edit, t ? { type, target: t } : { type:'none' });
     }
   };
@@ -4194,8 +4321,12 @@ function startTableCellEdit(td){
   const bar = document.createElement('div');
   bar.id = 'tableBar';
   bar.className = 'table-bar';
+  const nw = Math.max(model.header.length, model.sep.length, ...model.rows.map(r=>r.length));
+  const grid = [model.header, ...model.rows].map(r=>{ const x = r.slice(); while(x.length < nw) x.push(''); return x; });
+  const ms = tableMergeState(grid, m, c) || { canRight:false, canDown:false, merged:false };
   const defs = [['none','\u2713 Done', false], ['rowAfter','+ Row below', false], ['colAfter','+ Col right', false],
-                ['rowDel','Delete row', m === 0], ['colDel','Delete col', table.rows[0].cells.length <= 1]];
+                ['rowDel','Delete row', m === 0], ['colDel','Delete col', nw <= 1],
+                ['mergeR','Merge \u2192', !ms.canRight], ['mergeD','Merge \u2193', !ms.canDown], ['split','Unmerge', !ms.merged]];
   defs.forEach(([type, label, off])=>{
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = label; b.disabled = off;
@@ -4222,7 +4353,7 @@ function wireTableEdit(container){
       // one; remember where to go next.
       if(tableEdit && tableEdit.td !== cell && !tableBarPress){
         const b = cell.closest('.mdblock');
-        pendingTableEdit = { blockIdx: Number(b.dataset.idx), m: cell.parentElement.rowIndex, c: cell.cellIndex };
+        pendingTableEdit = { blockIdx: Number(b.dataset.idx), m: Number(cell.dataset.r), c: Number(cell.dataset.c) };
       }
     };
     cell.onclick = (e)=>{

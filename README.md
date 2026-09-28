@@ -154,6 +154,21 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.43.0** (2026-09-28) — Merged table cells (Excel-style). While a cell is
+  open, the table bar has **Merge →**, **Merge ↓** and **Unmerge**. Pipe
+  tables have no spans, so the text uses two marker cells: `<<` = merged into
+  the cell on its left, `^^` = merged into the cell above (`^^` is
+  MultiMarkdown's rowspan marker). `tableSpans` follows the markers to each
+  cell's root and derives colspan/rowspan from the extent, so any rectangular
+  block works; `^^` in the header or first body row and `<<` in the first
+  column are kept as plain text. A merge only proceeds when the neighbour
+  lines up exactly (same rows / columns) and asks before discarding its text;
+  the header row merges sideways only. Because merges break the
+  DOM-index = logical-index assumption, table cells now carry `data-r` /
+  `data-c`, and Tab follows reading order. Insert/delete row/column are merge-
+  aware (markers are copied into an inserted row/column that lies inside a
+  merged block; deleting a block's root row/column hands its text to the next
+  one). Help updated (Tables card + Quick reference).
 - **v1.42.0** (2026-09-28) — Multi-line table cells. In reading-view cell
   editing, **Enter** now inserts a line break in the cell (it used to save);
   save with Ctrl/Cmd+Enter, the new **✓ Done** button in the table bar, or by
