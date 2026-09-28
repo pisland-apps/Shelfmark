@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.41.0';
+const APP_VERSION = '1.42.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3621,10 +3621,15 @@ function splitTableRow(line){
   if(cells.length && cells[cells.length-1].trim() === '') cells.pop();
   return cells.map(c=>c.trim());
 }
+// A table cell can't hold a real line break in pipe-table syntax, so a
+// multi-line cell is stored as "line one<br>line two" (v1.42.0). The note text
+// is HTML-escaped before it gets here, so a typed <br> arrives as &lt;br&gt;;
+// turn just that back into a real break and leave every other tag escaped.
+function cellBreaks(c){ return c.replace(/&lt;br\s*\/?&gt;/gi, '<br>'); }
 function tableToHtml(block){
   const lines = block.split('\n').filter(l=>l.trim());
-  const header = splitTableRow(lines[0]);
-  const rows = lines.slice(2).map(splitTableRow);
+  const header = splitTableRow(lines[0]).map(cellBreaks);
+  const rows = lines.slice(2).map(splitTableRow).map(r=>r.map(cellBreaks));
   const thead = `<tr>${header.map(h=>`<th>${h}</th>`).join('')}</tr>`;
   const tbody = rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('');
   return `<div class="md-table-wrap"><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
@@ -3944,6 +3949,51 @@ let tableEdit = null;          // {td, blockIdx, m, c, orig, done} — the open 
 let pendingTableEdit = null;   // cell to open once the current save lands (user tapped another cell)
 let tableBusy = false;
 let tableBarPress = false;     // a bar button is being pressed: its blur must not save the cell yet
+// Multi-line cells (v1.42.0). Editing shows the stored "<br>" as real line
+// breaks; on save the lines are joined back with "<br>". tableCellText reads
+// the editing cell by walking its nodes (text, <br>, browser-made <div>s)
+// instead of using textContent, which would silently drop breaks.
+function cellRawToEdit(raw){ return String(raw == null ? '' : raw).replace(/<br\s*\/?>/gi, '\n'); }
+function tableCellText(td){
+  let out = '';
+  (function walk(n){
+    n.childNodes.forEach(ch=>{
+      if(ch.nodeType === 3) out += ch.nodeValue;
+      else if(ch.nodeName === 'BR') out += '\n';
+      else if(ch.nodeType === 1){
+        if(/^(DIV|P)$/.test(ch.nodeName) && out && !out.endsWith('\n')) out += '\n';
+        walk(ch);
+      }
+    });
+  })(td);
+  return out.replace(/\u200b/g, '').replace(/\r\n?/g, '\n').split('\n').map(l=>l.trim()).join('\n').trim();
+}
+// Enter inside a cell: insert a line break at the caret. A break at the very
+// end of a pre-wrap block isn't drawn by browsers, so in that case a zero-width
+// space goes after it to give the caret a visible new line (stripped on read).
+function cellInsertNewline(td){
+  const sel = window.getSelection();
+  if(!sel.rangeCount) return;
+  const r = sel.getRangeAt(0);
+  const tail = document.createRange();
+  tail.selectNodeContents(td);
+  tail.setStart(r.endContainer, r.endOffset);
+  const atEnd = tail.toString().replace(/\u200b/g, '') === '';
+  r.deleteContents();
+  const nl = document.createTextNode('\n');
+  r.insertNode(nl);
+  let caretNode = nl;
+  if(atEnd){
+    const z = document.createTextNode('\u200b');
+    nl.after(z);
+  }
+  const nr = document.createRange();
+  nr.setStartAfter(caretNode); nr.collapse(true);
+  sel.removeAllRanges(); sel.addRange(nr);
+  // keep the new line in view inside a scrolled wrapper
+  const b = td.getBoundingClientRect();
+  if(b.bottom > window.innerHeight - 8) td.scrollIntoView({ block:'nearest' });
+}
 function tableArraysEqual(a, b){ return a.length === b.length && a.every((v,i)=>v === b[i]); }
 function serializeTableRow(cells){
   return '| ' + cells.map(c=>String(c).replace(/\r?\n/g,' ').replace(/\|/g,'\\|').trim()).join(' | ') + ' |';
@@ -4018,9 +4068,10 @@ async function applyTableEdit(edit, op){
       const sep = model.sep.slice();
       const ncols = Math.max(model.header.length, sep.length);
       const pad = (r, n)=>{ while(r.length < n) r.push(''); };
-      const newText = edit.td.textContent.replace(/\r?\n/g, ' ').trim();
       pad(matrix[edit.m], edit.c + 1);
-      matrix[edit.m][edit.c] = newText;
+      // Untouched cell → keep its stored text byte-for-byte (e.g. "<br/>" stays).
+      const curText = tableCellText(edit.td);
+      if(curText !== edit.loaded) matrix[edit.m][edit.c] = curText.split('\n').join('<br>');
       let cancelled = false;
       if(op.type === 'rowAfter'){
         matrix.splice(edit.m + 1, 0, new Array(ncols).fill(''));
@@ -4097,15 +4148,29 @@ function startTableCellEdit(td){
   td.classList.add('editing');
   try{ td.contentEditable = 'plaintext-only'; }catch(e){}
   if(td.contentEditable !== 'plaintext-only') td.contentEditable = 'true';
-  td.textContent = row[c] != null ? row[c] : '';
+  td.textContent = cellRawToEdit(row[c]);
+  edit.loaded = tableCellText(td);
   td.onpaste = (e)=>{
     e.preventDefault();
-    const t = (e.clipboardData || window.clipboardData).getData('text').replace(/\r?\n/g, ' ');
-    document.execCommand('insertText', false, t);
+    const t = (e.clipboardData || window.clipboardData).getData('text').replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+    if(!t.includes('\n')){ document.execCommand('insertText', false, t); return; }
+    // multi-line paste: each line becomes a line in the cell
+    const sel = window.getSelection();
+    if(!sel.rangeCount) return;
+    const r = sel.getRangeAt(0); r.deleteContents();
+    const node = document.createTextNode(t); r.insertNode(node);
+    const nr = document.createRange(); nr.setStartAfter(node); nr.collapse(true);
+    sel.removeAllRanges(); sel.addRange(nr);
   };
   td.onblur = ()=>{ if(!tableBarPress) applyTableEdit(edit, { type:'none' }); };
   td.onkeydown = (e)=>{
-    if(e.key === 'Enter'){ e.preventDefault(); applyTableEdit(edit, { type:'none' }); }
+    // Enter = new line inside the cell (v1.42.0); Ctrl/Cmd+Enter, the Done
+    // button, or tapping elsewhere saves. (IME composition Enter is left alone.)
+    if(e.key === 'Enter' && !e.isComposing){
+      e.preventDefault();
+      if(e.ctrlKey || e.metaKey) applyTableEdit(edit, { type:'none' });
+      else cellInsertNewline(td);
+    }
     else if(e.key === 'Escape'){ e.preventDefault(); cancelTableEdit(edit); }
     else if(e.key === 'Tab'){
       e.preventDefault();
@@ -4129,7 +4194,7 @@ function startTableCellEdit(td){
   const bar = document.createElement('div');
   bar.id = 'tableBar';
   bar.className = 'table-bar';
-  const defs = [['rowAfter','+ Row below', false], ['colAfter','+ Col right', false],
+  const defs = [['none','\u2713 Done', false], ['rowAfter','+ Row below', false], ['colAfter','+ Col right', false],
                 ['rowDel','Delete row', m === 0], ['colDel','Delete col', table.rows[0].cells.length <= 1]];
   defs.forEach(([type, label, off])=>{
     const b = document.createElement('button');

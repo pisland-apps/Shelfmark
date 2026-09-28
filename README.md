@@ -154,6 +154,16 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.42.0** (2026-09-28) — Multi-line table cells. In reading-view cell
+  editing, **Enter** now inserts a line break in the cell (it used to save);
+  save with Ctrl/Cmd+Enter, the new **✓ Done** button in the table bar, or by
+  tapping elsewhere. Pipe tables can't hold a real newline, so a multi-line
+  cell is stored as `one<br>two`; `tableToHtml` turns an escaped `&lt;br&gt;`
+  (only that tag) back into a real break, so the same text also works when
+  typed in the note editor. The cell is read back by walking its nodes
+  (`tableCellText`), an end-of-cell break gets a zero-width space so the new
+  line is visible (stripped on save), and an untouched cell keeps its stored
+  text byte-for-byte. Multi-line paste keeps its lines. Help text updated.
 - **v1.41.0** (2026-09-28) — Markdown help redesigned to be scannable: a sticky
   search box (all words must match; matching cards open their folded text),
   a *Quick reference* grid of the most-used syntax, and one colour-edged card
