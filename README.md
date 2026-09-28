@@ -163,6 +163,11 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.50.1** (2026-09-28) — Fix: a `>` quote/callout written directly under
+  another line (no blank line, e.g. right after `![[file.zip]]`) showed its
+  raw `>` markers. It now renders as a quote like in Obsidian, and `- ` /
+  `1. ` lines inside a quote become real lists.
+
 - **v1.50.0** (2026-09-28) — Notes folder (Obsidian-style). Ctrl+K → "Open a
   notes folder…" and pick a folder/vault: every `.md` inside (subfolders
   become categories; dot-folders are skipped) appears as a linked note.
