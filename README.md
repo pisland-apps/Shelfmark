@@ -163,6 +163,9 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.49.1** (2026-09-28) — Passphrase/passcode fields in dialogs (export,
+  import, set/remove passcode) now use the same rounded style as the lock screen.
+
 - **v1.49.0** (2026-09-28) — Backups now say whose shelf they came from.
   Each shelf gets a random `shelfId` (made once, kept in the encrypted
   prefs) and an optional name (Export dialog, or Ctrl+K → "Shelf name…").

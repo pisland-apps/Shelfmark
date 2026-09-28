@@ -186,6 +186,15 @@
     width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line);
     background:var(--paper);color:var(--ink);font-size:15px;font-family:inherit;
   }
+  /* Passphrase / passcode fields inside dialogs: match the lock-screen input */
+  .sheet input[type=password]{
+    display:block;width:100%;padding:13px 14px;border-radius:9px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink);font-size:16px;font-family:inherit;
+    margin-bottom:12px;box-sizing:border-box;outline:none;
+  }
+  .sheet input[type=password]::placeholder{color:var(--ink-soft);opacity:.75;}
+  .sheet input[type=password]:focus,
+  .lock-card input[type=password]:focus{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink);}
   .filebtn{
     display:block;width:100%;padding:12px;border:1px dashed var(--line);border-radius:8px;
     text-align:center;color:var(--ink-soft);font-size:14px;background:transparent;
