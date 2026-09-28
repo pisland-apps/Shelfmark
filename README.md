@@ -142,6 +142,12 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.29.1** (2026-09-28) — Help-only patch: the ? formatting-help overlay
+  gained a "Tips: finding things" section covering find & replace in a note
+  (v1.29.0) and the shelf's deep-search toggle (v1.28.0), which had shipped
+  without being mentioned there. Static HTML in index.html only; no logic
+  changes.
+
 - **v1.29.0** (2026-09-28) — Find & replace inside a note. Two modes on one
   bar, because "what you read" and "what you edit" are different strings in
   markdown. Reading view searches the RENDERED text (a hit never lands on
