@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.50.1';
+const APP_VERSION = '1.50.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -4210,42 +4210,6 @@ function mdBrLines(text){
     return em ? `<span class="md-ind" style="width:${em}em"></span>` + l.replace(/^[ \t]+/, '') : l;
   }).join('<br>');
 }
-// A quote/callout written without a blank line before it (e.g. right after an
-// ![[embed]] or a paragraph line) used to swallow its own "> " markers because
-// the whole blank-line block wasn't 100% quote lines. Split such a block into
-// runs of quote / non-quote lines so each renders on its own (v1.50.1).
-function mdQuoteSegments(block){
-  if(/^<(h[1-6]|pre)\b|<(pre|table|details)\b|class="code-block"/.test(block)) return null;
-  const lines = block.split('\n');
-  const isQ = l=>/^\s*&gt;/.test(l);
-  if(!lines.some(isQ) || !lines.some(l=>l.trim() && !isQ(l))) return null;
-  if(lines.some(l=>!isQ(l) && /^\s*[-*]\s+\[[ xX]\]/.test(l))) return null; // keep task-checkbox line indexes intact
-  const runs = []; let cur = null;
-  for(const l of lines){
-    if(!l.trim() && cur){ cur.lines.push(l); continue; }
-    const q = isQ(l);
-    if(!cur || cur.q !== q){ cur = { q, lines: [] }; runs.push(cur); }
-    cur.lines.push(l);
-  }
-  return runs.map(r=>r.lines.join('\n')).filter(t=>t.trim());
-}
-// Quote body (marker already stripped): "- " / "1. " lines become real lists.
-function mdQuoteLines(lines){
-  const out = []; let i = 0;
-  while(i < lines.length){
-    const ul = /^\s*[-*]\s+/, ol = /^\s*\d+\.\s+/;
-    const re = ul.test(lines[i]) ? ul : ol.test(lines[i]) ? ol : null;
-    if(re){
-      const tag = re === ul ? 'ul' : 'ol'; let items = '';
-      while(i < lines.length && re.test(lines[i])){ items += `<li>${lines[i].replace(re,'')}</li>`; i++; }
-      out.push(`<${tag}>${items}</${tag}>`);
-    } else {
-      const txt = []; while(i < lines.length && !ul.test(lines[i]) && !ol.test(lines[i])) txt.push(lines[i++]);
-      out.push(txt.join('<br>'));
-    }
-  }
-  return out.join('');
-}
 function mdLiOpen(line, cls){
   const em = mdIndentEm(line);
   return `<li${cls ? ` class="${cls}"` : ''}${em ? ` style="margin-left:${em}em"` : ''}>`;
@@ -4435,11 +4399,9 @@ function renderMarkdown(src, linkTypes){
   // which would have mangled ** / ` / [..](..) if they'd appeared inside a
   // code sample — has already run.
   codeBlocks.forEach((html, i)=>{ s = s.replace(`\u0000CODEBLOCK${i}\u0000`, html); });
-  const blockHtml = (block, idx)=>{
+  return s.split(/\n{2,}/).map((block,idx)=>{
     let html;
-    const segs = mdQuoteSegments(block);
-    if(segs) html = segs.map(t=>blockHtml(t, idx)).join('');
-    else if(/^<h[1-6]/.test(block)){
+    if(/^<h[1-6]/.test(block)){
       // A heading with text on the lines right under it (no blank line) is
       // ONE block. Split it into the heading row and a .heading-rest wrapper
       // so folding the heading can hide that text too (v1.37.1). Blocks are
@@ -4477,7 +4439,7 @@ function renderMarkdown(src, linkTypes){
         const info = CALLOUT_INFO[kind] || { icon:'&#128204;', label: kind.charAt(0).toUpperCase()+kind.slice(1) };
         const fold = calloutMatch[2];  // '' = static card, '-' = foldable starting closed, '+' = foldable starting open
         const titleText = calloutMatch[3].trim() || info.label;
-        const bodyHtml = mdQuoteLines(lines.slice(1));
+        const bodyHtml = lines.slice(1).join('<br>');
         const cls = `callout callout-${/^(note|warning|idea)$/.test(kind) ? kind : 'other'}`;
         const titleInner = `<span class="callout-icon">${info.icon}</span>${titleText}`;
         // Foldable callout (Obsidian's `[!type]-` / `[!type]+`): a native
@@ -4496,7 +4458,7 @@ function renderMarkdown(src, linkTypes){
                + `</div>`;
         }
       } else {
-        html = `<blockquote>${mdQuoteLines(lines)}</blockquote>`;
+        html = `<blockquote>${lines.join('<br>')}</blockquote>`;
       }
     }
     else if(/^\s*\d+\.\s+/.test(block)){
@@ -4524,10 +4486,6 @@ function renderMarkdown(src, linkTypes){
       }).join('');
       html = `<ul${isTaskList ? ' class="task-list"' : ''}>${items}</ul>`;
     } else html = `<p>${mdBrLines(block)}</p>`;
-    return html;
-  };
-  return s.split(/\n{2,}/).map((block,idx)=>{
-    const html = blockHtml(block, idx);
     return `<div class="mdblock" data-idx="${idx}"><button class="bm-btn" onclick="toggleBookmark(${idx})" title="Bookmark this spot">&#128278;</button>${html}</div>`;
   }).join('\n');
 }
