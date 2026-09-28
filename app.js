@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.46.2';
+const APP_VERSION = '1.47.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -76,16 +76,39 @@ function txSec(mode){ return db.transaction('security', mode).objectStore('secur
 function getAuth(){ return new Promise(res=>{ const r = txSec('readonly').get('auth'); r.onsuccess=()=>res(r.result||null); r.onerror=()=>res(null); }); }
 function putAuth(rec){ return new Promise((res,rej)=>{ const r = txSec('readwrite').put(rec); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
 
-async function createPasscode(passcode){
+// Two storage modes, recorded in the 'auth' record:
+//   'passcode' (default; older records have no `mode` field and are this) —
+//       key = PBKDF2(passcode), only ever held in memory.
+//   'device'   (v1.47.0, "no passcode") — a random non-extractable AES-256 key
+//       is generated once and kept in IndexedDB next to the data, so the app
+//       opens straight to the shelf. Everything is still AES-GCM encrypted at
+//       rest, but anyone who can open this browser profile can open the shelf.
+let authMode = 'passcode';
+async function buildPasscodeAuth(passcode){
   const salt = randomBytes(16);
   const key = await deriveKey(passcode, salt, PBKDF2_ITERATIONS);
   const { iv, cipher } = await aesEncrypt(key, new TextEncoder().encode('shelfmark-ok'));
-  await putAuth({ id:'auth', salt: buf2b64(salt), iterations: PBKDF2_ITERATIONS, verifierIv: buf2b64(iv), verifierCipher: buf2b64(cipher) });
+  return { key, rec:{ id:'auth', mode:'passcode', salt: buf2b64(salt), iterations: PBKDF2_ITERATIONS, verifierIv: buf2b64(iv), verifierCipher: buf2b64(cipher) } };
+}
+async function createPasscode(passcode){
+  const { key, rec } = await buildPasscodeAuth(passcode);
+  await putAuth(rec);
   cryptoKey = key;
+  authMode = 'passcode';
+}
+async function buildDeviceAuth(){
+  const key = await crypto.subtle.generateKey({ name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
+  return { key, rec:{ id:'auth', mode:'device', key } };
+}
+async function createDeviceKeyMode(){
+  const { key, rec } = await buildDeviceAuth();
+  await putAuth(rec); // rejects if this browser can't store a CryptoKey
+  cryptoKey = key;
+  authMode = 'device';
 }
 async function verifyPasscode(passcode){
   const auth = await getAuth();
-  if(!auth) return false;
+  if(!auth || auth.mode === 'device') return false;
   try{
     const salt = b642buf(auth.salt);
     const key = await deriveKey(passcode, salt, auth.iterations);
@@ -105,6 +128,25 @@ async function wipeAllData(){
 async function initLockScreen(){
   const auth = await getAuth();
   const confirmInput = document.getElementById('passcodeConfirm');
+  const skipBtn = document.getElementById('lockSkipBtn');
+  if(skipBtn) skipBtn.style.display = auth ? 'none' : 'inline-block';
+  if(auth && auth.mode === 'device'){
+    if(auth.key){
+      cryptoKey = auth.key;
+      authMode = 'device';
+      await unlockApp();
+      return;
+    }
+    // Device-key mode but the browser handed back no key (storage partly
+    // cleared, or an old browser) — nothing can be decrypted, so say so.
+    document.getElementById('lockTitle').textContent = 'Device key unavailable';
+    document.getElementById('lockSub').textContent = 'This shelf was saved without a passcode, but this browser no longer has its key, so it can\'t be opened. You can erase it below and start over, or restore from an encrypted export.';
+    document.getElementById('passcodeInput').style.display = 'none';
+    confirmInput.style.display = 'none';
+    document.getElementById('lockBtn').style.display = 'none';
+    document.querySelector('.lock-reset').textContent = 'Erase this shelf';
+    return;
+  }
   if(!auth){
     document.getElementById('lockTitle').textContent = 'Set a passcode';
     document.getElementById('lockSub').textContent = 'This encrypts everything you add to your shelf. There is no recovery — write it down somewhere safe.';
@@ -115,6 +157,18 @@ async function initLockScreen(){
     confirmInput.style.display = 'none';
   }
   document.getElementById('passcodeInput').focus();
+}
+async function onSkipPasscode(){
+  const errEl = document.getElementById('lockError');
+  errEl.textContent = '';
+  if(!confirm('Use Shelfmark without a passcode?\n\nYour shelf will open straight away, with no lock screen. It is still stored encrypted, but anyone who can open this browser on this device can read it. You can set a passcode later from the command palette (Ctrl+K).')) return;
+  try{
+    await createDeviceKeyMode();
+  }catch(err){
+    errEl.textContent = "This browser can't store a device key — please set a passcode instead.";
+    return;
+  }
+  await unlockApp();
 }
 async function onLockSubmit(){
   const pass = document.getElementById('passcodeInput').value;
@@ -153,6 +207,110 @@ async function unlockApp(){
   // say no; none of that should block or interrupt using the app.
   if(navigator.storage && navigator.storage.persist){
     navigator.storage.persist().catch(()=>{});
+  }
+}
+
+
+// ---- Switching between passcode and no-passcode (v1.47.0) -------------------
+// Every item, draft and the prefs record are encrypted with the current key, so
+// changing mode means decrypting each with the old key and re-encrypting with
+// the new one. All new ciphertext is built in memory first and then written in
+// ONE IndexedDB transaction together with the new auth record — so if anything
+// fails (wrong data, out of memory, quota) nothing on disk has changed, and the
+// old passcode/key keeps working.
+function getAllRawStrict(){
+  return new Promise((res,rej)=>{ const r = tx('readonly').getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); });
+}
+async function reencryptEverything(newKey, newAuthRec, onProgress){
+  const oldKey = cryptoKey;
+  return serialized(async ()=>{
+    const raws = await getAllRawStrict();
+    const prefsRec = await new Promise((res,rej)=>{ const r = txS('readonly').get('prefs'); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error); });
+    const BLOBS = [['metaIv','metaCipher'],['contentIv','contentCipher'],['draftIv','draftCipher']];
+    const out = [];
+    for(let i=0;i<raws.length;i++){
+      const rec = raws[i];
+      const n = { ...rec };
+      for(const [ivF, ciF] of BLOBS){
+        if(!rec[ciF]) continue;
+        const plain = await aesDecrypt(oldKey, rec[ivF], rec[ciF]);
+        const enc = await aesEncrypt(newKey, plain);
+        n[ivF] = enc.iv; n[ciF] = enc.cipher;
+      }
+      out.push(n);
+      raws[i] = null; // let the old ciphertext be collected as we go
+      if(onProgress) onProgress(i+1, out.length + (raws.length - i - 1));
+    }
+    let newPrefs = null;
+    if(prefsRec){
+      const plain = await aesDecrypt(oldKey, prefsRec.iv, prefsRec.cipher);
+      const enc = await aesEncrypt(newKey, plain);
+      newPrefs = { id:'prefs', iv: enc.iv, cipher: enc.cipher };
+    }
+    await new Promise((res,rej)=>{
+      const t = db.transaction(['items','settings','security'],'readwrite');
+      const items = t.objectStore('items');
+      out.forEach(r=>items.put(r));
+      if(newPrefs) t.objectStore('settings').put(newPrefs);
+      t.objectStore('security').put(newAuthRec);
+      t.oncomplete = ()=>res();
+      t.onerror = ()=>rej(t.error);
+      t.onabort = ()=>rej(t.error || new Error('Write was aborted'));
+    });
+    cryptoKey = newKey;
+  });
+}
+
+let authModalMode = null; // 'set' (device -> passcode) | 'remove' (passcode -> device)
+function openAuthModal(mode){
+  authModalMode = mode;
+  const isSet = mode === 'set';
+  document.getElementById('authTitle').textContent = isSet ? 'Set a passcode' : 'Remove passcode';
+  document.getElementById('authNote').textContent = isSet
+    ? 'Everything on your shelf will be re-encrypted with a key made from this passcode, and the lock screen will appear every time you open Shelfmark. There is no recovery — write it down somewhere safe.'
+    : 'Your shelf will open without a lock screen. It stays encrypted on disk, but anyone who can open this browser on this device will be able to read it. Enter your current passcode to confirm.';
+  document.getElementById('authPass1').placeholder = isSet ? 'New passcode' : 'Current passcode';
+  document.getElementById('authPass2').style.display = isSet ? 'block' : 'none';
+  document.getElementById('authPass1').value = '';
+  document.getElementById('authPass2').value = '';
+  document.getElementById('authError').textContent = '';
+  document.getElementById('authGoBtn').textContent = isSet ? 'Set passcode' : 'Remove passcode';
+  document.getElementById('authOverlay').style.display = 'flex';
+  setTimeout(()=>document.getElementById('authPass1').focus(), 0);
+}
+function closeAuthModal(){ document.getElementById('authOverlay').style.display = 'none'; authModalMode = null; }
+async function doAuthChange(){
+  const errEl = document.getElementById('authError');
+  errEl.textContent = '';
+  const p1 = document.getElementById('authPass1').value;
+  const p2 = document.getElementById('authPass2').value;
+  let newKey, newRec;
+  try{
+    if(authModalMode === 'set'){
+      if(p1.length < 4){ errEl.textContent = 'Use at least 4 characters.'; return; }
+      if(p1 !== p2){ errEl.textContent = "Passcodes don't match."; return; }
+      const b = await buildPasscodeAuth(p1); newKey = b.key; newRec = b.rec;
+    } else if(authModalMode === 'remove'){
+      if(!(await verifyPasscode(p1))){ errEl.textContent = 'Incorrect passcode.'; return; }
+      const b = await buildDeviceAuth(); newKey = b.key; newRec = b.rec;
+    } else return;
+  }catch(err){ errEl.textContent = 'Something went wrong: ' + (err && err.message || err); return; }
+
+  const targetMode = authModalMode === 'set' ? 'passcode' : 'device';
+  const busy = document.getElementById('busyOverlay');
+  const busyText = document.getElementById('busyText');
+  busyText.textContent = 'Re-encrypting your shelf\u2026';
+  busy.style.display = 'flex';
+  try{
+    await reencryptEverything(newKey, newRec, (done,total)=>{ busyText.textContent = 'Re-encrypting your shelf\u2026 ' + done + ' / ' + total; });
+    authMode = targetMode;
+    busy.style.display = 'none';
+    closeAuthModal();
+    alert(targetMode === 'passcode' ? 'Passcode set. You\'ll be asked for it next time you open Shelfmark.' : 'Passcode removed. Shelfmark will now open straight to your shelf.');
+  }catch(err){
+    busy.style.display = 'none';
+    const quota = err && (err.name === 'QuotaExceededError');
+    errEl.textContent = (quota ? 'Not enough storage space to re-encrypt. ' : 'Could not re-encrypt: ' + (err && err.message || err) + '. ') + 'Nothing was changed — your current setup still works.';
   }
 }
 
@@ -4587,6 +4745,9 @@ function buildStaticCommands(){
     { id:'select', icon: selectMode ? '&times;' : '&#9745;', label: selectMode ? 'Exit selection mode' : 'Select multiple items', hint:'', action: ()=>toggleSelectMode() },
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
+    authMode === 'device'
+      ? { id:'passcode-set', icon:'&#128274;', label:'Set a passcode\u2026', hint:'currently none', action: ()=>openAuthModal('set') }
+      : { id:'passcode-remove', icon:'&#128275;', label:'Remove passcode\u2026', hint:'', action: ()=>openAuthModal('remove') },
     { id:'storage', icon:'&#128190;', label:'Storage used', hint: storageHint, action: ()=>showStorageDetail() },
     { id:'md-help', icon:'?', label:'Markdown formatting help', hint:'', action: ()=>openMarkdownHelp() },
     ...themeCmds

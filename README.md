@@ -44,9 +44,18 @@ and stored only in your browser's IndexedDB, on your own device.
   tappable jump widget (PDF-red accent, matching the app's type colors)
   instead of a plain link. This is the last of the three `shelf://` target
   types (audio, note, now PDF); see the Changelog's v1.26.0 entry.
-- **Full-screen lock screen.** On first run you set a passcode (no
+- **Full-screen lock screen (optional).** On first run you set a passcode (no
   recovery — there's nothing to reset server-side, so write it down). On
-  every later visit you must enter it before the shelf is shown.
+  every later visit you must enter it before the shelf is shown. Or tap
+  "Continue without a passcode" to skip the lock screen entirely (see
+  "No-passcode mode" below).
+- **No-passcode mode.** Shelfmark generates a random, non-extractable
+  AES-256 key and keeps it in IndexedDB beside the data, so the app opens
+  straight to the shelf. Data is still encrypted at rest, but anyone who can
+  open this browser profile can read it — pick this only on a device you
+  trust. Switch either way later from the command palette (Ctrl+K → "Set a
+  passcode…" / "Remove passcode…"); every item is re-encrypted in one
+  all-or-nothing write, so a failure leaves your current setup untouched.
 - **IndexedDB encryption.** AES-256-GCM, with a key derived from your
   passcode via PBKDF2 (250,000 iterations, random per-device salt). The key
   lives only in memory for the current session — it's never written to
@@ -153,6 +162,17 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.47.0** (2026-09-28) — Passcode is now optional. First-run lock screen
+  gets a "Continue without a passcode" link (device-key mode: random
+  non-extractable AES-GCM key stored in IndexedDB, app opens straight to the
+  shelf). Command palette gains "Set a passcode…" / "Remove passcode…" to
+  switch modes later: removal asks for the current passcode; both re-encrypt
+  every item, draft and the prefs record with a progress overlay, committing
+  everything plus the new auth record in a single IndexedDB transaction.
+  Existing passcode shelves are unchanged (old auth records have no `mode`
+  field and are treated as passcode mode). Remember to bump `CACHE_VERSION` in
+  `service-worker.js` to match on deploy.
 
 - **v1.46.2** (2026-09-28) — The 🔗 / 🎵 / 📄 link buttons no longer swallow
   selected text. Select "meeting notes", tap a button, pick a target → you get

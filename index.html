@@ -692,6 +692,14 @@
     color:var(--paper); font-size:15px; font-weight:500; margin-top:2px;
   }
   .lock-card button.primary:active{ opacity:.85; }
+  #authOverlay input{
+    width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line);
+    background:var(--paper);color:var(--ink);font-size:15px;font-family:inherit;margin-bottom:10px;
+  }
+  .lock-skip{
+    display:none; margin-top:14px; font-size:13px; color:var(--ink-soft);
+    background:none; border:none; text-decoration:underline; cursor:pointer;
+  }
   .lock-error{ color:#b23b3b; font-size:12.5px; min-height:16px; margin-top:10px; }
   .lock-reset{
     display:inline-block; margin-top:22px; font-size:12px; color:var(--ink-soft);
@@ -807,6 +815,7 @@
     <input type="password" id="passcodeInput" inputmode="numeric" autocomplete="off" placeholder="Passcode" autofocus>
     <input type="password" id="passcodeConfirm" inputmode="numeric" autocomplete="off" placeholder="Confirm passcode" style="display:none;">
     <button class="primary" id="lockBtn" onclick="onLockSubmit()">Unlock</button>
+    <button class="lock-skip" id="lockSkipBtn" onclick="onSkipPasscode()">Continue without a passcode</button>
     <div class="lock-error" id="lockError"></div>
     <button class="lock-reset" onclick="onResetRequest()">Forgot passcode? Erase this shelf</button>
   </div>
@@ -940,6 +949,24 @@
     </div>
     <div class="lock-error" id="expError"></div>
   </div>
+</div>
+
+<div id="authOverlay" class="overlay" style="display:none;">
+  <div class="sheet">
+    <h2 id="authTitle">Set a passcode</h2>
+    <div id="authNote" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;line-height:1.5;"></div>
+    <input id="authPass1" type="password" autocomplete="off" placeholder="Passcode">
+    <input id="authPass2" type="password" autocomplete="off" placeholder="Confirm passcode" style="display:none;">
+    <div class="row">
+      <button class="cancel" onclick="closeAuthModal()">Cancel</button>
+      <button class="save" id="authGoBtn" onclick="doAuthChange()">Set passcode</button>
+    </div>
+    <div class="lock-error" id="authError"></div>
+  </div>
+</div>
+
+<div id="busyOverlay" style="display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.55);align-items:center;justify-content:center;color:#fff;font-size:15px;text-align:center;padding:24px;">
+  <div id="busyText">Working&hellip;</div>
 </div>
 
 <div id="importPassOverlay" class="overlay" style="display:none;">
