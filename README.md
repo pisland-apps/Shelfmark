@@ -25,7 +25,7 @@ and stored only in your browser's IndexedDB, on your own device.
 - **Markdown formatting help.** A new **?** button in the note editor
   toolbar (and a "Markdown formatting help" entry in the command palette,
   reachable from anywhere) opens an overlay covering every syntax the
-  editor supports — bold/italic/~~strikethrough~~/==highlight==/headings, lists and `- [ ]` checklists,
+  editor supports — bold/italic/~~strikethrough~~/==highlight== (with the S / A toolbar buttons)/headings, lists and `- [ ]` checklists,
   `> [!note]`-style callouts, fenced code blocks, tables, images/dividers,
   external links, the three shelf-link pickers (🎵/🔗/📄), `[[Wiki links]]`,
   and `#tags` — each shown as the literal syntax next to its already-
@@ -148,6 +148,14 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.34.0** (2026-09-28) — Markdown formatting help (the **?** button /
+  command palette entry) now has its own "Strikethrough & highlight" section
+  instead of a one-line mention: the two syntaxes rendered, the **S** / **A**
+  toolbar buttons and their tap-again-to-remove behavior, the multi-line /
+  checklist case, and the two gotchas (no spaces just inside the marks;
+  nothing is marked inside code). The Text section also mentions the **B**
+  and **H** buttons. Still fully static HTML in `index.html`, not run
+  through `renderMarkdown()`.
 - **v1.33.0** (2026-09-28) — Editor toolbar buttons for `~~strikethrough~~`
   (**S**) and `==highlight==` (highlighted **A**), next to Bold. Unlike Bold
   (which only ever wraps) these are real toggles: tap again on wrapped text
