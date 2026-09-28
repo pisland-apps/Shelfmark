@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.35.0';
+const APP_VERSION = '1.36.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1520,7 +1520,7 @@ async function openReader(id){
           <button class="tool" onclick="openPdfLinkPicker()" title="Link a PDF already on your shelf">&#128196;</button>
           <button class="tool" onclick="document.getElementById('noteImgPick').click()" title="Insert a picture">&#128247;</button>
           <button class="tool" onclick="insertTableTemplate()" title="Insert a table">&#9638;</button>
-          <button class="tool" onclick="openMarkdownHelp()" title="Markdown formatting help">?</button>
+          <button class="tool" id="helpToggleBtn" onclick="toggleMarkdownHelp()" title="Markdown formatting help — stays open while you edit" aria-pressed="false">?</button>
         </div>
         <div class="ebar-actions">
           <button class="cancel" onclick="cancelEditNote()">Cancel</button>
@@ -1743,6 +1743,7 @@ function startEditNote(){
   }
   document.getElementById('mdView').style.display = 'none';
   document.getElementById('mdEditWrap').style.display = 'flex';
+  if(helpDockWanted) openHelpDock(); else syncHelpToggleBtn();
   document.getElementById('bmBtn').style.display = 'none';
   document.getElementById('outlineBtn').style.display = 'none';
   document.getElementById('editNoteBtn').classList.add('active');
@@ -2688,14 +2689,66 @@ function closeAudioLinkPicker(){
 }
 
 // ---- Markdown formatting help (the ? toolbar button, v1.27.0) ----
-// The overlay's content is static HTML in index.html, not run through
-// renderMarkdown() — it's meant to show the syntax itself (e.g. the literal
-// text "**bold**") side by side with the already-rendered result, which
-// isn't something a markdown renderer can produce from its own output. No
-// network fetch, no separate file: fully consistent with the rest of the
-// app being offline-only.
+// The content is static HTML in index.html (#mdHelpOverlay .help-body), not
+// run through renderMarkdown() — it's meant to show the syntax itself (e.g.
+// the literal text "**bold**") side by side with the already-rendered
+// result, which isn't something a markdown renderer can produce from its own
+// output. No network fetch, no separate file: fully consistent with the rest
+// of the app being offline-only.
+//
+// Two ways to show it (v1.36.0). Outside the editor (command palette) it is
+// the modal overlay, as before. While editing it is a DOCKED panel instead —
+// above the toolbar on narrow screens, beside the text on wide ones — so it
+// stays on screen while you type; a modal would cover the very text you are
+// trying to format. The dock is a clone of the overlay's .help-body, so
+// there is still exactly one copy of the content to maintain.
+let helpDockWanted = false; // remembered for the app session: once opened, it reopens in the next edit
+function isHelpDockOpen(){
+  const w = document.getElementById('mdEditWrap');
+  return !!w && w.classList.contains('help-open');
+}
+function syncHelpToggleBtn(){
+  const b = document.getElementById('helpToggleBtn');
+  if(!b) return;
+  const on = isHelpDockOpen();
+  b.classList.toggle('active', on);
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+function ensureHelpDock(){
+  let dock = document.getElementById('mdHelpDock');
+  if(dock) return dock;
+  const wrap = document.getElementById('mdEditWrap');
+  dock = document.createElement('div');
+  dock.id = 'mdHelpDock';
+  dock.className = 'help-dock';
+  dock.innerHTML = '<div class="help-dock-head"><span>Markdown formatting help</span>'
+    + '<button type="button" class="help-dock-close" onclick="closeHelpDock()" aria-label="Close help">&times;</button></div>';
+  dock.appendChild(document.querySelector('#mdHelpOverlay .help-body').cloneNode(true));
+  wrap.insertBefore(dock, wrap.querySelector('.ebar'));
+  return dock;
+}
+function openHelpDock(){
+  if(!noteEditActive()) return;
+  ensureHelpDock();
+  document.getElementById('mdEditWrap').classList.add('help-open');
+  helpDockWanted = true;
+  syncHelpToggleBtn();
+}
+function closeHelpDock(){
+  const w = document.getElementById('mdEditWrap');
+  if(w) w.classList.remove('help-open');
+  helpDockWanted = false;
+  syncHelpToggleBtn();
+}
+// Always opens (idempotent) — used by the command palette entry.
 function openMarkdownHelp(){
-  document.getElementById('mdHelpOverlay').style.display = 'flex';
+  if(noteEditActive()) openHelpDock();
+  else document.getElementById('mdHelpOverlay').style.display = 'flex';
+}
+// The editor's ? button: a real toggle, since the dock stays on screen.
+function toggleMarkdownHelp(){
+  if(noteEditActive() && isHelpDockOpen()) closeHelpDock();
+  else openMarkdownHelp();
 }
 function closeMarkdownHelp(){
   document.getElementById('mdHelpOverlay').style.display = 'none';

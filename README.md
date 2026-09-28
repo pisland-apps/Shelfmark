@@ -24,8 +24,9 @@ and stored only in your browser's IndexedDB, on your own device.
   (300 ms) so typing doesn't decrypt the whole shelf once per letter.
 - **Markdown formatting help.** A new **?** button in the note editor
   toolbar (and a "Markdown formatting help" entry in the command palette,
-  reachable from anywhere) opens an overlay covering every syntax the
-  editor supports — bold/italic/~~strikethrough~~/==highlight== (with the S / A toolbar buttons)/headings, lists and `- [ ]` checklists,
+  reachable from anywhere) opens a guide covering every syntax the
+  editor supports (docked beside/above the text while editing, so it stays
+  visible as you type; a modal overlay elsewhere) — bold/italic/~~strikethrough~~/==highlight== (with the S / A toolbar buttons)/headings, lists and `- [ ]` checklists,
   `> [!note]`-style callouts (including foldable `[!note]-` / `[!note]+`), fenced code blocks, tables, images/dividers,
   external links, the three shelf-link pickers (🎵/🔗/📄), `[[Wiki links]]`,
   and `#tags` — each shown as the literal syntax next to its already-
@@ -148,6 +149,24 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.36.0** (2026-09-28) — Markdown help stays on screen while you edit.
+  Before, the editor's **?** opened a modal overlay that covered the very text
+  you were trying to format. Now, while editing, **?** toggles a *docked*
+  panel: a capped strip (30 % of the height, max 240 px) between the text and
+  the toolbar on narrow screens, and a column beside the text at 700 px and
+  wider (so landscape phones get it too). It scrolls on its own, the **?**
+  button shows a pressed state, and the text area stays fully usable. There
+  is still exactly one copy of the help content: the dock is a clone of the
+  overlay's `.help-body` (`ensureHelpDock()`), so `index.html` remains the
+  only place to edit it. Outside the editor (command palette → *Markdown
+  formatting help*) the modal overlay is used as before; from inside the
+  editor the palette entry opens the dock (never closes it). Once you open
+  the dock it reopens in later edit sessions until you close it (kept in
+  memory only, not saved). Implementation note: on wide screens
+  `#mdEditWrap.help-open` switches to a grid with `display:grid !important`
+  scoped by `:not([style*="none"])` — `startEditNote()` / `leaveEditMode()`
+  set `display` inline, so without that guard the editor would reappear
+  after saving. Tested in Chromium at 390×780, 844×390 and 1280×800.
 - **v1.35.0** (2026-09-28) — Foldable callouts, Obsidian syntax: `> [!note]-
   Title` starts collapsed, `> [!note]+ Title` is foldable but starts open;
   no `-`/`+` is the old static card, unchanged. Rendered as a native
