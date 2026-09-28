@@ -488,6 +488,16 @@
   .mdbody hr{border:none;border-top:1px solid var(--line);margin:20px 0;}
   .mdbody img.md-img{max-width:100%;height:auto;border-radius:8px;display:block;margin:10px 0;}
   .md-table-wrap{overflow-x:auto;margin:14px 0;}
+  /* Editing table cells in reading view (v1.38.0) */
+  .mdbody td.tcell,.mdbody th.tcell{cursor:text;}
+  @media (hover:hover) and (pointer:fine){ .mdbody .tcell:not(.editing):hover{background:var(--paper2);} }
+  .mdbody .tcell.editing{outline:2px solid var(--md);outline-offset:-2px;background:var(--paper);white-space:pre-wrap;word-break:break-word;font-weight:400;}
+  .table-bar{display:flex;flex-wrap:wrap;gap:6px;margin:-6px 0 12px;}
+  .table-bar button{
+    background:var(--paper2);border:1px solid var(--line);border-radius:6px;padding:5px 10px;
+    font-size:12px;color:var(--ink);font-family:inherit;cursor:pointer;
+  }
+  .table-bar button:disabled{opacity:.4;cursor:default;}
   .mdbody table{border-collapse:collapse;width:100%;font-size:0.92em;}
   .mdbody table th,.mdbody table td{border:1px solid var(--line);padding:6px 10px;text-align:left;}
   .mdbody table th{background:var(--card);font-weight:600;}
@@ -968,6 +978,7 @@
       <h3>Tables</h3>
       <p><code>| Col | Col |</code> then a <code>| --- | --- |</code> row, then your data rows:</p>
       <div class="md-table-wrap"><table><thead><tr><th>Name</th><th>Age</th></tr></thead><tbody><tr><td>Ann</td><td>29</td></tr></tbody></table></div>
+      <p>In reading view you can edit a table without opening the editor: tap a cell, type, then <b>Enter</b> to save (<b>Esc</b> cancels, <b>Tab</b> moves to the next cell — in the last cell it adds a row). While a cell is open, the bar under the table adds or deletes a row or column. Use <code>\|</code> for a literal pipe inside a cell.</p>
 
       <h3>Images &amp; dividers</h3>
       <p><code>![alt](url)</code> for an image — or just tap the &#128247; toolbar button to insert one from your device. <code>---</code> on its own line draws a divider.</p>

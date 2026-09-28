@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.37.1';
+const APP_VERSION = '1.38.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1502,6 +1502,7 @@ async function openReader(id){
     wireTaskCheckboxes(div);
     wireParagraphEdit(div);
     wireHeadingFold(div);
+    wireTableEdit(div);
     await renderBacklinks(id, div);
     const editWrap = document.createElement('div');
     editWrap.id = 'mdEditWrap';
@@ -1901,7 +1902,7 @@ function editParagraphAt(idx){
 // a button, a checkbox, an audio/note-link widget) so those keep working
 // exactly as before.
 // `summary` = the title row of a foldable callout: tapping it must fold/unfold, not open the editor.
-const PARAGRAPH_TAP_EXCLUDE = 'button, a, input, summary, .md-audio-inline, .md-note-link';
+const PARAGRAPH_TAP_EXCLUDE = 'button, a, input, summary, td, th, .md-audio-inline, .md-note-link';
 let paragraphLongPressFired = false;
 function wireParagraphEdit(container){
   container.querySelectorAll('.mdblock').forEach(el=>{
@@ -2121,6 +2122,7 @@ async function saveEditNote(){
   wireTaskCheckboxes(mdView);
   wireParagraphEdit(mdView);
   wireHeadingFold(mdView);
+  wireTableEdit(mdView);
   await renderBacklinks(curId, mdView); // link targets may have changed
   const it = await getOne(curId);
   updateBookmarkUI(it.bookmarks || []);
@@ -3472,7 +3474,8 @@ function looksLikeTable(block){
   return /^[\s|:-]+$/.test(lines[1]) && lines[1].includes('-');
 }
 function splitTableRow(line){
-  const cells = line.split('|');
+  // "\|" is a literal pipe inside a cell (v1.38.0), so split on unescaped pipes only
+  const cells = line.split(/(?<!\\)\|/).map(c=>c.replace(/\\\|/g, '|'));
   if(cells.length && cells[0].trim() === '') cells.shift();
   if(cells.length && cells[cells.length-1].trim() === '') cells.pop();
   return cells.map(c=>c.trim());
@@ -3766,6 +3769,7 @@ async function toggleTaskCheckbox(blockIdx, lineIdx){
     wireTaskCheckboxes(mdView);
     wireParagraphEdit(mdView);
     wireHeadingFold(mdView);
+    wireTableEdit(mdView);
     await renderBacklinks(curId, mdView);
     updateOutlineUI(buildOutline(mdView));
     findRefresh(); // the re-render wiped the highlights
@@ -3779,6 +3783,252 @@ function wireTaskCheckboxes(container){
     };
   });
 }
+
+// @@TABLE-EDIT-START
+// ---- Edit tables in reading view (v1.38.0) ----
+// Tap a cell to edit its text in place (Obsidian-style) instead of dropping
+// into the source editor. The cell shows its RAW markdown while you type
+// (so **bold** is editable as **bold**), and is saved back into that exact
+// table row of the note: only rows whose cells actually changed are
+// rewritten, everything else in the note (including untouched table rows and
+// the blank lines between blocks) stays byte-for-byte as it was.
+//   Enter = save   Esc = cancel   Tab / Shift+Tab = next / previous cell
+//   (Tab in the very last cell adds a row)   tapping another cell saves and moves.
+// While a cell is open a small bar under the table offers + Row / + Col /
+// Delete row / Delete col, acting on the open cell. Cells holding a picture
+// are left to the source editor. The table's block is found by the same
+// blank-line split renderMarkdown uses (as toggleTaskCheckbox does); if the
+// raw text no longer lines up, nothing is changed and the user is told.
+let tableEdit = null;          // {td, blockIdx, m, c, orig, done} — the open cell
+let pendingTableEdit = null;   // cell to open once the current save lands (user tapped another cell)
+let tableBusy = false;
+let tableBarPress = false;     // a bar button is being pressed: its blur must not save the cell yet
+function tableArraysEqual(a, b){ return a.length === b.length && a.every((v,i)=>v === b[i]); }
+function serializeTableRow(cells){
+  return '| ' + cells.map(c=>String(c).replace(/\r?\n/g,' ').replace(/\|/g,'\\|').trim()).join(' | ') + ' |';
+}
+function readTableModel(blockIdx){
+  if(curNoteRaw == null) return null;
+  const parts = curNoteRaw.split(/(\n{2,})/);   // [block, sep, block, sep, ...]
+  const block = parts[blockIdx * 2];
+  if(block == null || !looksLikeTable(block)) return null;
+  const lines = block.split('\n').filter(l=>l.trim());
+  return { parts, block, lines, header: splitTableRow(lines[0]), sep: splitTableRow(lines[1]), rows: lines.slice(2).map(splitTableRow) };
+}
+function buildTableBlock(model, matrix, sep){
+  const orig = [model.header, ...model.rows];
+  const out = [];
+  matrix.forEach((cells, i)=>{
+    const ol = model.lines[i === 0 ? 0 : i + 1];
+    out.push(ol != null && i < orig.length && tableArraysEqual(orig[i], cells) ? ol : serializeTableRow(cells));
+    if(i === 0) out.push(tableArraysEqual(model.sep, sep) ? model.lines[1] : serializeTableRow(sep));
+  });
+  return out.join('\n');
+}
+async function rerenderNoteView(){
+  const mdView = document.getElementById('mdView');
+  if(!mdView) return;
+  mdView.innerHTML = renderMarkdown(curNoteRaw, await buildLinkTypeMap());
+  wireInlineAudio(mdView);
+  wireNoteLinks(mdView);
+  wireMissingWikiLinks(mdView);
+  wireTagPills(mdView);
+  wireTaskCheckboxes(mdView);
+  wireParagraphEdit(mdView);
+  wireHeadingFold(mdView);
+  wireTableEdit(mdView);
+  await renderBacklinks(curId, mdView);
+  updateOutlineUI(buildOutline(mdView));
+  const it = await getOne(curId);
+  if(it) updateBookmarkUI(it.bookmarks || []);
+  findRefresh(); // the re-render wiped the highlights
+}
+function removeTableBar(){ const b = document.getElementById('tableBar'); if(b) b.remove(); }
+function closeTableCell(edit){
+  const td = edit.td;
+  td.onkeydown = td.onblur = td.onpaste = null;
+  td.removeAttribute('contenteditable');
+  td.classList.remove('editing');
+  removeTableBar();
+}
+function cancelTableEdit(edit){
+  if(edit.done) return;
+  edit.done = true;
+  edit.td.innerHTML = edit.orig;
+  closeTableCell(edit);
+  if(tableEdit === edit) tableEdit = null;
+  pendingTableEdit = null;
+}
+// Saves the open cell and (optionally) restructures the table in the same
+// write. op: {type:'none'} | {type:'move', target} | {type:'rowAfter'|'colAfter'|'rowDel'|'colDel', target?}
+async function applyTableEdit(edit, op){
+  if(edit.done) return;
+  edit.done = true;
+  tableBusy = true;
+  let target = null, failed = false;
+  try{
+    const model = readTableModel(edit.blockIdx);
+    const row0 = model && (edit.m === 0 ? model.header : model.rows[edit.m - 1]);
+    if(!model || !row0){
+      failed = true;
+      alert("Couldn't match this table to the note text, so nothing was changed. Use the pencil button to edit it as text.");
+    } else {
+      const matrix = [model.header, ...model.rows].map(r=>r.slice());
+      const sep = model.sep.slice();
+      const ncols = Math.max(model.header.length, sep.length);
+      const pad = (r, n)=>{ while(r.length < n) r.push(''); };
+      const newText = edit.td.textContent.replace(/\r?\n/g, ' ').trim();
+      pad(matrix[edit.m], edit.c + 1);
+      matrix[edit.m][edit.c] = newText;
+      let cancelled = false;
+      if(op.type === 'rowAfter'){
+        matrix.splice(edit.m + 1, 0, new Array(ncols).fill(''));
+        target = { m: edit.m + 1, c: edit.c };
+      } else if(op.type === 'colAfter'){
+        matrix.forEach(r=>{ pad(r, ncols); r.splice(edit.c + 1, 0, ''); });
+        pad(sep, ncols); sep.splice(edit.c + 1, 0, '---');
+        target = { m: edit.m, c: edit.c + 1 };
+      } else if(op.type === 'rowDel'){
+        const has = matrix[edit.m].some(v=>String(v).trim());
+        if(edit.m === 0 || (has && !confirm('Delete this row?'))) cancelled = true;
+        else { matrix.splice(edit.m, 1); target = { m: Math.min(edit.m, matrix.length - 1), c: edit.c }; }
+      } else if(op.type === 'colDel'){
+        const has = matrix.some(r=>String(r[edit.c] || '').trim());
+        if(ncols <= 1 || (has && !confirm('Delete this column?'))) cancelled = true;
+        else {
+          matrix.forEach(r=>{ pad(r, ncols); r.splice(edit.c, 1); });
+          pad(sep, ncols); sep.splice(edit.c, 1);
+          target = { m: edit.m, c: Math.min(edit.c, ncols - 2) };
+        }
+      } else if(op.type === 'move'){
+        target = op.target;
+      }
+      if(op.target && (op.type === 'rowAfter')) target = op.target;
+      if(cancelled){
+        // nothing structural happened: still keep what was typed
+        if(op.type === 'rowDel' || op.type === 'colDel') target = { m: edit.m, c: edit.c };
+      }
+      const newBlock = buildTableBlock(model, matrix, sep);
+      if(newBlock !== model.block){
+        model.parts[edit.blockIdx * 2] = newBlock;
+        const full = model.parts.join('');
+        try{
+          await putContentOnly(curId, 'markdown', full);
+          curNoteRaw = full;
+          await rerenderNoteView();
+        }catch(err){
+          failed = true;
+          alert(isQuotaError(err) ? "Your device's storage is full, so this table change couldn't be saved." : "Couldn't save this table change — please try again.");
+        }
+      }
+    }
+  } finally {
+    if(document.body.contains(edit.td)){ // still the live cell: nothing was re-rendered
+      edit.td.innerHTML = edit.orig;
+      closeTableCell(edit);
+    }
+    removeTableBar();
+    tableBusy = false; tableBarPress = false;
+    if(tableEdit === edit) tableEdit = null;
+  }
+  const next = failed ? null : (target ? { blockIdx: edit.blockIdx, ...target } : pendingTableEdit);
+  pendingTableEdit = null;
+  if(next) openTableCellAt(next);
+}
+function openTableCellAt(pos){
+  const block = document.querySelector(`.mdblock[data-idx="${pos.blockIdx}"]`);
+  const table = block && block.querySelector('table');
+  const row = table && table.rows[pos.m];
+  const cell = row && row.cells[pos.c];
+  if(cell) startTableCellEdit(cell);
+}
+function startTableCellEdit(td){
+  if(tableEdit || tableBusy) return;
+  const block = td.closest('.mdblock');
+  if(!block) return;
+  if(td.querySelector('img')){ alert('This cell holds a picture — use the pencil button to edit it as text.'); return; }
+  const blockIdx = Number(block.dataset.idx);
+  const m = td.parentElement.rowIndex, c = td.cellIndex;
+  const model = readTableModel(blockIdx);
+  const row = model && (m === 0 ? model.header : model.rows[m - 1]);
+  if(!row){ alert("Couldn't match this table to the note text — use the pencil button to edit it as text."); return; }
+  const edit = tableEdit = { td, blockIdx, m, c, orig: td.innerHTML, done: false };
+  td.classList.add('editing');
+  try{ td.contentEditable = 'plaintext-only'; }catch(e){}
+  if(td.contentEditable !== 'plaintext-only') td.contentEditable = 'true';
+  td.textContent = row[c] != null ? row[c] : '';
+  td.onpaste = (e)=>{
+    e.preventDefault();
+    const t = (e.clipboardData || window.clipboardData).getData('text').replace(/\r?\n/g, ' ');
+    document.execCommand('insertText', false, t);
+  };
+  td.onblur = ()=>{ if(!tableBarPress) applyTableEdit(edit, { type:'none' }); };
+  td.onkeydown = (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); applyTableEdit(edit, { type:'none' }); }
+    else if(e.key === 'Escape'){ e.preventDefault(); cancelTableEdit(edit); }
+    else if(e.key === 'Tab'){
+      e.preventDefault();
+      const table = td.closest('table'), tr = td.parentElement;
+      let t = null, type = 'move';
+      if(!e.shiftKey){
+        if(c + 1 < tr.cells.length) t = { m, c: c + 1 };
+        else if(m + 1 < table.rows.length) t = { m: m + 1, c: 0 };
+        else { type = 'rowAfter'; t = { m: m + 1, c: 0 }; }
+      } else {
+        if(c > 0) t = { m, c: c - 1 };
+        else if(m > 0) t = { m: m - 1, c: table.rows[m - 1].cells.length - 1 };
+      }
+      applyTableEdit(edit, t ? { type, target: t } : { type:'none' });
+    }
+  };
+  // structure bar under the table
+  removeTableBar();
+  const wrap = td.closest('.md-table-wrap');
+  const table = td.closest('table');
+  const bar = document.createElement('div');
+  bar.id = 'tableBar';
+  bar.className = 'table-bar';
+  const defs = [['rowAfter','+ Row below', false], ['colAfter','+ Col right', false],
+                ['rowDel','Delete row', m === 0], ['colDel','Delete col', table.rows[0].cells.length <= 1]];
+  defs.forEach(([type, label, off])=>{
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.disabled = off;
+    b.onpointerdown = (e)=>{ e.preventDefault(); tableBarPress = true; };
+    const release = ()=>setTimeout(()=>{
+      tableBarPress = false;
+      if(tableEdit === edit && !edit.done && document.activeElement !== td) td.focus(); // pressed but never clicked
+    }, 400);
+    b.onpointerup = release; b.onpointercancel = release;
+    b.onclick = (e)=>{ e.stopPropagation(); applyTableEdit(edit, { type }); };
+    bar.appendChild(b);
+  });
+  if(wrap) wrap.insertAdjacentElement('afterend', bar);
+  td.focus();
+  const range = document.createRange();
+  range.selectNodeContents(td); range.collapse(false);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+}
+function wireTableEdit(container){
+  container.querySelectorAll('.md-table-wrap td, .md-table-wrap th').forEach(cell=>{
+    cell.classList.add('tcell');
+    cell.onpointerdown = ()=>{
+      // Tapping another cell while one is open: blur is about to save the open
+      // one; remember where to go next.
+      if(tableEdit && tableEdit.td !== cell && !tableBarPress){
+        const b = cell.closest('.mdblock');
+        pendingTableEdit = { blockIdx: Number(b.dataset.idx), m: cell.parentElement.rowIndex, c: cell.cellIndex };
+      }
+    };
+    cell.onclick = (e)=>{
+      if(e.target.closest('a, button, input, .md-audio-inline, .md-note-link')) return;
+      if(tableEdit || tableBusy || !cell.isConnected) return;
+      const sel = window.getSelection();
+      if(sel && sel.toString().length > 0) return; // dragging to select text to copy
+      startTableCellEdit(cell);
+    };
+  });
+}
+// @@TABLE-EDIT-END
 
 // ---- Command palette (Ctrl+K) ----
 // Header used to carry one icon per action (storage/sort/loop/tags/select/

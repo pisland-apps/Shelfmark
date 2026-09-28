@@ -7,6 +7,8 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Edit tables in reading view.** Tap a cell, type, Enter to save; Tab moves
+  on; a bar adds/deletes rows and columns. No need to open the source editor.
 - **Foldable headings (H1–H6).** Tap the arrow at the right of any heading in
   reading view to fold the section under it; the outline has Collapse all /
   Expand all. Folds are remembered per note.
@@ -152,6 +154,21 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.38.0** (2026-09-28) — Edit tables in reading view, no source mode.
+  Tap a table cell to edit it in place; it shows its raw markdown while open
+  (`**bold**` stays editable). **Enter** saves, **Esc** cancels, **Tab** /
+  **Shift+Tab** move between cells (Tab in the last cell adds a row), and
+  tapping another cell saves the open one and moves on. While a cell is open
+  a bar under the table gives **+ Row below / + Col right / Delete row /
+  Delete col** (delete asks first if the row/column has content; the header
+  row can't be deleted). Saving rewrites only the table rows whose cells
+  changed — untouched rows, the rest of the note and the blank lines between
+  blocks are left byte-for-byte as they were. The table is located by the
+  same blank-line block split as `toggleTaskCheckbox`; if the raw text no
+  longer lines up, or a cell holds a picture, the app says so and leaves the
+  text alone (use the pencil editor). A literal pipe in a cell is written
+  `\|` (`splitTableRow` now honours it). Code lives between the
+  `@@TABLE-EDIT-START/END` markers in `app.js`. Tested in Chromium.
 - **v1.37.1** (2026-09-28) — Fix: heading fold now works when the text sits
   on the lines directly under a heading with no blank line (`# Trip` then
   `daf` on the next line). That is one block in the renderer, so v1.37.0 gave
