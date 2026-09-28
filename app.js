@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.46.0';
+const APP_VERSION = '1.46.1';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -169,11 +169,19 @@ let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
 // data URIs inline, exactly as before. Only the on-screen textarea is
 // decluttered, so export/import/rendering all stay the same format.
 let curNoteImageRefs = [];
+// Same trick for audio dropped into a note (v1.46.1): the recording lives in
+// the note as `[name](data:audio/...;base64,...)`, the textarea only shows
+// `[name](aud:N)`.
+let curNoteAudioRefs = [];
 function collapseImagesForEdit(text){
   curNoteImageRefs = [];
+  curNoteAudioRefs = [];
   return text.replace(/!\[(.*?)\]\((data:[^)]+)\)/g, (_, alt, dataUri)=>{
     curNoteImageRefs.push(dataUri);
     return `![${alt || 'image ' + curNoteImageRefs.length}](img:${curNoteImageRefs.length})`;
+  }).replace(/(^|[^!])\[([^\]\n]*)\]\((data:audio\/[^)]+)\)/g, (_, pre, label, dataUri)=>{
+    curNoteAudioRefs.push(dataUri);
+    return `${pre}[${label || 'audio ' + curNoteAudioRefs.length}](aud:${curNoteAudioRefs.length})`;
   });
 }
 function expandImagesForSave(text){
@@ -183,6 +191,9 @@ function expandImagesForSave(text){
     // its image was never actually inserted this session), leave the text
     // exactly as written rather than guessing.
     return dataUri ? `![${alt}](${dataUri})` : whole;
+  }).replace(/(^|[^!])\[([^\]\n]*)\]\(aud:(\d+)\)/g, (whole, pre, label, n)=>{
+    const dataUri = curNoteAudioRefs[Number(n) - 1];
+    return dataUri ? `${pre}[${label}](${dataUri})` : whole;
   });
 }
 
@@ -2231,7 +2242,7 @@ function clearFindMarks(){
 // (img:N) reference that stands in for an embedded picture's data.
 function findProtectedRanges(text){
   const out = [];
-  const re = /\(img:\d+\)/g; let m;
+  const re = /\((?:img|aud):\d+\)/g; let m;
   while((m = re.exec(text))) out.push([m.index, m.index + m[0].length]);
   return out;
 }
@@ -3190,33 +3201,44 @@ function onNoteEditDragOver(e){
 function onNoteEditDragLeave(e){ e.currentTarget.classList.remove('drag-over'); }
 const NOTE_AUDIO_EXT = /\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|weba|webm)$/i;
 function isDroppedAudio(f){ return (f.type && f.type.startsWith('audio/')) || NOTE_AUDIO_EXT.test(f.name || ''); }
-// Dropping an audio file (v1.46.0): the file is saved to the shelf as a NEW
-// audio item (Uncategorized, titled after the file name) and a
-// [title](shelf://id) link is inserted at the caret — which renders as the
-// inline player, exactly like a link picked with the audio toolbar button.
-// It is stored right away (not held until the note is saved), so it stays on
-// the shelf even if the note edit is cancelled.
+// Dropping an audio file (v1.46.1): the recording is embedded IN THE NOTE,
+// exactly like a dropped picture — no shelf item is created. It is read as a
+// data: URI, kept in curNoteAudioRefs, and only a short `[name](aud:N)`
+// placeholder goes in the textarea; Save expands it back to the real
+// `[name](data:audio/...)` link (see collapseImagesForEdit /
+// expandImagesForSave), and reading view renders that as a native player.
+// Audio is much bigger than a resized picture and cannot be shrunk, so each
+// file is capped at NOTE_AUDIO_MAX; longer recordings belong on the shelf
+// (+ Add) and can be linked with the toolbar button.
+const NOTE_AUDIO_MAX = 15 * 1024 * 1024;
+function readFileAsDataUrl(f){
+  return new Promise((res, rej)=>{
+    const r = new FileReader();
+    r.onload = ()=>res(r.result);
+    r.onerror = ()=>rej(r.error);
+    r.readAsDataURL(f);
+  });
+}
 async function insertNoteAudioFile(f){
-  const title = (f.name || 'Recording').replace(/\.[^.]+$/, '') || 'Recording';
-  const ext = ((f.name || '').match(/\.(\w+)$/) || [])[1];
-  const item = {
-    id: Date.now()+'-'+Math.random().toString(36).slice(2),
-    title, category: 'Uncategorized', type: 'audio', content: f,
-    mime: f.type || ('audio/' + (ext ? ext.toLowerCase() : 'mpeg')),
-    addedAt: Date.now(), progress: null
-  };
-  try{ await put(item); }
-  catch(err){
-    alert(isQuotaError(err)
-      ? "Your device's storage is full, so this recording couldn't be saved. Free up space or remove a few items from your shelf, then try again."
-      : "Couldn't save that audio file \u2014 please try again.");
+  if(f.size > NOTE_AUDIO_MAX){
+    alert(`"${f.name}" is ${(f.size / 1048576).toFixed(1)} MB \u2014 too big to embed in a note (limit ${NOTE_AUDIO_MAX / 1048576} MB). Add it to your shelf with + Add instead, then link it with the \u{1F3B5} toolbar button.`);
     return false;
   }
-  render();
+  let dataUrl;
+  try{ dataUrl = await readFileAsDataUrl(f); }
+  catch(err){ alert("Couldn't read that audio file \u2014 try a different file."); return false; }
+  // Some browsers leave the MIME type off for less common extensions
+  // ("data:application/octet-stream;..."), which would not render as audio.
+  if(!/^data:audio\//i.test(dataUrl)){
+    const ext = ((f.name || '').match(/\.(\w+)$/) || [])[1];
+    dataUrl = dataUrl.replace(/^data:[^;,]*/, 'data:' + (f.type && f.type.startsWith('audio/') ? f.type : 'audio/' + (ext ? ext.toLowerCase() : 'mpeg')));
+  }
+  curNoteAudioRefs.push(dataUrl);
   pushUndoBeforeEdit();
   const ta = document.getElementById('mdEditArea');
   const start = ta.selectionStart, end = ta.selectionEnd;
-  const md = `[${title.replace(/[[\]]/g,'')}](shelf://${item.id})\n`;
+  const label = ((f.name || 'Recording').replace(/\.[^.]+$/, '') || 'Recording').replace(/[[\]]/g, '');
+  const md = `[${label}](aud:${curNoteAudioRefs.length})\n`;
   ta.value = ta.value.slice(0, start) + md + ta.value.slice(end);
   ta.focus();
   const newPos = start + md.length;
@@ -3977,7 +3999,7 @@ function renderMarkdown(src, linkTypes){
            + `<div class="inline-time"></div></div>`
            + `<button class="expand" title="Open full player">&#8599;</button></div>`;
     }
-    if(AUDIO_EXT.test(trimmedUrl)){
+    if(AUDIO_EXT.test(trimmedUrl) || /^data:audio\//i.test(trimmedUrl)){
       return `<div class="md-audio"><div class="md-audio-label">${label}</div>`
            + `<audio controls preload="none" src="${trimmedUrl}"></audio></div>`;
     }

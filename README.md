@@ -154,14 +154,21 @@ most common reason the two look out of sync.
 
 ## Changelog
 
-- **v1.46.0** (2026-09-28) — Drag-and-drop audio into the note editor. Dropping
-  audio files (`audio/*` type or an .mp3/.m4a/.wav/.ogg/.oga/.opus/.aac/.flac/
-  .weba/.webm extension) on the textarea saves each one to the shelf as a new
-  audio item (Uncategorized, titled from the file name) via `insertNoteAudioFile`
-  and inserts a `[title](shelf://id)` link at the caret, which renders as the
-  inline player. The item is stored immediately, so it stays on the shelf even
-  if the note edit is cancelled. Pictures and audio can be mixed in one drop;
-  other files are skipped with a message. Help text updated.
+- **v1.46.1** (2026-09-28) — Dropped audio is now embedded in the note itself,
+  like a dropped picture, instead of becoming a separate shelf item (that was
+  v1.46.0). The file is read as a `data:audio/...` URI and stored inline in the
+  note as `[name](data:audio/...;base64,...)`; the editor only shows a short
+  `[name](aud:N)` placeholder (`curNoteAudioRefs`, collapsed / expanded by
+  `collapseImagesForEdit` / `expandImagesForSave` next to the `img:N` ones;
+  find ignores `(aud:N)`). Reading view renders a `data:audio/` link as the
+  native `<audio>` player (`md-audio`). Cap: 15 MB per file (`NOTE_AUDIO_MAX`),
+  since audio can't be resized like pictures and base64 adds a third; bigger
+  files go on the shelf with + Add and are linked with the 🎵 button.
+- **v1.46.0** (2026-09-28) — Drag-and-drop audio into the note editor (first
+  version: saved each file to the shelf as a new audio item and inserted a
+  `shelf://` link — replaced by the in-note version in v1.46.1). Accepts
+  `audio/*` or .mp3/.m4a/.wav/.ogg/.oga/.opus/.aac/.flac/.weba/.webm; pictures
+  and audio can be mixed in one drop, other files are skipped with a message.
 - **v1.45.2** (2026-09-28) — Quote (`> `) lines are easier to see in reading
   view: the left bar is now 4px in the note-green accent (`--md`, was a faint
   3px `--line`) on a light green tint with rounded right corners, matching the
