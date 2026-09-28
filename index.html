@@ -363,12 +363,12 @@
   .mdblock.bookmarked .bm-btn{color:var(--audio);}
   /* Tapping a paragraph in reading view jumps into the source editor at
      that paragraph (see editParagraphAt in app.js). Hover-capable devices
-     get a subtle tint as a "this is clickable" hint; touch devices have no
-     hover state, so they get a long-press "Edit this paragraph" menu
-     instead (.para-menu below) rather than this. */
+     get a pointer cursor as the "this is clickable" hint (the background
+     tint was removed in v1.51.1 — it dimmed the text under the mouse);
+     touch devices have no hover state, so they get a long-press "Edit this
+     paragraph" menu instead (.para-menu below). */
   @media (hover:hover) and (pointer:fine){
     .mdblock{cursor:pointer;}
-    .mdblock:hover{background-color:var(--line);}
   }
   /* Long-press fallback menu (touch devices) for the same jump-to-paragraph
      action — positioned at the touch point by showParagraphMenu(). */
