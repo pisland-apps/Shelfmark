@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.36.0';
+const APP_VERSION = '1.37.0';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1493,6 +1493,7 @@ async function openReader(id){
     const div = document.createElement('div');
     div.className = 'mdbody';
     div.id = 'mdView';
+    curFolds = new Set(Array.isArray(it.folds) ? it.folds : []);
     div.innerHTML = renderMarkdown(it.content, await buildLinkTypeMap());
     wireInlineAudio(div);
     wireNoteLinks(div);
@@ -1500,6 +1501,7 @@ async function openReader(id){
     wireTagPills(div);
     wireTaskCheckboxes(div);
     wireParagraphEdit(div);
+    wireHeadingFold(div);
     await renderBacklinks(id, div);
     const editWrap = document.createElement('div');
     editWrap.id = 'mdEditWrap';
@@ -2118,6 +2120,7 @@ async function saveEditNote(){
   wireTagPills(mdView);
   wireTaskCheckboxes(mdView);
   wireParagraphEdit(mdView);
+  wireHeadingFold(mdView);
   await renderBacklinks(curId, mdView); // link targets may have changed
   const it = await getOne(curId);
   updateBookmarkUI(it.bookmarks || []);
@@ -2242,6 +2245,9 @@ function findEditOffsets(text, q){
 // the hit leaves the callout open, which is what you want when reading on.
 function revealFindHit(el){
   for(let d = el && el.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+  // ...and the same for a hit under a collapsed heading (v1.37.0).
+  const blk = el && el.closest && el.closest('.mdblock');
+  if(blk) revealBlock(blk);
 }
 function highlightReader(q){
   clearFindMarks();
@@ -3237,7 +3243,7 @@ async function jumpBookmark(createdAt){
   const it = await getOne(curId);
   const bm = it && (it.bookmarks||[]).find(b=>b.createdAt===createdAt);
   const el = bm && findBlockForBookmark(bm);
-  if(el) el.scrollIntoView({block:'center', behavior:'smooth'});
+  if(el){ revealBlock(el); el.scrollIntoView({block:'center', behavior:'smooth'}); }
   else if(bm) alert("Couldn't find that spot anymore — this part of the note may have changed a lot since the bookmark was made.");
   bmPanelOpen = false;
   document.getElementById('bmPanel').style.display = 'none';
@@ -3263,7 +3269,7 @@ function updateBookmarkUI(bookmarks){
 }
 
 // ---- Outline / table of contents ----
-// Auto-generated from a note's own #/##/### headings — nothing is stored;
+// Auto-generated from a note's own # to ###### headings — nothing is stored;
 // it's rebuilt from the live rendered DOM every time the note (re)renders,
 // the same "derive it, don't persist it" approach the Tags feature uses.
 // Reuses the bookmark panel's look (.bmpanel/.bmrow chrome) but each row
@@ -3279,13 +3285,13 @@ function toggleOutlinePanel(){
   outlinePanelOpen = !outlinePanelOpen;
   document.getElementById('outlinePanel').style.display = outlinePanelOpen ? 'block' : 'none';
 }
-// container is the rendered .mdbody element — h1/h2/h3 tags only ever
+// container is the rendered .mdbody element — h1-h6 tags only ever
 // appear as the very first thing in whatever .mdblock they belong to (see
 // renderMarkdown's block classification), so each heading's own block
 // carries the data-idx that jumpBookmark's scroll-to logic already uses.
 function buildOutline(container){
   const outline = [];
-  container.querySelectorAll('h1, h2, h3').forEach(h=>{
+  container.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(h=>{
     const block = h.closest('.mdblock');
     if(!block) return;
     outline.push({ idx: Number(block.dataset.idx), level: Number(h.tagName[1]), text: h.textContent.trim() });
@@ -3294,7 +3300,7 @@ function buildOutline(container){
 }
 function jumpOutline(idx){
   const el = document.querySelector(`.mdblock[data-idx="${idx}"]`);
-  if(el) el.scrollIntoView({block:'center', behavior:'smooth'});
+  if(el){ revealBlock(el); el.scrollIntoView({block:'center', behavior:'smooth'}); }
   outlinePanelOpen = false;
   document.getElementById('outlinePanel').style.display = 'none';
 }
@@ -3308,10 +3314,133 @@ function updateOutlineUI(outline){
     return;
   }
   btn.style.display = 'flex';
-  panel.innerHTML = outline.map(o=>
+  panel.innerHTML = `<div class="outline-tools"><button type="button" onclick="foldAllHeadings(true)">Collapse all</button>`
+    + `<button type="button" onclick="foldAllHeadings(false)">Expand all</button></div>`
+    + outline.map(o=>
     `<button type="button" class="outline-row" data-level="${o.level}" onclick="jumpOutline(${o.idx})">${escapeHtml(o.text) || '(untitled heading)'}</button>`
   ).join('');
 }
+
+// ---- Heading fold (v1.37.0) ----
+// Obsidian-style: every heading (H1-H6) that has something under it gets an
+// arrow at the right edge of its row; collapsing hides everything up to the
+// next heading of the SAME OR HIGHER rank (so an H2 swallows its H3s, but the
+// next H2 — or an H1 — ends the section). Collapse state is pure view state:
+// the note text is never touched, and a heading's own text/bookmark snippet
+// doesn't change either (the arrow is a CSS-drawn, text-less button).
+//
+// State lives in curFolds — a Set of heading keys ("level|text|nth-with-that-
+// level-and-text") — and is saved per note in its encrypted metadata as
+// `folds`, so a collapsed note stays collapsed next time. Keys are text-based
+// so they survive edits elsewhere in the note; retitle a heading and its
+// fold state is dropped (pruned on the next render). Not part of exports.
+let curFolds = new Set();
+function blockHeadingLevel(block){
+  const h = Array.from(block.children).find(c=>/^H[1-6]$/.test(c.tagName));
+  return h ? Number(h.tagName[1]) : 0;
+}
+function saveFoldState(){
+  const id = curId;
+  if(!id) return;
+  // View state, like reading progress: a failed save (e.g. storage full) is silent.
+  putMetaOnly(id, { folds: Array.from(curFolds) }).catch(()=>{});
+}
+// Recomputes which blocks are hidden from the .fold-collapsed classes. A
+// collapsed heading nested inside another collapsed one keeps its own state
+// (it's simply hidden too), so expanding the outer one restores the inner.
+function applyFolds(container){
+  let hideLevel = 0; // 0 = not inside a collapsed section
+  container.querySelectorAll('.mdblock').forEach(block=>{
+    const lvl = blockHeadingLevel(block);
+    let hidden = false;
+    if(lvl){
+      if(hideLevel && lvl > hideLevel) hidden = true;
+      else hideLevel = 0;
+    } else if(hideLevel){
+      hidden = true;
+    }
+    block.classList.toggle('fold-hidden', hidden);
+    if(lvl && !hidden && block.classList.contains('fold-collapsed')) hideLevel = lvl;
+  });
+}
+function setBlockFolded(block, folded){
+  block.classList.toggle('fold-collapsed', folded);
+  const btn = block.querySelector(':scope > .fold-btn');
+  if(btn){
+    btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    btn.title = folded ? 'Expand section' : 'Collapse section';
+    btn.setAttribute('aria-label', btn.title);
+  }
+  if(block.dataset.foldKey){
+    if(folded) curFolds.add(block.dataset.foldKey); else curFolds.delete(block.dataset.foldKey);
+  }
+}
+function toggleFold(block){
+  setBlockFolded(block, !block.classList.contains('fold-collapsed'));
+  applyFolds(block.parentElement);
+  saveFoldState();
+}
+function foldAllHeadings(collapse){
+  const container = document.getElementById('mdView');
+  if(!container) return;
+  container.querySelectorAll('.mdblock.foldable').forEach(b=>setBlockFolded(b, collapse));
+  applyFolds(container);
+  saveFoldState();
+}
+// Un-hides a block that sits under a collapsed heading (outline / bookmark
+// jump, find hit): opens every collapsed heading above it that governs it.
+function revealBlock(block){
+  if(!block || !block.classList.contains('fold-hidden')) return;
+  let minLevel = blockHeadingLevel(block) || 7;
+  for(let p = block.previousElementSibling; p; p = p.previousElementSibling){
+    if(!p.classList.contains('mdblock')) continue;
+    const lvl = blockHeadingLevel(p);
+    if(lvl && lvl < minLevel){
+      minLevel = lvl;
+      if(p.classList.contains('fold-collapsed')) setBlockFolded(p, false);
+    }
+  }
+  applyFolds(block.parentElement);
+  saveFoldState();
+}
+// Called after every (re)render of a note, next to wireParagraphEdit.
+function wireHeadingFold(container){
+  const blocks = Array.from(container.querySelectorAll('.mdblock'));
+  const seen = new Map();
+  const live = new Set();
+  blocks.forEach((block, i)=>{
+    block.classList.remove('foldable', 'fold-collapsed', 'fold-hidden');
+    const old = block.querySelector(':scope > .fold-btn');
+    if(old) old.remove();
+    delete block.dataset.foldKey;
+    const lvl = blockHeadingLevel(block);
+    if(!lvl) return;
+    // Nothing under it before the next same-or-higher heading (or the end)?
+    // Then there is nothing to fold, so no arrow.
+    const next = blocks[i + 1];
+    const nextLvl = next ? blockHeadingLevel(next) : -1;
+    if(!next || (nextLvl !== 0 && nextLvl <= lvl)) return;
+    const h = Array.from(block.children).find(c=>/^H[1-6]$/.test(c.tagName));
+    const base = lvl + '|' + h.textContent.trim().toLowerCase();
+    const nth = seen.get(base) || 0;
+    seen.set(base, nth + 1);
+    const key = base + '|' + nth;
+    block.dataset.foldKey = key;
+    live.add(key);
+    block.classList.add('foldable');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fold-btn';
+    btn.onclick = (e)=>{ e.stopPropagation(); toggleFold(block); };
+    block.appendChild(btn);
+    setBlockFolded(block, curFolds.has(key));
+  });
+  let pruned = false;
+  Array.from(curFolds).forEach(k=>{ if(!live.has(k)){ curFolds.delete(k); pruned = true; } });
+  if(pruned) saveFoldState();
+  applyFolds(container);
+}
+
 
 function closeReader(){
   flushDraftNow(); // leaving mid-edit keeps the draft (offered back next time this note is opened)
@@ -3417,7 +3546,9 @@ function renderMarkdown(src, linkTypes){
     );
     return `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
   });
-  s = s.replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>');
+  // H1-H6 (v1.37.0; was H1-H3 only, so "#### x" used to show as literal text).
+  // One pass, so the marker length alone decides the level.
+  s = s.replace(/^(#{1,6}) (.*)$/gm, (_, hashes, text)=>`<h${hashes.length}>${text}</h${hashes.length}>`);
   s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
   s = s.replace(/`([^`]+)`/g,'<code>$1</code>');
   // #tags: converted to tappable pills right after inline code above (so a
@@ -3513,7 +3644,7 @@ function renderMarkdown(src, linkTypes){
   codeBlocks.forEach((html, i)=>{ s = s.replace(`\u0000CODEBLOCK${i}\u0000`, html); });
   return s.split(/\n{2,}/).map((block,idx)=>{
     let html;
-    if(/^<h[123]|^<pre/.test(block)) html = block;
+    if(/^<h[1-6]|^<pre/.test(block)) html = block;
     else if(/^<div class="md-audio/.test(block)) html = block;
     else if(/^<div class="md-note-link/.test(block)) html = block;
     else if(/^<div class="code-block"/.test(block)) html = block;
@@ -3620,6 +3751,7 @@ async function toggleTaskCheckbox(blockIdx, lineIdx){
     wireTagPills(mdView);
     wireTaskCheckboxes(mdView);
     wireParagraphEdit(mdView);
+    wireHeadingFold(mdView);
     await renderBacklinks(curId, mdView);
     updateOutlineUI(buildOutline(mdView));
     findRefresh(); // the re-render wiped the highlights

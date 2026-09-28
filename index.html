@@ -314,6 +314,14 @@
   .outline-row[data-level="1"]{font-weight:600;}
   .outline-row[data-level="2"]{padding-left:26px;}
   .outline-row[data-level="3"]{padding-left:39px;color:var(--ink-soft);}
+  .outline-row[data-level="4"]{padding-left:50px;color:var(--ink-soft);}
+  .outline-row[data-level="5"]{padding-left:61px;color:var(--ink-soft);}
+  .outline-row[data-level="6"]{padding-left:72px;color:var(--ink-soft);}
+  .outline-tools{display:flex;gap:8px;padding:8px 13px;border-bottom:1px solid var(--line);}
+  .outline-tools button{
+    flex:1;background:var(--paper2);border:1px solid var(--line);border-radius:6px;
+    padding:6px 8px;font-size:12px;color:var(--ink);font-family:inherit;cursor:pointer;
+  }
   .stitle{font-family:'Lora',serif;font-size:12px;color:var(--ink-soft);padding:12px 13px 6px;}
   .bmpanel .seg{padding:0 13px 8px;}
   .mdbody{max-width:640px;margin:0 auto;font-family:var(--read-font);font-size:var(--read-size);line-height:1.75;padding-left:26px;}
@@ -345,7 +353,30 @@
     cursor:pointer;white-space:nowrap;
   }
   .para-menu-btn:active{background:var(--paper2);}
-  .mdbody h1,.mdbody h2,.mdbody h3{font-family:'Lora',serif;line-height:1.3;}
+  .mdbody h1,.mdbody h2,.mdbody h3,.mdbody h4,.mdbody h5,.mdbody h6{font-family:'Lora',serif;line-height:1.3;}
+  .mdbody h4{font-size:1.08em;}
+  .mdbody h5{font-size:1em;}
+  .mdbody h6{font-size:.9em;color:var(--ink-soft);}
+  /* Heading fold (v1.37.0). The arrow is a text-less button drawn with a CSS
+     border, so it adds nothing to a block's textContent (bookmark snippets,
+     find, outline all read that). Points down = open, right = collapsed. */
+  .mdblock.fold-hidden{display:none !important;}
+  .mdblock.foldable > :is(h1,h2,h3,h4,h5,h6){padding-right:34px;}
+  .fold-btn{
+    position:absolute;right:0;top:50%;transform:translateY(-50%);
+    width:30px;height:30px;padding:0;border:none;background:none;border-radius:6px;
+    display:flex;align-items:center;justify-content:center;
+    color:var(--ink-soft);opacity:.55;cursor:pointer;transition:opacity .15s;
+  }
+  .fold-btn::before{
+    content:'';display:block;width:7px;height:7px;
+    border-right:2px solid currentColor;border-bottom:2px solid currentColor;
+    transform:translateY(-2px) rotate(45deg);transition:transform .15s;
+  }
+  .mdblock.fold-collapsed > .fold-btn{opacity:1;color:var(--md);}
+  .mdblock.fold-collapsed > .fold-btn::before{transform:translateX(-2px) rotate(-45deg);}
+  .fold-btn:hover,.fold-btn:focus-visible{opacity:1;}
+  .mdblock.fold-collapsed > :is(h1,h2,h3,h4,h5,h6)::after{content:'\00a0\2026';color:var(--ink-soft);}
   #mdEditWrap{display:none;flex-direction:column;height:100%;}
   .mdedit{
     flex:1;width:100%;border:none;background:transparent;color:var(--ink);
@@ -901,8 +932,9 @@
     <div class="help-body mdbody">
       <h3>Text</h3>
       <p><strong>**bold**</strong> · <em>*italic*</em> · <code>`inline code`</code></p>
-      <p><code># Heading 1</code> &nbsp; <code>## Heading 2</code> &nbsp; <code>### Heading 3</code></p>
+      <p><code># Heading 1</code> &nbsp; <code>## Heading 2</code> &nbsp; <code>### Heading 3</code> &nbsp; … &nbsp; <code>###### Heading 6</code></p>
       <p>The <b>B</b> and <b>H</b> toolbar buttons insert bold and a heading for you.</p>
+      <p>In reading view, tap the arrow at the right of a heading to fold everything under it, up to the next heading of the same or higher level. The outline (☰) has Collapse all / Expand all. Folds are remembered per note and don't change the text.</p>
 
       <h3>Strikethrough &amp; highlight</h3>
       <p><del>~~strikethrough~~</del> · <mark class="md-mark">==highlight==</mark></p>

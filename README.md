@@ -7,6 +7,9 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Foldable headings (H1–H6).** Tap the arrow at the right of any heading in
+  reading view to fold the section under it; the outline has Collapse all /
+  Expand all. Folds are remembered per note.
 - **Draft autosave.** While you edit a note, the text is saved as a
   separate draft every 3 seconds (and instantly when you leave). Back out,
   switch away or lose the page by accident and the note opens with an
@@ -149,6 +152,23 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.37.0** (2026-09-28) — Heading fold, Obsidian-style, for **H1–H6**. In
+  reading view every heading that has something under it gets an arrow at the
+  right of its row; tapping it hides everything up to the next heading of the
+  same or higher level (an H2 folds its H3s; the next H2 or an H1 ends the
+  section). A collapsed heading shows `…` after its text and a highlighted
+  arrow. The outline (☰) gains **Collapse all / Expand all**. Fold state is
+  remembered per note (`folds` in the item's encrypted metadata, keyed by
+  heading level + text + n-th occurrence; not included in exports) and is
+  pure view state — the note text is never changed. A heading with nothing
+  under it gets no arrow. Outline jumps, bookmark jumps and find hits
+  auto-expand whatever is hiding their target. A nested heading keeps its own
+  fold state when the outer one is reopened. Also: `####`–`######` now
+  actually render as headings (the renderer only knew H1–H3, so they used to
+  show as literal text), and the outline lists all six levels. The arrow is a
+  text-less CSS-drawn button, so bookmark snippets, find and the outline
+  (which all read `textContent`) are unaffected. Retitling a heading drops its
+  saved fold (pruned on the next render). Tested in Chromium at 420 px.
 - **v1.36.0** (2026-09-28) — Markdown help stays on screen while you edit.
   Before, the editor's **?** opened a modal overlay that covered the very text
   you were trying to format. Now, while editing, **?** toggles a *docked*
