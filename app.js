@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.29.1';
+const APP_VERSION = '1.29.2';
 const APP_VERSION_DATE = '2026-09-28';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1709,7 +1709,15 @@ function resetUndoHistory(){
 function updateUndoRedoButtons(){
   const undoBtn = document.getElementById('undoBtn');
   const redoBtn = document.getElementById('redoBtn');
-  if(undoBtn) undoBtn.disabled = undoStack.length < 2;
+  // Undo is available when there's an earlier snapshot, OR when the text has
+  // moved on from the newest snapshot (a programmatic edit — Replace, Bold,
+  // etc. — that hasn't been snapshotted yet: undoEdit() snapshots it on
+  // demand). Counting only undoStack.length left the button greyed out after
+  // a first-ever Replace All, so it couldn't be tapped even though Ctrl+Z worked.
+  const ta = document.getElementById('mdEditArea');
+  const top = undoStack[undoStack.length - 1];
+  const unsnapshotted = !!(ta && top && top.value !== ta.value);
+  if(undoBtn) undoBtn.disabled = undoStack.length < 2 && !unsnapshotted;
   if(redoBtn) redoBtn.disabled = redoStack.length === 0;
 }
 // Call before any programmatic change to ta.value (toolbar buttons, link/
@@ -1724,6 +1732,10 @@ function pushUndoBeforeEdit(){
   }
   redoStack = [];
   updateUndoRedoButtons();
+  // The caller changes ta.value right after this returns, so refresh once
+  // more after that edit lands — otherwise the button state is computed
+  // against the pre-edit text.
+  setTimeout(updateUndoRedoButtons, 0);
 }
 // Called on every keystroke from onNoteEditInput; only actually snapshots
 // after a pause in typing, so a burst of keystrokes undoes as one step.

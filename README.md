@@ -142,6 +142,20 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.29.2** (2026-09-28) — Two fixes to v1.29.0's find bar, from a
+  screenshot. (1) The bar was `position:fixed`, floating over the note and
+  hiding its first lines (and any match scrolled beneath it); it's now an
+  ordinary flex child between the top bar and `#rcontent`, so opening it
+  shrinks the reading area instead. (2) The Undo button stayed disabled
+  after a first Replace All: `updateUndoRedoButtons` only looked at
+  `undoStack.length`, but a programmatic edit is snapshotted lazily by
+  `undoEdit()`, so with no prior typing the stack still had one entry. It
+  now also enables Undo when the text differs from the newest snapshot, and
+  `pushUndoBeforeEdit` refreshes the buttons again after the edit lands.
+  This was a latent bug for every toolbar action (Bold, Divider, …) used as
+  the first edit, not just Replace. Note Undo only exists while the editor
+  is open — after Save, a replace is committed.
+
 - **v1.29.1** (2026-09-28) — Help-only patch: the ? formatting-help overlay
   gained a "Tips: finding things" section covering find & replace in a note
   (v1.29.0) and the shelf's deep-search toggle (v1.28.0), which had shipped
