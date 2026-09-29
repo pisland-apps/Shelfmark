@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.13';
+const APP_VERSION = '1.51.14';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -448,6 +448,8 @@ async function reencryptEverything(newKey, newAuthRec, onProgress){
       t.onabort = ()=>rej(t.error || new Error('Write was aborted'));
     });
     cryptoKey = newKey;
+    keyEpoch++;
+    dropUndoSlot();
   });
 }
 
@@ -1855,7 +1857,20 @@ function isValidCoverDataUrl(s){
 // one is still undoable lets that earlier one's grace period lapse right
 // away (it's already permanently gone either way, so nothing is lost).
 let lastDeleted = null; // { items: [{id, rec}], timeoutId }
+// v1.51.14: the Undo slot holds records exactly as they were encrypted at delete
+// time. A passcode set/remove re-encrypts the shelf under a new key, so a record
+// restored from before it would be under the OLD key and could never be opened
+// (and one such record stops the whole shelf listing). reencryptEverything
+// therefore empties the slot and bumps keyEpoch; a delete that was already in
+// flight when that happened (it read its records before the key changed) checks
+// the epoch and offers no Undo.
+let keyEpoch = 0;
+function dropUndoSlot(){
+  if(lastDeleted){ clearTimeout(lastDeleted.timeoutId); lastDeleted = null; }
+  hideUndoToast();
+}
 async function deleteItemsWithUndo(ids){
+  const epoch = keyEpoch;
   const items = [];
   for(const id of ids){
     const rec = await getOneRaw(id);
@@ -1863,6 +1878,7 @@ async function deleteItemsWithUndo(ids){
   }
   if(!items.length) return;
   for(const { id } of items) await del(id);
+  if(epoch !== keyEpoch){ dropUndoSlot(); return; } // key changed meanwhile: deleted for good, no Undo
   if(lastDeleted) clearTimeout(lastDeleted.timeoutId);
   const timeoutId = setTimeout(()=>{ lastDeleted = null; hideUndoToast(); }, 6000);
   lastDeleted = { items, timeoutId };
@@ -3188,12 +3204,23 @@ function replaceInlineCode(text, fn){
     return out;
   }).join('\n');
 }
+// Fenced code blocks (v1.51.14). An opening fence must START a line (leading
+// spaces/tabs allowed, so a fence indented inside a list item still works).
+// Before this, three backticks ANYWHERE opened a block, so an inline span that
+// merely contained them (a note explaining fences, or an old changelog entry)
+// swallowed everything up to the next fence and showed it as code. The closer
+// is unchanged: the next ``` anywhere after the opener, so an old note that
+// ends its code as `foo()```' still closes. An opener with no closer stays
+// plain text. renderMarkdown, stripCodeForTags and noteInCodeFence all use
+// this one pattern so the reading view, the Tags page and the editor agree.
+const FENCE_SRC = '^([ \\t]*)```(\\w*)\\n?([\\s\\S]*?)```';
+function fenceRegex(){ return new RegExp(FENCE_SRC, 'gm'); }
 // Strips fenced and inline code out of the raw text before tag-matching, so
 // a "#" typed inside a code sample (e.g. a shell flag or C# in a snippet)
 // is never picked up as a tag. Only used for extraction — never written
 // back, and never shown to the user.
 function stripCodeForTags(raw){
-  return replaceInlineCode(raw.replace(/```[\s\S]*?```/g, ' '), ()=>' ');
+  return replaceInlineCode(raw.replace(fenceRegex(), (m, indent)=>indent + ' '), ()=>' ');
 }
 // Every distinct tag in one note, de-duplicated case-insensitively (so
 // "#Idea" and "#idea" count as the same tag) — the first-seen casing is
@@ -3615,10 +3642,14 @@ function noteLineBounds(v, pos){
   let le = v.indexOf('\n', pos); if(le === -1) le = v.length;
   return { ls, le };
 }
-// Odd number of ``` before the line → the line is inside a fenced code block,
-// where "- foo" / "1. foo" are literal code and must not be auto-continued.
+// True when the line is inside a fenced code block, where "- foo" / "1. foo"
+// are literal code and must not be auto-continued. Uses the same fence rule as
+// the reading view (v1.51.14): remove every complete block before the line; if
+// a line-start ``` is still left, a block was opened and not yet closed.
 function noteInCodeFence(v, lineStart){
-  return ((v.slice(0, lineStart).match(/```/g) || []).length % 2) === 1;
+  const before = v.slice(0, lineStart);
+  if(before.indexOf('```') === -1) return false;
+  return /^[ \t]*```/m.test(before.replace(fenceRegex(), ''));
 }
 // Replace [from,to) with text as ONE undoable step. Goes through
 // execCommand so the browser also fires a real `input` event (draft autosave,
@@ -4786,11 +4817,11 @@ function renderMarkdown(src, linkTypes){
   // `s` afterwards. `\u0000` can't appear in normal note text, so it's a
   // safe marker.
   const codeBlocks = [];
-  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code)=>{
+  s = s.replace(fenceRegex(), (_, indent, lang, code)=>{
     // ```index — a live category index (v1.48.0), not a code sample.
     if(lang === 'index'){
       codeBlocks.push(renderShelfIndex(unescapeHtml(code), linkTypes));
-      return `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
+      return indent + `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
     }
     const langLabel = lang ? escapeHtml(lang) : '';
     codeBlocks.push(
@@ -4799,7 +4830,7 @@ function renderMarkdown(src, linkTypes){
       + `<button class="code-copy" data-on-click="copyCodeBlock" data-args-click='["$el"]'>Copy</button></div>`
       + `<pre><code>${code.trim()}</code></pre></div>`
     );
-    return `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
+    return indent + `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
   });
   // H1-H6 (v1.37.0; was H1-H3 only, so "#### x" used to show as literal text).
   // One pass, so the marker length alone decides the level.

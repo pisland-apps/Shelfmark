@@ -183,6 +183,27 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.14** (2026-09-29) — Fixes: code fences must start a line; Undo no longer
+  survives a passcode change.
+  - **Code fences.** An opening fence (three backticks) now has to be at the start of a
+    line; leading spaces or a tab are fine, so a fence indented inside a list still works.
+    Before, three backticks anywhere opened a block, so a line that merely mentioned them
+    inside an inline code span swallowed everything up to the next fence and showed it as
+    code (this is what garbled the older entries in this changelog). An opener with no
+    closing fence stays plain text. The closing fence is unchanged (the next three
+    backticks after the opener). The reading view, the Tags page and the editor's
+    "am I inside a code block" check share one rule.
+  - **Behaviour change:** a block written after other text on the same line, such as
+    `see: ` followed by three backticks and code, is no longer a block. Put the fence on its own line.
+  - **Undo vs passcode change.** Undo restores a record exactly as it was encrypted at
+    delete time. If a passcode was set or removed inside the 6-second Undo window, that
+    record would have come back under the old key and could never be opened, and one such
+    record stops the whole shelf from listing. A passcode change now empties the Undo slot
+    and hides the toast. A delete that was already in progress when the key changed is
+    also final (no Undo is offered).
+  - Tests: `tests/test_fences.js` (26 checks; 5 fail on v1.51.12) and
+    `tests/test_undo_rekey.js` (17 checks; fails on v1.51.12). Also run in real Chromium.
+
 - **v1.51.13** (2026-09-29) — Hardening: each encrypted record is now tied to its own id.
   - Every encrypted blob of an item (details, content, unsaved draft) is sealed with
     AES-GCM additional data naming the item's id and which blob it is. A record copied

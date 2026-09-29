@@ -29,6 +29,11 @@ in this folder ships to users. Run from this folder:
 - `test_autolock.js` — idle / background auto-lock and Lock now (v1.51.11): timing rules,
   activity resets, sound and export/import holds, queued writes finish first, draft kept,
   settings panel, no-passcode mode never locks. Replaces the page reload with a stub.
+- `test_fences.js` — code fences must start a line (v1.51.14): mid-line backticks never open a block,
+  indented / CRLF / legacy-closer fences still work, unclosed fence stays text, Tags page and editor use the
+  same rule, plus a 400-input fuzz that must keep `<pre>` / `<code>` balanced.
+- `test_undo_rekey.js` — Undo slot dropped on a passcode change (v1.51.14), including a delete that is
+  mid-flight when the key changes.
 - `test_item_binding.js` — AES-GCM item-id binding (v1.51.13): a copied/swapped blob is refused,
   old-format records still open and are upgraded a blob at a time, drafts, passcode change,
   export/import round trip, backups and the verifier unchanged. Old-format records are built
