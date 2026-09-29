@@ -3,7 +3,7 @@
   "private": true,
   "description": "Dev-only tests for Shelfmark. Not part of the deployed app (the service worker precaches an explicit file list). Run: cd tests && npm install && npm test",
   "scripts": {
-    "test": "node test_dispatcher.js && node test_dispatcher_containment.js && node test_links.js && node test_ext_wipe.js && node test_ext_sync.js && node test_kdf.js && node test_import_merge.js && node test_write_queue.js && node test_autolock.js"
+    "test": "node test_dispatcher.js && node test_dispatcher_containment.js && node test_links.js && node test_ext_wipe.js && node test_ext_sync.js && node test_kdf.js && node test_import_merge.js && node test_write_queue.js && node test_autolock.js && node test_inline_code.js"
   },
   "devDependencies": { "fake-indexeddb": "^6.0.0", "jsdom": "^26.0.0" }
 }

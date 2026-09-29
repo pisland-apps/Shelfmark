@@ -29,3 +29,6 @@ in this folder ships to users. Run from this folder:
 - `test_autolock.js` — idle / background auto-lock and Lock now (v1.51.11): timing rules,
   activity resets, sound and export/import holds, queued writes finish first, draft kept,
   settings panel, no-passcode mode never locks. Replaces the page reload with a stub.
+- `test_inline_code.js` — inline code spans (v1.51.12): double-backtick spans, unmatched backticks,
+  nothing after a bad span turning into code, tag extraction. Cases are in `inline_code_cases.js`
+  so the same checks can be run in a real browser.

@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.11';
+const APP_VERSION = '1.51.12';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3092,12 +3092,50 @@ async function buildLinkTypeMap(){
 // note ("it's") rendered as "it&" + a #39 pill + ";s", and an apostrophe inside
 // a link URL/alt text spliced a <button> into the attribute.
 const TAG_RE = /(?<![\w/#&])#([\p{L}\p{N}_][\p{L}\p{N}_-]{0,49})/gu;
+// Inline code spans (v1.51.12), CommonMark style. A run of N backticks opens a
+// span that ends at the next run of EXACTLY N backticks, so ``a ` b`` shows a
+// literal backtick. Rules that keep a stray backtick harmless:
+//   * a span never crosses a line break (the reading view turns each line into
+//     its own list item / <br>, so a <code> that straddled two lines left
+//     an unclosed tag that the browser carried through the rest of the note);
+//   * a run with no matching closer is plain text and never opens anything;
+//   * the tags produced are always balanced <code>...</code> pairs.
+// One space just inside both ends is dropped when the span isn't all spaces
+// (that is how ``  ` `` is written). `fn` receives the span's text and returns
+// what replaces it; text outside spans is returned untouched.
+function replaceInlineCode(text, fn){
+  return text.split('\n').map(line=>{
+    if(line.indexOf('`') === -1) return line;
+    let out = '', i = 0;
+    while(i < line.length){
+      const b = line.indexOf('`', i);
+      if(b === -1){ out += line.slice(i); break; }
+      out += line.slice(i, b);
+      let e = b; while(e < line.length && line[e] === '`') e++;
+      const n = e - b;
+      let close = -1, k = e;
+      while(k < line.length){
+        const p = line.indexOf('`', k);
+        if(p === -1) break;
+        let q = p; while(q < line.length && line[q] === '`') q++;
+        if(q - p === n){ close = p; break; }
+        k = q;
+      }
+      if(close === -1){ out += line.slice(b, e); i = e; continue; } // unmatched run: literal
+      let inner = line.slice(e, close);
+      if(inner.length > 2 && inner[0] === ' ' && inner[inner.length-1] === ' ' && inner.trim() !== '') inner = inner.slice(1, -1);
+      out += fn(inner);
+      i = close + n;
+    }
+    return out;
+  }).join('\n');
+}
 // Strips fenced and inline code out of the raw text before tag-matching, so
 // a "#" typed inside a code sample (e.g. a shell flag or C# in a snippet)
 // is never picked up as a tag. Only used for extraction — never written
 // back, and never shown to the user.
 function stripCodeForTags(raw){
-  return raw.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`]*`/g, ' ');
+  return replaceInlineCode(raw.replace(/```[\s\S]*?```/g, ' '), ()=>' ');
 }
 // Every distinct tag in one note, de-duplicated case-insensitively (so
 // "#Idea" and "#idea" count as the same tag) — the first-seen casing is
@@ -4709,7 +4747,7 @@ function renderMarkdown(src, linkTypes){
   // One pass, so the marker length alone decides the level.
   s = s.replace(/^(#{1,6}) (.*)$/gm, (_, hashes, text)=>`<h${hashes.length}>${text}</h${hashes.length}>`);
   s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
-  s = s.replace(/`([^`]+)`/g,'<code>$1</code>');
+  s = replaceInlineCode(s, code=>'<code>' + code + '</code>');
   // #tags: converted to tappable pills right after inline code above (so a
   // "#" typed inside a code span, e.g. `C#`, is skipped) and before the
   // image/link passes below (so a tag never gets mixed up with `[label](url)`

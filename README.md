@@ -183,6 +183,17 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.12** (2026-09-29) — Fix: inline code holding a literal backtick turned
+  the rest of the note into code.
+  - A double-backtick span such as ``a ` b`` left an unclosed
+    `<code>`, and the browser applied code styling to everything below it. Inline
+    code now follows CommonMark: N backticks close at the next run of exactly N.
+  - A span must close on the same line; a backtick with no partner is plain text.
+    (Before, a single-backtick span could continue onto the next line of a
+    paragraph; now both backticks show as text.)
+  - The Tags page reads code spans the same way as reading view.
+  - Tests: `tests/test_inline_code.js`.
+
 - **v1.51.11** (2026-09-29) — Auto-lock, plus a "Lock now" command (the app
   had no manual lock before).
   - **Idle lock and background lock** (passcode mode only). Defaults: 10 minutes
