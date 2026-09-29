@@ -370,6 +370,7 @@
   }
   .stitle{font-family:'Lora',serif;font-size:12px;color:var(--ink-soft);padding:12px 13px 6px;}
   .bmpanel .seg{padding:0 13px 8px;}
+  .sscopehint{font-size:11px;color:var(--ink-soft);padding:0 13px 4px;line-height:1.4;}
   .mdbody{max-width:640px;margin:0 auto;font-family:var(--read-font);font-size:var(--read-size);line-height:1.75;padding-left:26px;}
   .md-ind{display:inline-block;height:1px;}
   .mdblock{position:relative;border-radius:6px;transition:background-color .15s;}
@@ -1250,26 +1251,35 @@ columns: 分类 | 笔记
     <button class="bmbtn" id="bmBtn" data-on-click="toggleBookmarkPanel" style="display:none;">&#128278;<span id="bmCount"></span></button>
   </div>
   <div id="settingsPanel" class="bmpanel" style="display:none;">
+    <div class="stitle">Apply to</div>
+    <div class="seg" id="settingsScopeSeg">
+      <button data-scope="app" data-on-click="setSettingsScope" data-arg-click="app">All pages</button>
+      <button data-scope="page" data-on-click="setSettingsScope" data-arg-click="page">This page only</button>
+    </div>
+    <div class="sscopehint" id="settingsScopeHint"></div>
     <div class="stitle">Page color</div>
     <div class="seg">
-      <button data-v="auto" data-on-click="setPref" data-args-click='["theme","auto"]'>Auto</button>
-      <button data-v="light" data-on-click="setPref" data-args-click='["theme","light"]'>Light</button>
-      <button data-v="dark" data-on-click="setPref" data-args-click='["theme","dark"]'>Dark</button>
-      <button data-v="sepia" data-on-click="setPref" data-args-click='["theme","sepia"]'>Sepia</button>
+      <button data-v="auto" data-on-click="setReadPref" data-args-click='["theme","auto"]'>Auto</button>
+      <button data-v="light" data-on-click="setReadPref" data-args-click='["theme","light"]'>Light</button>
+      <button data-v="dark" data-on-click="setReadPref" data-args-click='["theme","dark"]'>Dark</button>
+      <button data-v="sepia" data-on-click="setReadPref" data-args-click='["theme","sepia"]'>Sepia</button>
     </div>
     <div class="stitle">Font</div>
     <div class="seg">
-      <button data-v="serif" data-on-click="setPref" data-args-click='["font","serif"]'>Serif</button>
-      <button data-v="sans" data-on-click="setPref" data-args-click='["font","sans"]'>Sans</button>
-      <button data-v="mono" data-on-click="setPref" data-args-click='["font","mono"]'>Mono</button>
-      <button data-v="zh" data-on-click="setPref" data-args-click='["font","zh"]'>中文</button>
+      <button data-v="serif" data-on-click="setReadPref" data-args-click='["font","serif"]'>Serif</button>
+      <button data-v="sans" data-on-click="setReadPref" data-args-click='["font","sans"]'>Sans</button>
+      <button data-v="mono" data-on-click="setReadPref" data-args-click='["font","mono"]'>Mono</button>
+      <button data-v="zh" data-on-click="setReadPref" data-args-click='["font","zh"]'>中文</button>
     </div>
     <div class="stitle">Text size</div>
     <div class="seg" style="padding-bottom:13px;">
-      <button data-v="s" data-on-click="setPref" data-args-click='["size","s"]'>S</button>
-      <button data-v="m" data-on-click="setPref" data-args-click='["size","m"]'>M</button>
-      <button data-v="l" data-on-click="setPref" data-args-click='["size","l"]'>L</button>
-      <button data-v="xl" data-on-click="setPref" data-args-click='["size","xl"]'>XL</button>
+      <button data-v="s" data-on-click="setReadPref" data-args-click='["size","s"]'>S</button>
+      <button data-v="m" data-on-click="setReadPref" data-args-click='["size","m"]'>M</button>
+      <button data-v="l" data-on-click="setReadPref" data-args-click='["size","l"]'>L</button>
+      <button data-v="xl" data-on-click="setReadPref" data-args-click='["size","xl"]'>XL</button>
+    </div>
+    <div class="seg" id="readPrefsResetRow" style="display:none;padding-bottom:13px;">
+      <button data-on-click="resetReadPrefs">Reset this page to the app-wide look</button>
     </div>
   </div>
   <div id="bmPanel" class="bmpanel" style="display:none;"></div>

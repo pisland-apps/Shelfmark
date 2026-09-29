@@ -38,7 +38,9 @@ const click=el=>el.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelab
 const last=()=>calls[calls.length-1]; const reset=()=>calls.length=0;
 
 click($('[data-on-click="undoDelete"]')); ok(JSON.stringify(calls)==='[["undoDelete",[]]]','simple click calls action with no args');
-reset(); click($('[data-on-click="setPref"][data-args-click*="dark"]')); ok(JSON.stringify(last())==='["setPref",["theme","dark"]]','setPref(theme,dark) args pass through');
+reset(); click($('[data-on-click="setReadPref"][data-args-click*="dark"]')); ok(JSON.stringify(last())==='["setReadPref",["theme","dark"]]','setReadPref(theme,dark) args pass through (reading panel, v1.53.0)');
+reset(); click($('[data-on-click="setSettingsScope"][data-arg-click="page"]')); ok(JSON.stringify(last())==='["setSettingsScope",["page"]]','setSettingsScope(page) arg passes through');
+reset(); click($('[data-on-click="resetReadPrefs"]')); ok(JSON.stringify(last())==='["resetReadPrefs",[]]','resetReadPrefs is wired');
 reset(); click($('#coverRemoveBtnEdit')); ok(JSON.stringify(last())==='["removeCover",["edit"]]','removeCover(edit)');
 reset(); click($('#coverRemoveBtn')); ok(JSON.stringify(last())==='["removeCover",["add"]]','removeCover(add)');
 reset(); click($('[data-on-click="findStep"][data-args-click="[-1]"]')); ok(JSON.stringify(last())==='["findStep",[-1]]','negative number arg');

@@ -7,6 +7,13 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Reading look per page (v1.53.0).** In a note's ⚙ panel, *Apply to* chooses **All pages**
+  (the old app-wide setting) or **This page only**. A page's own page color / font / text size is
+  saved with that note and wins over the app-wide one while the note is open; only the options you
+  set for the page are stored, the rest still follow the app. The ⚙ button is highlighted on a note
+  that has its own look, and *Reset this page to the app-wide look* removes it. Notes only (PDFs,
+  pictures and audio have no reading panel). The Ctrl+K Theme commands stay app-wide.
+
 - **Auto-lock and Lock now (passcode mode).** The shelf locks itself after 10
   minutes without a tap/key/scroll, or after 5 minutes in the background
   (both adjustable, or Never, under Ctrl+K → *Passcode & lock*). Ctrl+K →
@@ -181,6 +188,22 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.53.0** (2026-09-29) — Page color, font and text size can be set for one note.
+  - The ⚙ panel gained an *Apply to* switch: **All pages** (unchanged behaviour) or **This page only**.
+    A page's setting is stored in that note's metadata (`readerPrefs`, only the keys you changed) and is
+    applied on top of the app-wide setting when the note opens; closing the note puts the app-wide look
+    back. Opening a note that has its own look starts the panel on *This page only*.
+  - Kept with the note through rename, move, edit, and export / import (plain and encrypted backups);
+    values are checked on read (`readPrefsClean`), so a hand-edited or old backup can only ever set a known
+    theme, font or size. Backups without the field import as before.
+  - Not changed: the Ctrl+K *Theme:* commands and the app-wide values themselves. **One-way, mildly:** an
+    older build ignores `readerPrefs` (harmless) and drops it the next time it re-saves that note's metadata
+    from an import.
+  - Tests: `tests/test_page_reading_prefs.js` (30 checks; fails on v1.52.5). `tests/test_dispatcher.js` now
+    clicks the panel's `setReadPref` buttons instead of `setPref`.
+  - **By hand:** open a note, ⚙ → *This page only* → pick Sepia + XL, close and reopen it (still Sepia + XL),
+    open another note (unchanged), then *Reset this page…*; try it on a phone in the installed PWA.
 
 - **v1.52.5** (2026-09-29) — Smaller fixes from the v1.52.1 review.
   - **Service worker: no stale precache.** The offline cache was filled with `cache.addAll()`, which goes

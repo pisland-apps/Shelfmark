@@ -60,3 +60,4 @@ in this folder ships to users. Run from this folder:
 - `test_remote_media.js`: remote images / audio are never loaded, and the tap handler is gone (v1.52.4).
 - `test_service_worker.js`: precache uses `cache:'reload'`, install is all-or-nothing (v1.52.5).
 - `test_rekey_hold.js`: passcode change holds off auto-lock and reports real progress (v1.52.5).
+- `test_page_reading_prefs.js`: page color / font / size for one note only, restored on close, kept in metadata and backups (v1.53.0).

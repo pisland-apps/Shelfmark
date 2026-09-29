@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.52.5';
+const APP_VERSION = '1.53.0';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1192,7 +1192,8 @@ const NO_OWNER_NOTE = 'This file has no owner information (it was made before v1
 function exportMetaOf(full){
   return {id:full.id, title:full.title, category:full.category, type:full.type, mime:full.mime,
     addedAt:full.addedAt, updatedAt: typeof full.updatedAt === 'number' ? full.updatedAt : full.addedAt,
-    progress:full.progress, bookmarks:full.bookmarks, cover:full.cover || null};
+    progress:full.progress, bookmarks:full.bookmarks, cover:full.cover || null,
+    readerPrefs: readPrefsClean(full.readerPrefs)};
 }
 // Shared by both the whole-shelf JSON export (below) and exporting a single
 // item's own file (exportCurrentItem, in the reader section) — same
@@ -1719,7 +1720,8 @@ async function importOneItem(s, it){
     type: it.type, content, mime: it.mime,
     addedAt: it.addedAt || Date.now(), updatedAt: typeof it.updatedAt === 'number' ? it.updatedAt : Date.now(),
     progress: it.progress || null,
-    bookmarks: it.bookmarks || [], cover: isValidCoverDataUrl(it.cover) ? it.cover : null
+    bookmarks: it.bookmarks || [], cover: isValidCoverDataUrl(it.cover) ? it.cover : null,
+    readerPrefs: readPrefsClean(it.readerPrefs)
   };
   try{
     await put(record);
@@ -1794,11 +1796,33 @@ async function putPrefs(p){
   return idbWrite('settings', st=>st.put({id:'prefs', iv, cipher}));
 }
 
+// v1.53.0: per-page reading settings. A note can carry its own page color / font / text
+// size (`readerPrefs` in its metadata). Only the keys the person set "for this page" are
+// stored; anything missing follows the app-wide setting. `curReadOverride` is the open
+// note's override (null when none), `settingsScope` is which of the two the panel edits.
+const READ_PREF_VALUES = {
+  theme: ['auto','light','dark','sepia'],
+  font:  Object.keys(FONT_MAP),
+  size:  Object.keys(SIZE_MAP)
+};
+let curReadOverride = null;
+let settingsScope = 'app'; // 'app' | 'page'
+// Whatever is stored (a backup, an old build, a hand-edited file) is reduced to known keys with
+// known values; nothing else is ever put into a style property. Empty -> null.
+function readPrefsClean(o){
+  if(!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  const out = {};
+  for(const k of Object.keys(READ_PREF_VALUES)){
+    if(typeof o[k] === 'string' && READ_PREF_VALUES[k].includes(o[k])) out[k] = o[k];
+  }
+  return Object.keys(out).length ? out : null;
+}
 function applyPrefs(p){
-  if(p.theme === 'auto') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.setAttribute('data-theme', p.theme);
-  document.documentElement.style.setProperty('--read-font', FONT_MAP[p.font] || FONT_MAP.serif);
-  document.documentElement.style.setProperty('--read-size', SIZE_MAP[p.size] || SIZE_MAP.m);
+  const e = curReadOverride ? { ...p, ...curReadOverride } : p;
+  if(e.theme === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', e.theme);
+  document.documentElement.style.setProperty('--read-font', FONT_MAP[e.font] || FONT_MAP.serif);
+  document.documentElement.style.setProperty('--read-size', SIZE_MAP[e.size] || SIZE_MAP.m);
   const loopBtn = document.getElementById('loopBtn');
   if(loopBtn) loopBtn.classList.toggle('active', !!p.loopAudio);
 }
@@ -1813,14 +1837,55 @@ function setPref(key, val){
   putPrefs(prefs).catch(()=>{});
   refreshSettingsUI();
 }
+// The reading panel's buttons. In "All pages" scope this is the old app-wide setting; in
+// "This page only" scope it is stored on the open note and wins over the app-wide one.
+// (The command palette's Theme commands stay app-wide.)
+function saveReadOverride(){
+  const id = curId, val = curReadOverride ? { ...curReadOverride } : null;
+  if(!id) return Promise.resolve();
+  return putMetaOnly(id, { readerPrefs: val }).catch(()=>{});
+}
+function setReadPref(key, val){
+  if(settingsScope === 'page' && curId && curType === 'markdown'){
+    if(!READ_PREF_VALUES[key] || !READ_PREF_VALUES[key].includes(val)) return;
+    curReadOverride = { ...(curReadOverride || {}), [key]: val };
+    applyPrefs(prefs);
+    saveReadOverride();
+    refreshSettingsUI();
+    return;
+  }
+  setPref(key, val);
+}
+function setSettingsScope(scope){
+  settingsScope = (scope === 'page' && curId && curType === 'markdown') ? 'page' : 'app';
+  refreshSettingsUI();
+}
+function resetReadPrefs(){
+  if(!curReadOverride) return;
+  curReadOverride = null;
+  applyPrefs(prefs);
+  saveReadOverride();
+  refreshSettingsUI();
+}
 function refreshSettingsUI(){
+  const eff = settingsScope === 'page' ? { ...prefs, ...(curReadOverride || {}) } : prefs;
   document.querySelectorAll('#settingsPanel .seg').forEach(seg=>{
     seg.querySelectorAll('button').forEach(b=>{
+      if(b.dataset.scope){ b.classList.toggle('active', settingsScope === b.dataset.scope); return; }
+      if(!b.dataset.v) return; // the Reset button
       const key = ['auto','light','dark','sepia'].includes(b.dataset.v) ? 'theme'
         : ['serif','sans','mono','zh'].includes(b.dataset.v) ? 'font' : 'size';
-      b.classList.toggle('active', prefs[key] === b.dataset.v);
+      b.classList.toggle('active', eff[key] === b.dataset.v);
     });
   });
+  const reset = document.getElementById('readPrefsResetRow');
+  if(reset) reset.style.display = (settingsScope === 'page' && curReadOverride) ? 'flex' : 'none';
+  const hint = document.getElementById('settingsScopeHint');
+  if(hint) hint.textContent = settingsScope === 'page'
+    ? 'Only this note changes. Other pages keep the app-wide look.'
+    : (curReadOverride ? 'This note has its own look, which wins over these.' : 'Applies to every page without its own look.');
+  const gear = document.getElementById('settingsBtn');
+  if(gear) gear.classList.toggle('active', !!curReadOverride);
 }
 function toggleSettingsPanel(){
   bmPanelOpen = false;
@@ -2457,6 +2522,11 @@ async function openReader(id){
   if(!it) return;
   curId = id; curType = it.type;
   curDraft = null;
+  // v1.53.0: this note's own reading look (markdown notes only), applied on top of the app-wide one
+  curReadOverride = it.type === 'markdown' ? readPrefsClean(it.readerPrefs) : null;
+  settingsScope = curReadOverride ? 'page' : 'app';
+  applyPrefs(prefs);
+  refreshSettingsUI();
   document.getElementById('rtitle').textContent = it.title;
   document.getElementById('bmBtn').style.display = 'none';
   document.getElementById('editNoteBtn').style.display = 'none';
@@ -4844,6 +4914,9 @@ function closeReader(){
   curPdfRenderToken++; // invalidate any render still in flight for the closed item
   curPdfPage = 1; curPdfNumPages = 0;
   curId = null; curType = null;
+  curReadOverride = null; settingsScope = 'app';
+  applyPrefs(prefs); // back to the app-wide look
+  refreshSettingsUI();
   updateMiniPlayer(); // the mini bar may need to reappear now that the reader isn't showing this track
   render();
 }
@@ -6340,7 +6413,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  updatePassHint, lockNow, setAutoLockPref, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, createIndexNoteFromGuide,
