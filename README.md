@@ -170,6 +170,35 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.7** (2026-09-29) — Notes-folder sync now handles renamed, moved and
+  deleted files, and no longer duplicates notes that are already on the shelf.
+  Before, sync knew files only by path: renaming or moving one in Obsidian
+  created a second note, a deleted file left its note linked to nothing, and
+  linking a folder whose files were already on the shelf duplicated them.
+  - **Renamed / moved:** a new file with *identical text* as a linked note whose
+    file disappeared is treated as the same note. The note keeps its id,
+    reading position and bookmarks, and follows the file (`extPath`). Its title
+    and category follow too, but only if they were still the auto-derived ones;
+    a title or category you changed yourself is left alone.
+  - **Deleted:** if the file is confirmed gone, the note stays on the shelf as
+    an ordinary note (link cleared), nothing is deleted. "Confirmed" means the
+    browser says *not found*; a permission error or an unreadable folder (e.g.
+    a drive that is unplugged) never unlinks anything. A file moved to
+    `.trash` counts as deleted, since dot-folders are skipped.
+  - **Already on the shelf:** a new file that matches an ordinary note (same
+    title and text, or identical non-empty text that is unique on both sides)
+    is adopted instead of duplicated. This also makes Unlink → relink of the
+    same folder safe. Two look-alike notes or files are never guessed.
+  - **Known limit:** a file that is renamed/moved *and edited* before the next
+    sync looks like "old deleted, new added": the old note is kept unlinked and
+    the new file becomes a new note. This is deliberate; guessing could
+    overwrite the only shelf copy of a deleted note. Empty files never pair.
+  - The Sync-now summary lists renamed/moved, matched and unlinked counts.
+  - Logic is in `extSync`, plus two pure helpers (`extPairMoves`,
+    `extPairAdopt`) and `extIsGone`.
+  - Tests: new `tests/test_ext_sync.js` (41 checks) runs the real `extSync`
+    against an in-memory fake folder, plus the matchers on their own.
+
 - **v1.51.6** (2026-09-29) — "Erase and start over" now also forgets the
   linked notes folder.
   - `wipeAllData` deleted the `shelfmark` IndexedDB database but not

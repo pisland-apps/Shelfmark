@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.6';
+const APP_VERSION = '1.51.7';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -5459,34 +5459,145 @@ async function putContentOnlyRaw(id, text){
     rec.contentIv = iv; rec.contentCipher = cipher; await putRaw(rec);
   });
 }
+// ---- Folder-sync identity (v1.51.7) -----------------------------------------
+// A linked note is still keyed by its path, but a path that disappears is no
+// longer left silently stale: the sync now tells three cases apart.
+//   renamed / moved  -> a file with IDENTICAL text appeared at a new path: the
+//                       existing item follows it (extPath, and title/category
+//                       when they were still the auto-derived ones)
+//   deleted          -> the file is really gone: the item stays on the shelf
+//                       as an ordinary note (extPath cleared), nothing is lost
+//   already on shelf -> a new file has the same title and identical text as an
+//                       ordinary (unlinked) note: adopt it instead of creating
+//                       a duplicate (also what makes unlink -> relink safe)
+// Deliberately NOT guessed: a file that was renamed/moved AND edited before the
+// next sync looks like "old file deleted + new file added". Guessing there
+// could overwrite the only shelf copy of a deleted note.
+function extDirOf(path){ return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''; }
+function extTitleOf(path){ return path.split('/').pop().replace(/\.md$/i,''); }
+// Pure matcher (no I/O, unit-tested). orphans: [{id,path,content}] linked items
+// whose file is missing; fresh: [{path,text}] files with no linked item.
+// Returns Map(fresh.path -> orphan). Empty files never pair (nothing to compare).
+function extPairMoves(orphans, fresh){
+  const out = new Map(), used = new Set();
+  const base = p=>p.split('/').pop().toLowerCase();
+  const pass = match=>{
+    for(const f of fresh){
+      if(out.has(f.path) || !f.text.trim()) continue;
+      const hit = orphans.find(o=>!used.has(o) && o.content === f.text && match(o,f));
+      if(hit){ out.set(f.path, hit); used.add(hit); }
+    }
+  };
+  pass((o,f)=>base(o.path) === base(f.path)); // same file name first (a move)
+  pass(()=>true);                             // then any identical text (a rename)
+  return out;
+}
+// Pure matcher for "this new file is already on the shelf as an ordinary note".
+// cands: [{id,title,content}] unlinked markdown notes; fresh: [{path,text}].
+// Returns Map(fresh.path -> cand). Pass 1: same title and identical text. Pass 2:
+// identical non-empty text, but only when exactly one note and one file have it
+// (a custom title survives unlink -> relink, yet two look-alike notes are never guessed).
+function extPairAdopt(cands, fresh){
+  const out = new Map(), used = new Set();
+  for(const f of fresh){
+    const hit = cands.find(c=>!used.has(c) && c.title === extTitleOf(f.path) && c.content === f.text);
+    if(hit){ out.set(f.path, hit); used.add(hit); }
+  }
+  for(const f of fresh){
+    if(out.has(f.path) || !f.text.trim()) continue;
+    const cs = cands.filter(c=>!used.has(c) && c.content === f.text);
+    const fs = fresh.filter(x=>!out.has(x.path) && x.text === f.text);
+    if(cs.length === 1 && fs.length === 1){ out.set(f.path, cs[0]); used.add(cs[0]); }
+  }
+  return out;
+}
+// True only when the browser positively says the file/folder does not exist.
+// Permission errors, a disconnected drive, etc. are NOT "gone" -> never unlink.
+async function extIsGone(path){
+  try{ await (await extFileHandle(path, false)).getFile(); return false; }
+  catch(e){ return !!e && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError'); }
+}
 async function extSync(interactive){
   if(!extRoot || !cryptoKey || extSyncing) return;
   if(!(await extPerm(interactive))) return;
   extSyncing = true;
-  let added = 0, updated = 0;
+  const n = { added:0, updated:0, moved:0, adopted:0, unlinked:0 };
+  let total = 0;
   try{
     const files = []; await extWalk(extRoot, '', files);
-    const byPath = new Map((await getAll()).filter(m=>m.extPath).map(m=>[m.extPath, m]));
+    total = files.length;
+    const all = await getAll();
+    const byPath = new Map(all.filter(m=>m.extPath).map(m=>[m.extPath, m]));
+    const onDisk = new Set(files.map(f=>f.path));
+    const fresh = [];
     for(const f of files){
       const file = await f.handle.getFile(); const cur = byPath.get(f.path);
       if(cur){
         if(cur.extMtime !== file.lastModified){
           await putContentOnlyRaw(cur.id, await file.text());
-          await putMetaOnly(cur.id, { extMtime: file.lastModified, updatedAt: Date.now() }); updated++;
+          await putMetaOnly(cur.id, { extMtime: file.lastModified, updatedAt: Date.now() }); n.updated++;
         }
-      } else {
-        const dirPart = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
-        await put({
-          id: Date.now()+'-'+Math.random().toString(36).slice(2),
-          title: f.path.split('/').pop().replace(/\.md$/i,''),
-          category: dirPart || 'Uncategorized', type:'markdown', mime:'text/markdown',
-          content: await file.text(), addedAt: file.lastModified, updatedAt: file.lastModified, progress: null,
-          extPath: f.path, extMtime: file.lastModified
-        }); added++;
+      } else fresh.push({ path:f.path, file, text: await file.text() });
+    }
+    // Linked items whose path is no longer in the folder listing.
+    const orphanMetas = all.filter(m=>m.extPath && !onDisk.has(m.extPath));
+    const orphans = [];
+    if(fresh.length){ // their text is only needed to pair renames with new files
+      for(const m of orphanMetas){
+        const rec = await getOneRaw(m.id); if(!rec) continue;
+        orphans.push({ meta:m, id:m.id, path:m.extPath, content: await decryptContent(rec, 'markdown') });
       }
     }
-    if(added || updated) await render();
-    if(interactive) alert(`Notes folder "${extRootName}": ${added} added, ${updated} updated, ${files.length} .md files in total.`);
+    const pairs = extPairMoves(orphans, fresh);
+    const claimed = new Set();
+    const left = fresh.filter(f=>!pairs.has(f.path));
+    const cands = [];
+    if(left.length){ // decrypt ordinary notes only when a new file needs a match
+      for(const m of all){
+        if(m.extPath || m.type !== 'markdown') continue;
+        const rec = await getOneRaw(m.id); if(!rec) continue;
+        cands.push({ id:m.id, title:m.title, content: await decryptContent(rec, 'markdown') });
+      }
+    }
+    const adoptPairs = extPairAdopt(cands, left);
+    for(const f of fresh){
+      const o = pairs.get(f.path);
+      if(o){                                   // renamed or moved
+        const m = o.meta, upd = { extPath:f.path, extMtime:f.file.lastModified };
+        if(m.category === (extDirOf(o.path) || 'Uncategorized')) upd.category = extDirOf(f.path) || 'Uncategorized';
+        if(m.title === extTitleOf(o.path)) upd.title = extTitleOf(f.path);
+        await putMetaOnly(m.id, upd); claimed.add(m.id); n.moved++;
+        continue;
+      }
+      const hit = adoptPairs.get(f.path);
+      if(hit){                                 // same note already on the shelf, unlinked
+        await putMetaOnly(hit.id, { extPath:f.path, extMtime:f.file.lastModified });
+        n.adopted++;
+        continue;
+      }
+      const title = extTitleOf(f.path);
+      const dirPart = extDirOf(f.path);
+      await put({
+        id: Date.now()+'-'+Math.random().toString(36).slice(2),
+        title, category: dirPart || 'Uncategorized', type:'markdown', mime:'text/markdown',
+        content: f.text, addedAt: f.file.lastModified, updatedAt: f.file.lastModified, progress: null,
+        extPath: f.path, extMtime: f.file.lastModified
+      }); n.added++;
+    }
+    // Still missing and confirmed gone: keep the note, drop the link.
+    for(const m of orphanMetas){
+      if(claimed.has(m.id)) continue;
+      if(!(await extIsGone(m.extPath))) continue;
+      await putMetaOnly(m.id, { extPath:null, extMtime:null }); n.unlinked++;
+    }
+    if(n.added || n.updated || n.moved || n.adopted || n.unlinked) await render();
+    if(interactive){
+      const extra = [];
+      if(n.moved) extra.push(`${n.moved} renamed/moved`);
+      if(n.adopted) extra.push(`${n.adopted} matched to existing notes`);
+      if(n.unlinked) extra.push(`${n.unlinked} unlinked (file no longer on disk, note kept)`);
+      alert(`Notes folder \"${extRootName}\": ${n.added} added, ${n.updated} updated${extra.length ? ', '+extra.join(', ') : ''}, ${total} .md files in total.`);
+    }
   }catch(e){ if(interactive) alert('Sync failed: '+e.message); }
   finally{ extSyncing = false; }
 }
