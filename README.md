@@ -183,6 +183,28 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.52.1** (2026-09-29) — Fix: a save that failed at the very end (typically "storage
+  full") could be reported as saved and then quietly dropped.
+  - **The bug (since the first version, found while testing v1.52.0).** IndexedDB reports a
+    `put()` as successful first and commits it afterwards; a quota failure only shows up at the
+    commit. The save helpers resolved on the first signal, so the app believed the write had
+    happened. Measured in real Chromium with a capped quota, on v1.51.14: 15 PDFs of 20 MB were
+    added, every add said OK, and only 10 were on the shelf. An import said "added 15 new items"
+    for a shelf that held 10 of them. The "storage is full" messages that already exist in about
+    eight places (add, edit, bookmark, table edit, import) could never appear for this case.
+  - **The fix.** The four write helpers (items, delete, passcode record, preferences) now finish
+    only when the transaction commits, and fail with the browser's own error otherwise, so every
+    existing "storage is full" message now works and an import stops at the first item that does
+    not fit and counts only what was really stored. Same fix as the passcode change and folder
+    link writes already had. Same real-Chromium repro on v1.52.1: the items that do not fit fail
+    with `QuotaExceededError`, and stored count equals the count that said OK (12 and 12).
+  - **Cost.** Each write waits for its commit; a 300 MB import went from about 10 s to about 12.5 s.
+  - **Known, left alone.** (1) Items already lost to this bug in the past are not recoverable
+    from here. If a shelf ever filled up, compare it with your latest backup. (2) After a "storage
+    is full" stop, a v2 import still reads the rest of the file (nothing more is stored), so it
+    can take a moment before it reports. (3) `test_autolock.js` still hangs in jsdom.
+  - Tests: `tests/test_commit_failure.js` (12 checks; 7 fail on v1.52.0, including the import
+    claiming 5 items when 2 were stored). A test probe `__getDb` / `__setDb` was added to `load.js`.
 - **v1.52.0** (2026-09-29) — Whole-shelf backups no longer hold the shelf in memory:
   a new streamed, chunked encrypted format, and one-item-at-a-time import.
   - **Why.** The old encrypted export built the shelf as several giant strings at once

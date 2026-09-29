@@ -29,6 +29,8 @@ in this folder ships to users. Run from this folder:
 - `test_autolock.js` — idle / background auto-lock and Lock now (v1.51.11): timing rules,
   activity resets, sound and export/import holds, queued writes finish first, draft kept,
   settings panel, no-passcode mode never locks. Replaces the page reload with a stub.
+- `test_commit_failure.js` — a write counts as saved only when its transaction commits (v1.52.1): fake commit-time
+  quota failures on items/settings/security, import stopping and counting honestly, write queue surviving a failure.
 - `test_export_stream.js` — chunked/streamed backup format v2 (v1.52.0): round trips at tiny chunk sizes, tamper/truncate/reorder
   refusals, wrong passphrase vs damaged file, save-dialog path, cancel, plain export, and old-format fixtures
   (`fixtures/`, made with `make_legacy_fixtures.js` against a v1.51.14 project).

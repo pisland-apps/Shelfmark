@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.52.0';
+const APP_VERSION = '1.52.1';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -151,7 +151,7 @@ function sealItemJSON(key, rec, slot, obj){
 
 function txSec(mode){ return db.transaction('security', mode).objectStore('security'); }
 function getAuth(){ return new Promise(res=>{ const r = txSec('readonly').get('auth'); r.onsuccess=()=>res(r.result||null); r.onerror=()=>res(null); }); }
-function putAuth(rec){ return new Promise((res,rej)=>{ const r = txSec('readwrite').put(rec); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+function putAuth(rec){ return idbWrite('security', st=>st.put(rec)); }
 
 // Two storage modes, recorded in the 'auth' record:
 //   'passcode' (default; older records have no `mode` field and are this) —
@@ -799,11 +799,28 @@ function blobToDataURL(blob){
   });
 }
 
+// v1.52.1: a write is only DONE when its transaction has COMMITTED, not when the
+// put()/delete() request reports success. IndexedDB reports the request first and
+// commits afterwards; a storage-quota failure (or any commit failure) surfaces at
+// the commit as a transaction abort. Resolving on the request's onsuccess (what
+// these helpers did until v1.52.0) therefore said "saved" for writes that were then
+// dropped - a large PDF added near the quota just vanished, and the existing
+// "storage is full" messages never had a chance to appear. Now this resolves on
+// oncomplete and rejects (with the browser's own error, e.g. QuotaExceededError)
+// on abort, so every caller's existing error path works.
+function idbWrite(storeName, op){
+  return new Promise((res,rej)=>{
+    const t = db.transaction(storeName, 'readwrite');
+    t.oncomplete = ()=>res();
+    t.onabort = ()=>rej(t.error || new DOMException('The write was aborted', 'AbortError'));
+    op(t.objectStore(storeName));
+  });
+}
 function tx(mode){ return db.transaction('items',mode).objectStore('items'); }
 function getAllRaw(){ return new Promise((res)=>{ const r = tx('readonly').getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>res([]); }); }
 function getOneRaw(id){ return new Promise((res)=>{ const r = tx('readonly').get(id); r.onsuccess=()=>res(r.result); }); }
-function putRaw(rec){ return new Promise((res,rej)=>{ const r = tx('readwrite').put(rec); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
-function delRaw(id){ return new Promise((res,rej)=>{ const r = tx('readwrite').delete(id); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+function putRaw(rec){ return idbWrite('items', st=>st.put(rec)); }
+function delRaw(id){ return idbWrite('items', st=>st.delete(id)); }
 // v1.51.10: del() / put() / restoreRaw() go through the same write queue as
 // putMetaOnly, putContentOnly and the draft writers. Unqueued, a delete could
 // land while one of those was mid-way through reading the record, and the
@@ -1699,7 +1716,7 @@ async function getPrefsDecrypted(){
 }
 async function putPrefs(p){
   const { iv, cipher } = await encryptJSON(cryptoKey, p);
-  return new Promise((res,rej)=>{ const r = txS('readwrite').put({id:'prefs', iv, cipher}); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); });
+  return idbWrite('settings', st=>st.put({id:'prefs', iv, cipher}));
 }
 
 function applyPrefs(p){
