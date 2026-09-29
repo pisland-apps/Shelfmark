@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.3';
+const APP_VERSION = '1.51.4';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1028,10 +1028,12 @@ async function doImportDecrypt(){
 // shelf from another device, or (v1.51.3) a deliberately crafted file. Three
 // checks below exist because of that, not because a genuine Shelfmark export
 // would ever trip them:
-//   - id: written unescaped into an inline onclick="...('${id}')" handler
-//     when the item is opened (see openReader), so a raw id from the file
-//     used to be able to break out of that string and run script. Now any id
-//     that isn't plain word-characters/dot/dash is replaced with a fresh one.
+//   - id: used to be written unescaped into an inline onclick="...('${id}')"
+//     handler when the item is opened (see openReader), so a raw id from the
+//     file could break out of that string and run script. Handlers are now
+//     data-* attributes (v1.51.4), but ids still end up in selectors, DOM ids
+//     and attributes, so any id that isn't plain word-characters/dot/dash is
+//     still replaced with a fresh one.
 //   - content for non-markdown items used to be handed straight to fetch(),
 //     so a crafted item could make the app request an arbitrary URL during
 //     import. Now only a data: URI is accepted.
@@ -1847,10 +1849,10 @@ async function openReader(id){
     pdfWrap.innerHTML = `
       <div class="pdfpage" id="pdfPage"><p style="font-size:0.85rem;color:var(--ink-soft);">Loading PDF…</p></div>
       <div class="pdfnav">
-        <button id="pdfPrev" onclick="pdfPrevPage()" title="Previous page">&#8249;</button>
+        <button id="pdfPrev" data-on-click="pdfPrevPage" title="Previous page">&#8249;</button>
         <span class="pnum" id="pdfPnum"></span>
-        <button id="pdfNext" onclick="pdfNextPage()" title="Next page">&#8250;</button>
-        <button id="pdfZoomBtn" class="zoombtn" onclick="cyclePdfZoom()" title="Fit width">Fit</button>
+        <button id="pdfNext" data-on-click="pdfNextPage" title="Next page">&#8250;</button>
+        <button id="pdfZoomBtn" class="zoombtn" data-on-click="cyclePdfZoom" title="Fit width">Fit</button>
       </div>`;
     c.appendChild(pdfWrap);
     try{
@@ -1912,28 +1914,28 @@ async function openReader(id){
     await renderBacklinks(id, div);
     const editWrap = document.createElement('div');
     editWrap.id = 'mdEditWrap';
-    editWrap.innerHTML = `<div id="draftNotice" class="draft-notice" style="display:none;"><span id="draftNoticeText"></span><button type="button" onclick="revertToSaved()">Revert to saved</button></div>
+    editWrap.innerHTML = `<div id="draftNotice" class="draft-notice" style="display:none;"><span id="draftNoticeText"></span><button type="button" data-on-click="revertToSaved">Revert to saved</button></div>
       <textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
       <div class="ebar">
         <div class="ebar-tools">
-          <button class="tool" id="undoBtn" onclick="undoEdit()" title="Undo">&#8617;</button>
-          <button class="tool" id="redoBtn" onclick="redoEdit()" title="Redo">&#8618;</button>
-          <button class="tool" onclick="toggleBoldAtSelection()" title="Bold"><b>B</b></button>
-          <button class="tool" onclick="toggleStrikeAtSelection()" title="Strikethrough"><s>S</s></button>
-          <button class="tool" onclick="toggleHighlightAtSelection()" title="Highlight"><span class="tool-hl">A</span></button>
-          <button class="tool" onclick="toggleHeadingAtLine()" title="Heading">H</button>
-          <button class="tool" onclick="insertDivider()" title="Insert divider">&#8213;</button>
-          <button class="tool" onclick="insertTimestamp()" title="Insert date/time">&#128197;</button>
-          <button class="tool" onclick="openAudioLinkPicker()" title="Link a recording already on your shelf">&#127925;</button>
-          <button class="tool" onclick="openNoteLinkPicker()" title="Link another note already on your shelf">&#128279;</button>
-          <button class="tool" onclick="openPdfLinkPicker()" title="Link a PDF already on your shelf">&#128196;</button>
-          <button class="tool" onclick="document.getElementById('noteImgPick').click()" title="Insert a picture">&#128247;</button>
-          <button class="tool" onclick="insertTableTemplate()" title="Insert a table">&#9638;</button>
-          <button class="tool" id="helpToggleBtn" onclick="toggleMarkdownHelp()" title="Markdown formatting help — stays open while you edit" aria-pressed="false">?</button>
+          <button class="tool" id="undoBtn" data-on-click="undoEdit" title="Undo">&#8617;</button>
+          <button class="tool" id="redoBtn" data-on-click="redoEdit" title="Redo">&#8618;</button>
+          <button class="tool" data-on-click="toggleBoldAtSelection" title="Bold"><b>B</b></button>
+          <button class="tool" data-on-click="toggleStrikeAtSelection" title="Strikethrough"><s>S</s></button>
+          <button class="tool" data-on-click="toggleHighlightAtSelection" title="Highlight"><span class="tool-hl">A</span></button>
+          <button class="tool" data-on-click="toggleHeadingAtLine" title="Heading">H</button>
+          <button class="tool" data-on-click="insertDivider" title="Insert divider">&#8213;</button>
+          <button class="tool" data-on-click="insertTimestamp" title="Insert date/time">&#128197;</button>
+          <button class="tool" data-on-click="openAudioLinkPicker" title="Link a recording already on your shelf">&#127925;</button>
+          <button class="tool" data-on-click="openNoteLinkPicker" title="Link another note already on your shelf">&#128279;</button>
+          <button class="tool" data-on-click="openPdfLinkPicker" title="Link a PDF already on your shelf">&#128196;</button>
+          <button class="tool" data-click-target="noteImgPick" title="Insert a picture">&#128247;</button>
+          <button class="tool" data-on-click="insertTableTemplate" title="Insert a table">&#9638;</button>
+          <button class="tool" id="helpToggleBtn" data-on-click="toggleMarkdownHelp" title="Markdown formatting help — stays open while you edit" aria-pressed="false">?</button>
         </div>
         <div class="ebar-actions">
-          <button class="cancel" onclick="cancelEditNote()">Cancel</button>
-          <button class="save" onclick="saveEditNote()">Save</button>
+          <button class="cancel" data-on-click="cancelEditNote">Cancel</button>
+          <button class="save" data-on-click="saveEditNote">Save</button>
         </div>
       </div>`;
     c.appendChild(div);
@@ -1970,13 +1972,13 @@ async function openReader(id){
       <div class="avwrap">
         ${it.cover ? `<img class="disc-cover" src="${escapeHtml(it.cover)}">` : `<div class="disc">&#9835;</div>`}
         <div class="actrl">
-          <button class="skip" onclick="skip(-10)">&#8634;10</button>
-          <button class="play" id="playBtn" onclick="toggleShelfPlay('${id}')">${!aud.paused ? '&#10074;&#10074;' : '&#9658;'}</button>
-          <button class="skip" onclick="skip(10)">10&#8635;</button>
+          <button class="skip" data-on-click="skip" data-args-click='[-10]'>&#8634;10</button>
+          <button class="play" id="playBtn" data-on-click="toggleShelfPlay" data-arg-click="${escapeHtml(String(id))}">${!aud.paused ? '&#10074;&#10074;' : '&#9658;'}</button>
+          <button class="skip" data-on-click="skip" data-args-click='[10]'>10&#8635;</button>
         </div>
         <input type="range" class="scrub" id="scrub" min="0" max="100" value="${pct}">
         <div class="time" id="atime">${fmtTime(aud.currentTime)} / ${fmtTime(aud.duration||0)}</div>
-        <button class="speedBtn" id="speedBtn" onclick="cycleSpeed()">${audioSpeed}x</button>
+        <button class="speedBtn" id="speedBtn" data-on-click="cycleSpeed">${audioSpeed}x</button>
       </div>`;
     document.getElementById('scrub').oninput = (e)=>{ aud.currentTime = (e.target.value/100)*(aud.duration||0); };
   }
@@ -2454,8 +2456,8 @@ function renderDraftBanner(){
   b.id = 'draftBanner';
   b.className = 'draft-banner';
   b.innerHTML = `<span>Unsaved draft from ${escapeHtml(fmtDraftTime(curDraft.savedAt))} — your last edits weren't saved.</span>`
-    + `<button type="button" onclick="startEditNote()">Continue editing</button>`
-    + `<button type="button" onclick="discardDraft()">Discard</button>`;
+    + `<button type="button" data-on-click="startEditNote">Continue editing</button>`
+    + `<button type="button" data-on-click="discardDraft">Discard</button>`;
   view.parentNode.insertBefore(b, view);
 }
 async function discardDraft(){
@@ -3141,7 +3143,7 @@ function ensureHelpDock(){
   dock.id = 'mdHelpDock';
   dock.className = 'help-dock';
   dock.innerHTML = '<div class="help-dock-head"><span>Markdown formatting help</span>'
-    + '<button type="button" class="help-dock-close" onclick="closeHelpDock()" aria-label="Close help">&times;</button></div>';
+    + '<button type="button" class="help-dock-close" data-on-click="closeHelpDock" aria-label="Close help">&times;</button></div>';
   dock.appendChild(document.querySelector('#mdHelpOverlay .help-body').cloneNode(true));
   wrap.insertBefore(dock, wrap.querySelector('.ebar'));
   return dock;
@@ -3923,8 +3925,8 @@ function updateBookmarkUI(bookmarks){
   }
   panel.innerHTML = bookmarks.slice().sort((a,b)=>a.idx-b.idx).map(b=>`
     <div class="bmrow">
-      <div class="snip" onclick="jumpBookmark(${b.createdAt})">${escapeHtml(b.snippet)}</div>
-      <button class="rm" onclick="event.stopPropagation();deleteBookmark(${b.createdAt})" title="Remove bookmark">&times;</button>
+      <div class="snip" data-on-click="jumpBookmark" data-args-click="[${Number(b.createdAt)}]">${escapeHtml(b.snippet)}</div>
+      <button class="rm" data-on-click="deleteBookmark" data-args-click="[${Number(b.createdAt)}]" data-stop-click title="Remove bookmark">&times;</button>
     </div>`).join('');
 }
 
@@ -3974,10 +3976,10 @@ function updateOutlineUI(outline){
     return;
   }
   btn.style.display = 'flex';
-  panel.innerHTML = `<div class="outline-tools"><button type="button" onclick="foldAllHeadings(true)">Collapse all</button>`
-    + `<button type="button" onclick="foldAllHeadings(false)">Expand all</button></div>`
+  panel.innerHTML = `<div class="outline-tools"><button type="button" data-on-click="foldAllHeadings" data-args-click='[true]'>Collapse all</button>`
+    + `<button type="button" data-on-click="foldAllHeadings" data-args-click='[false]'>Expand all</button></div>`
     + outline.map(o=>
-    `<button type="button" class="outline-row" data-level="${o.level}" onclick="jumpOutline(${o.idx})">${escapeHtml(o.text) || '(untitled heading)'}</button>`
+    `<button type="button" class="outline-row" data-level="${o.level}" data-on-click="jumpOutline" data-args-click="[${Number(o.idx)}]">${escapeHtml(o.text) || '(untitled heading)'}</button>`
   ).join('');
 }
 
@@ -4432,7 +4434,7 @@ function renderMarkdown(src, linkTypes){
     codeBlocks.push(
       `<div class="code-block">`
       + `<div class="code-bar"><span class="code-lang">${langLabel}</span>`
-      + `<button class="code-copy" onclick="copyCodeBlock(this)">Copy</button></div>`
+      + `<button class="code-copy" data-on-click="copyCodeBlock" data-args-click='["$el"]'>Copy</button></div>`
       + `<pre><code>${code.trim()}</code></pre></div>`
     );
     return `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
@@ -4628,7 +4630,7 @@ function renderMarkdown(src, linkTypes){
       }).join('');
       html = `<ul${isTaskList ? ' class="task-list"' : ''}>${items}</ul>`;
     } else html = `<p>${mdBrLines(block)}</p>`;
-    return `<div class="mdblock" data-idx="${idx}"><button class="bm-btn" onclick="toggleBookmark(${idx})" title="Bookmark this spot">&#128278;</button>${html}</div>`;
+    return `<div class="mdblock" data-idx="${idx}"><button class="bm-btn" data-on-click="toggleBookmark" data-args-click="[${Number(idx)}]" title="Bookmark this spot">&#128278;</button>${html}</div>`;
   }).join('\n');
 }
 
@@ -5370,5 +5372,122 @@ async function extSync(interactive){
   }catch(e){ if(interactive) alert('Sync failed: '+e.message); }
   finally{ extSyncing = false; }
 }
+// ============================================================================
+// Event dispatcher (v1.51.4) — replaces every inline onclick/onchange/oninput/
+// onkeydown attribute so the CSP can drop 'unsafe-inline' from script-src.
+//
+// Markup contract (index.html and every template string in this file):
+//   data-on-click="fn"          call UI_ACTIONS.fn on click. Same for
+//   data-on-change / data-on-input / data-on-keydown.
+//   data-on-click="a b"         run several actions in order (no arguments).
+//   data-arg-click="text"       one STRING argument (use this for ids; the
+//                               value is plain attribute text, so escapeHtml it).
+//   data-args-click='[1,"x"]'   JSON array of arguments. The tokens "$ev" and
+//                               "$el" are replaced by the event / the element.
+//   data-stop-click             stopPropagation() first (was event.stopPropagation()).
+//   data-self-click             only when the click landed on this element
+//                               itself, not a child (was `if(event.target===this)`).
+//   data-click-target="id"      click another element, e.g. a hidden file input.
+//   (the -change / -input / -keydown suffixes work the same way; change,
+//    input and keydown handlers that need the event pass "$ev".)
+//
+// Only names listed in UI_ACTIONS can be called. That is deliberate: a
+// data-on-click attribute that ends up in the DOM through some injection can
+// trigger one of these UI functions (exactly what an inline onclick could
+// already do) but nothing else — never eval, never window[name].
+//
+// The listener runs in the CAPTURE phase and then walks up the ancestors, so
+// ordering matches inline handlers: the clicked element's action first, then
+// its ancestors' (unless data-stop-* was set), before any bubble listener.
+// When adding a new button: give it data-on-click and add the function to
+// UI_ACTIONS below. A forgotten entry logs "[ui] unknown action" to the console.
+// ============================================================================
+// <<UI-DISPATCHER-BEGIN
+function createIndexNoteFromGuide(){
+  closeGuide();
+  return quickNewNote('Index', NOTE_TEMPLATES.index.content());
+}
+const UI_ACTIONS = Object.freeze({
+  bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
+  closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
+  closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, createIndexNoteFromGuide,
+  cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
+  doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
+  foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,
+  jumpOutline, miniPlayerClose, miniPlayerOpenFull, miniPlayerToggle, onCmdPalInput,
+  onCmdPalKeydown, onCoverPick, onFile, onFindInput, onFindKeydown, onImportFile, onLockSubmit,
+  onNoteImagePick, onReplaceKeydown, onResetRequest, onSearchInput, onSkipPasscode, openAdd,
+  openAudioLinkPicker, openCommandPalette, openExportModal, openMoveCategory,
+  openNoteLinkPicker, openPdfLinkPicker, openSecInfo, openTagsPage, pdfNextPage, pdfPrevPage,
+  quickNewNote, redoEdit, removeCover, replaceAll, replaceCurrent, revertToSaved, saveEdit,
+  saveEditNote, saveItem, selectAllToggle, setExportMode, setPref, showStorageDetail, skip,
+  startEditFromFind, startEditNote, toggleBoldAtSelection, toggleBookmark, toggleBookmarkPanel,
+  toggleDeepSearch, toggleFindBar, toggleFindCase, toggleHeadingAtLine,
+  toggleHighlightAtSelection, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
+  toggleSelectMode, toggleSettingsPanel, toggleShelfPlay, toggleSortMode,
+  toggleStrikeAtSelection, undoDelete, undoEdit
+});
+(function installUiDispatcher(){
+  const SELECTORS = {
+    click:   '[data-on-click],[data-click-target]',
+    change:  '[data-on-change]',
+    input:   '[data-on-input]',
+    keydown: '[data-on-keydown]'
+  };
+  function argsFor(el, ev, e){
+    const one = el.getAttribute('data-arg-' + ev);
+    if(one !== null) return [one];
+    const many = el.getAttribute('data-args-' + ev);
+    if(many === null) return [];
+    let list;
+    try{ list = JSON.parse(many); }catch(_){ return null; }
+    if(!Array.isArray(list)) return null;
+    return list.map(v => v === '$ev' ? e : v === '$el' ? el : v);
+  }
+  function run(el, ev, e){
+    // returns true if propagation to ancestors should stop
+    if(el.disabled) return false;
+    const stop = el.hasAttribute('data-stop-' + ev);
+    if(el.hasAttribute('data-self-' + ev) && e.target !== el) return false;
+    if(stop) e.stopPropagation();
+    if(ev === 'click' && el.hasAttribute('data-click-target')){
+      const t = document.getElementById(el.getAttribute('data-click-target'));
+      if(t) t.click();
+    }
+    const spec = el.getAttribute('data-on-' + ev);
+    if(spec){
+      const fnNames = spec.split(/\s+/).filter(Boolean);
+      const args = fnNames.length === 1 ? argsFor(el, ev, e) : [];
+      if(args === null){ console.error('[ui] bad data-args on', el); return stop; }
+      for(const name of fnNames){
+        if(!Object.prototype.hasOwnProperty.call(UI_ACTIONS, name)){
+          console.error('[ui] unknown action:', name, el);
+          continue;
+        }
+        try{
+          const r = UI_ACTIONS[name](...args);
+          if(r && typeof r.catch === 'function') r.catch(err => console.error('[ui] ' + name + ' failed:', err));
+        }catch(err){ console.error('[ui] ' + name + ' failed:', err); }
+      }
+    }
+    return stop;
+  }
+  function dispatch(ev, e){
+    const t = e.target;
+    if(!(t instanceof Element)) return;
+    const sel = SELECTORS[ev];
+    let el = t.closest(sel);
+    while(el){
+      if(run(el, ev, e)) return;
+      el = el.parentElement ? el.parentElement.closest(sel) : null;
+    }
+  }
+  for(const ev of Object.keys(SELECTORS)){
+    document.addEventListener(ev, e => dispatch(ev, e), true);
+  }
+})();
+// UI-DISPATCHER-END>>
+
 extLoad();
 window.addEventListener('focus', ()=>{ extSync(false); }); // back from Obsidian: refresh (no prompt)

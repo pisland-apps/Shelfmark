@@ -7,13 +7,18 @@
 <meta name="theme-color" content="#2a2822">
 <!-- v1.51.3: defense-in-depth against a note (imported backup, or a file
      synced in from the linked notes folder) trying to run script or phone
-     home. script-src still allows 'unsafe-inline' because the UI uses
-     onclick="..." handlers throughout; closing that gap needs converting
-     those to addEventListener, tracked separately. connect-src/object-src/
-     form-action are the main wins here: even if a script ran, it couldn't
-     open a network connection to anywhere but this origin, load a plugin,
-     or submit a form off-site. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self' blob:;">
+     home. v1.51.4: script-src is now just 'self' — there are no inline
+     event-handler attributes (the onclick / onchange kind) left anywhere in the
+     app, so injected markup can no longer execute script even if it slips
+     past escaping. Buttons/inputs carry data-on-click / data-on-change /
+     data-on-input / data-on-keydown attributes instead, handled by ONE
+     delegated dispatcher at the bottom of app.js (see "Event dispatcher"
+     there). Don't add inline handler attributes back: the CSP will silently ignore them.
+     style-src keeps 'unsafe-inline' because the UI uses style="..."
+     attributes throughout; that is a much smaller risk than script.
+     connect-src/object-src/form-action stop a network connection to
+     anywhere but this origin, a plugin load, or an off-site form submit. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self' blob:;">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -818,25 +823,25 @@
 
 <div id="undoToast">
   <span id="undoToastText">Removed from your shelf</span>
-  <button onclick="undoDelete()">Undo</button>
+  <button data-on-click="undoDelete">Undo</button>
 </div>
 
 <div id="miniPlayer">
-  <div class="mp-info" onclick="miniPlayerOpenFull()">
+  <div class="mp-info" data-on-click="miniPlayerOpenFull">
     <div class="mp-title" id="mpTitle"></div>
     <div class="mp-bar"><div class="mp-bar-fill" id="mpBarFill"></div></div>
   </div>
-  <button id="mpPlayBtn" onclick="miniPlayerToggle()" title="Play/pause">&#9658;</button>
-  <button class="mp-close" onclick="miniPlayerClose()" title="Stop">&times;</button>
+  <button id="mpPlayBtn" data-on-click="miniPlayerToggle" title="Play/pause">&#9658;</button>
+  <button class="mp-close" data-on-click="miniPlayerClose" title="Stop">&times;</button>
 </div>
 
 <div id="selectBar">
   <span id="selectCount">0 selected</span>
   <div class="selectBar-actions">
-    <button id="selectAllBtn" onclick="selectAllToggle()">Select all</button>
-    <button onclick="openMoveCategory()">Move</button>
-    <button onclick="bulkDeleteSelected()">Delete</button>
-    <button class="done" onclick="exitSelectMode()">Done</button>
+    <button id="selectAllBtn" data-on-click="selectAllToggle">Select all</button>
+    <button data-on-click="openMoveCategory">Move</button>
+    <button data-on-click="bulkDeleteSelected">Delete</button>
+    <button class="done" data-on-click="exitSelectMode">Done</button>
   </div>
 </div>
 
@@ -847,10 +852,10 @@
     <div class="lock-sub" id="lockSub">Enter your passcode to open your shelf.</div>
     <input type="password" id="passcodeInput" inputmode="numeric" autocomplete="off" placeholder="Passcode" autofocus>
     <input type="password" id="passcodeConfirm" inputmode="numeric" autocomplete="off" placeholder="Confirm passcode" style="display:none;">
-    <button class="primary" id="lockBtn" onclick="onLockSubmit()">Unlock</button>
-    <button class="lock-skip" id="lockSkipBtn" onclick="onSkipPasscode()">Continue without a passcode</button>
+    <button class="primary" id="lockBtn" data-on-click="onLockSubmit">Unlock</button>
+    <button class="lock-skip" id="lockSkipBtn" data-on-click="onSkipPasscode">Continue without a passcode</button>
     <div class="lock-error" id="lockError"></div>
-    <button class="lock-reset" onclick="onResetRequest()">Forgot passcode? Erase this shelf</button>
+    <button class="lock-reset" data-on-click="onResetRequest">Forgot passcode? Erase this shelf</button>
   </div>
 </div>
 
@@ -858,28 +863,28 @@
   <div class="bar">
     <div class="brand">Shelfmark<span>your own shelf, added by hand</span></div>
     <div style="display:flex;gap:8px;align-items:center;">
-      <button class="icon-btn" onclick="openCommandPalette()" title="Command palette (Ctrl+K)">&#128269;</button>
+      <button class="icon-btn" data-on-click="openCommandPalette" title="Command palette (Ctrl+K)">&#128269;</button>
       <!-- These used to be individual header icons — with the command palette now
            covering all of them (plus theme switching and jump-to-tag), they're kept
            only as the backing elements the same functions already update, not as
            visible buttons, so two rows of icons don't reappear on narrow phones. -->
       <div id="legacyHeaderIcons" style="display:none;">
-        <button class="icon-btn" id="storageBtn" onclick="showStorageDetail()" title="Storage used" style="width:auto;padding:0 10px;font-size:11px;font-family:'SFMono-Regular',Consolas,Menlo,monospace;display:none;">&hellip;</button>
-        <button class="icon-btn" id="sortBtn" onclick="toggleSortMode()" title="Sorting items by newest added — tap for A–Z" style="width:auto;padding:0 10px;font-size:12px;">Newest</button>
-        <button class="icon-btn" id="loopBtn" onclick="toggleLoopAudio()" title="Loop audio within a category">&#128257;</button>
-        <button class="icon-btn" onclick="openTagsPage()" title="Browse tags">#</button>
-        <button class="icon-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="Select multiple items">&#9745;</button>
-        <button class="icon-btn" onclick="document.getElementById('importPick').click()" title="Import from JSON">&#8681;</button>
-        <button class="icon-btn" onclick="openExportModal()" title="Export shelf as JSON">&#8679;</button>
-        <button class="icon-btn" onclick="quickNewNote()" title="New blank note — skips the Add panel">&#128221;</button>
+        <button class="icon-btn" id="storageBtn" data-on-click="showStorageDetail" title="Storage used" style="width:auto;padding:0 10px;font-size:11px;font-family:'SFMono-Regular',Consolas,Menlo,monospace;display:none;">&hellip;</button>
+        <button class="icon-btn" id="sortBtn" data-on-click="toggleSortMode" title="Sorting items by newest added — tap for A–Z" style="width:auto;padding:0 10px;font-size:12px;">Newest</button>
+        <button class="icon-btn" id="loopBtn" data-on-click="toggleLoopAudio" title="Loop audio within a category">&#128257;</button>
+        <button class="icon-btn" data-on-click="openTagsPage" title="Browse tags">#</button>
+        <button class="icon-btn" id="selectModeBtn" data-on-click="toggleSelectMode" title="Select multiple items">&#9745;</button>
+        <button class="icon-btn" data-click-target="importPick" title="Import from JSON">&#8681;</button>
+        <button class="icon-btn" data-on-click="openExportModal" title="Export shelf as JSON">&#8679;</button>
+        <button class="icon-btn" data-on-click="quickNewNote" title="New blank note — skips the Add panel">&#128221;</button>
       </div>
-      <input type="file" id="importPick" accept="application/json" style="display:none" onchange="onImportFile(event)">
-      <button class="add-btn" onclick="openAdd()">+ Add</button>
+      <input type="file" id="importPick" accept="application/json" style="display:none" data-on-change="onImportFile" data-args-change='["$ev"]'>
+      <button class="add-btn" data-on-click="openAdd">+ Add</button>
     </div>
   </div>
   <div class="searchRow">
-    <input type="search" id="searchInput" placeholder="Search your shelf&hellip;" oninput="onSearchInput()">
-    <button class="icon-btn" id="deepSearchBtn" onclick="toggleDeepSearch()" title="Also search inside note text (slower — decrypts every note)" aria-pressed="false">&#128462;</button>
+    <input type="search" id="searchInput" placeholder="Search your shelf&hellip;" data-on-input="onSearchInput">
+    <button class="icon-btn" id="deepSearchBtn" data-on-click="toggleDeepSearch" title="Also search inside note text (slower — decrypts every note)" aria-pressed="false">&#128462;</button>
   </div>
 </header>
 
@@ -888,9 +893,9 @@
      entry per tag on the shelf (built from buildTagIndex the same way the
      Tags page is). Replaces the old two-row header icon strip — those
      buttons above are now hidden and only reachable through here. -->
-<div id="cmdPalette" class="cmdpal-overlay" onclick="if(event.target===this) closeCommandPalette()">
+<div id="cmdPalette" class="cmdpal-overlay" data-on-click="closeCommandPalette" data-self-click>
   <div class="cmdpal-box">
-    <input type="text" id="cmdPalInput" class="cmdpal-input" placeholder="Type a command or #tag…" oninput="onCmdPalInput()" onkeydown="onCmdPalKeydown(event)" autocomplete="off" spellcheck="false">
+    <input type="text" id="cmdPalInput" class="cmdpal-input" placeholder="Type a command or #tag…" data-on-input="onCmdPalInput" data-on-keydown="onCmdPalKeydown" data-args-keydown='["$ev"]' autocomplete="off" spellcheck="false">
     <div id="cmdPalList" class="cmdpal-list"></div>
   </div>
 </div>
@@ -911,15 +916,15 @@
   <div class="sheet">
     <h2>Add to shelf</h2>
     <label for="fpick">File</label>
-    <input id="fpick" type="file" accept=".pdf,.md,.markdown,.txt,image/*,audio/*" style="display:none" onchange="onFile(event)">
-    <button class="filebtn" id="fbtn" onclick="document.getElementById('fpick').click()">Choose a file&hellip;</button>
+    <input id="fpick" type="file" accept=".pdf,.md,.markdown,.txt,image/*,audio/*" style="display:none" data-on-change="onFile" data-args-change='["$ev"]'>
+    <button class="filebtn" id="fbtn" data-click-target="fpick">Choose a file&hellip;</button>
     <div class="or-divider">or start a new note</div>
     <div class="tpl-grid" id="tplGrid">
-      <button type="button" class="tpl-btn" data-tpl="blank" onclick="chooseNoteTemplate('blank')">&#128221; Blank</button>
-      <button type="button" class="tpl-btn" data-tpl="diary" onclick="chooseNoteTemplate('diary')">&#128197; Diary</button>
-      <button type="button" class="tpl-btn" data-tpl="meeting" onclick="chooseNoteTemplate('meeting')">&#128203; Meeting notes</button>
-      <button type="button" class="tpl-btn" data-tpl="todo" onclick="chooseNoteTemplate('todo')">&#9745; To-do list</button>
-      <button type="button" class="tpl-btn" data-tpl="index" onclick="chooseNoteTemplate('index')">&#128450;&#65039; Index of categories</button>
+      <button type="button" class="tpl-btn" data-tpl="blank" data-on-click="chooseNoteTemplate" data-args-click='["blank"]'>&#128221; Blank</button>
+      <button type="button" class="tpl-btn" data-tpl="diary" data-on-click="chooseNoteTemplate" data-args-click='["diary"]'>&#128197; Diary</button>
+      <button type="button" class="tpl-btn" data-tpl="meeting" data-on-click="chooseNoteTemplate" data-args-click='["meeting"]'>&#128203; Meeting notes</button>
+      <button type="button" class="tpl-btn" data-tpl="todo" data-on-click="chooseNoteTemplate" data-args-click='["todo"]'>&#9745; To-do list</button>
+      <button type="button" class="tpl-btn" data-tpl="index" data-on-click="chooseNoteTemplate" data-args-click='["index"]'>&#128450;&#65039; Index of categories</button>
     </div>
     <label for="ttitle">Title</label>
     <input id="ttitle" type="text" placeholder="Untitled">
@@ -928,14 +933,14 @@
     <datalist id="catlist"></datalist>
     <div id="coverField" style="display:none;">
       <label for="coverpick">Cover image (optional)</label>
-      <input id="coverpick" type="file" accept="image/*" style="display:none" onchange="onCoverPick(event,'add')">
-      <button type="button" class="filebtn" id="coverbtn" onclick="document.getElementById('coverpick').click()">Choose a cover image&hellip;</button>
+      <input id="coverpick" type="file" accept="image/*" style="display:none" data-on-change="onCoverPick" data-args-change='["$ev","add"]'>
+      <button type="button" class="filebtn" id="coverbtn" data-click-target="coverpick">Choose a cover image&hellip;</button>
       <img id="coverPreview" class="cover-preview" style="display:none;">
-      <button type="button" class="cancel" id="coverRemoveBtn" style="display:none;margin-top:8px;width:100%;" onclick="removeCover('add')">Remove cover</button>
+      <button type="button" class="cancel" id="coverRemoveBtn" style="display:none;margin-top:8px;width:100%;" data-on-click="removeCover" data-args-click='["add"]'>Remove cover</button>
     </div>
     <div class="row">
-      <button class="cancel" onclick="closeAdd()">Cancel</button>
-      <button class="save" id="saveBtn" disabled onclick="saveItem()">Add to shelf</button>
+      <button class="cancel" data-on-click="closeAdd">Cancel</button>
+      <button class="save" id="saveBtn" disabled data-on-click="saveItem">Add to shelf</button>
     </div>
   </div>
 </div>
@@ -950,14 +955,14 @@
     <datalist id="catlist2"></datalist>
     <div id="coverFieldEdit" style="display:none;">
       <label for="coverpickEdit">Cover image (optional)</label>
-      <input id="coverpickEdit" type="file" accept="image/*" style="display:none" onchange="onCoverPick(event,'edit')">
-      <button type="button" class="filebtn" id="coverbtnEdit" onclick="document.getElementById('coverpickEdit').click()">Choose a cover image&hellip;</button>
+      <input id="coverpickEdit" type="file" accept="image/*" style="display:none" data-on-change="onCoverPick" data-args-change='["$ev","edit"]'>
+      <button type="button" class="filebtn" id="coverbtnEdit" data-click-target="coverpickEdit">Choose a cover image&hellip;</button>
       <img id="coverPreviewEdit" class="cover-preview" style="display:none;">
-      <button type="button" class="cancel" id="coverRemoveBtnEdit" style="display:none;margin-top:8px;width:100%;" onclick="removeCover('edit')">Remove cover</button>
+      <button type="button" class="cancel" id="coverRemoveBtnEdit" style="display:none;margin-top:8px;width:100%;" data-on-click="removeCover" data-args-click='["edit"]'>Remove cover</button>
     </div>
     <div class="row">
-      <button class="cancel" onclick="closeEdit()">Cancel</button>
-      <button class="save" onclick="saveEdit()">Save changes</button>
+      <button class="cancel" data-on-click="closeEdit">Cancel</button>
+      <button class="save" data-on-click="saveEdit">Save changes</button>
     </div>
   </div>
 </div>
@@ -966,8 +971,8 @@
   <div class="sheet">
     <h2>Export shelf</h2>
     <div class="seg" style="margin-bottom:6px;">
-      <button id="expModeEnc" onclick="setExportMode('enc')">Encrypted</button>
-      <button id="expModePlain" onclick="setExportMode('plain')">Plain JSON</button>
+      <button id="expModeEnc" data-on-click="setExportMode" data-args-click='["enc"]'>Encrypted</button>
+      <button id="expModePlain" data-on-click="setExportMode" data-args-click='["plain"]'>Plain JSON</button>
     </div>
     <div id="expPassFields">
       <label for="exppass">Passphrase</label>
@@ -987,14 +992,14 @@
       This file will be fully readable by anyone who opens it — only choose this if you're storing it somewhere you already trust.
     </div>
     <div class="row">
-      <button class="cancel" onclick="closeExportModal()">Cancel</button>
-      <button class="save" id="expGoBtn" onclick="doExport()">Export</button>
+      <button class="cancel" data-on-click="closeExportModal">Cancel</button>
+      <button class="save" id="expGoBtn" data-on-click="doExport">Export</button>
     </div>
     <div class="lock-error" id="expError"></div>
   </div>
 </div>
 
-<div id="guideOverlay" class="overlay" style="display:none;" onclick="if(event.target===this) closeGuide()">
+<div id="guideOverlay" class="overlay" style="display:none;" data-on-click="closeGuide" data-self-click>
   <div class="sheet help-sheet">
     <h2>App guide</h2>
     <div class="help-body mdbody">
@@ -1023,20 +1028,20 @@ columns: 分类 | 笔记
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128274;</span>Passcode is optional</div>
       <p>You can lock Shelfmark with a passcode or open it straight to your shelf. Either way your data is stored encrypted; a passcode also keeps other people on this device out. You can switch at any time.</p>
       <p>Want to wipe everything and start fresh? Ctrl+K &rarr; <em>Erase this shelf and start over</em> works in either mode.</p>
-      <p><button type="button" class="cancel" style="width:auto;padding:8px 14px;" onclick="closeGuide();openSecInfo()">Passcode &amp; lock settings&hellip;</button></p>
+      <p><button type="button" class="cancel" style="width:auto;padding:8px 14px;" data-on-click="closeGuide openSecInfo">Passcode &amp; lock settings&hellip;</button></p>
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#9997;&#65039;</span>Writing notes</div>
       <p>Notes use Markdown &mdash; headings, lists, checklists, tables, <code>[[wiki links]]</code>, <code>#tags</code>, pictures and audio. The full cheat-sheet is in Ctrl+K &rarr; <em>Markdown formatting help</em>.</p>
       </section>
     </div>
     <div class="row">
-      <button class="cancel" onclick="closeGuide()">Close</button>
-      <button class="save" onclick="closeGuide();quickNewNote('Index', NOTE_TEMPLATES.index.content())">Create an index note</button>
+      <button class="cancel" data-on-click="closeGuide">Close</button>
+      <button class="save" data-on-click="createIndexNoteFromGuide">Create an index note</button>
     </div>
   </div>
 </div>
 
-<div id="secInfoOverlay" class="overlay" style="display:none;" onclick="if(event.target===this) closeSecInfo()">
+<div id="secInfoOverlay" class="overlay" style="display:none;" data-on-click="closeSecInfo" data-self-click>
   <div class="sheet help-sheet">
     <h2>Passcode &amp; lock</h2>
     <div class="help-body mdbody">
@@ -1053,12 +1058,12 @@ columns: 分类 | 笔记
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128465;&#65039;</span>Starting over</div>
       <p>With a passcode, the lock screen has a <em>Forgot passcode? Erase this shelf</em> link. Without one there is no lock screen, so use Ctrl+K &rarr; <em>Erase this shelf and start over</em> (or the button below). Either way it deletes everything on this device and cannot be undone &mdash; export an encrypted backup first if you might want anything back.</p>
-      <p><button type="button" class="cancel" style="width:auto;padding:8px 14px;color:#b23b3b;" onclick="closeSecInfo();eraseShelfFromApp()">Erase this shelf&hellip;</button></p>
+      <p><button type="button" class="cancel" style="width:auto;padding:8px 14px;color:#b23b3b;" data-on-click="closeSecInfo eraseShelfFromApp">Erase this shelf&hellip;</button></p>
       <p style="font-size:12.5px;color:var(--ink-soft);">Tip: press <code>Ctrl+K</code> (or tap &#128269;) and type &ldquo;passcode&rdquo; to get back here.</p>
       </section>
     </div>
     <div class="row">
-      <button class="cancel" onclick="closeSecInfo()">Close</button>
+      <button class="cancel" data-on-click="closeSecInfo">Close</button>
       <button class="save" id="secInfoActionBtn">Set a passcode&hellip;</button>
     </div>
   </div>
@@ -1071,8 +1076,8 @@ columns: 分类 | 笔记
     <input id="authPass1" type="password" autocomplete="off" placeholder="Passcode">
     <input id="authPass2" type="password" autocomplete="off" placeholder="Confirm passcode" style="display:none;">
     <div class="row">
-      <button class="cancel" onclick="closeAuthModal()">Cancel</button>
-      <button class="save" id="authGoBtn" onclick="doAuthChange()">Set passcode</button>
+      <button class="cancel" data-on-click="closeAuthModal">Cancel</button>
+      <button class="save" id="authGoBtn" data-on-click="doAuthChange">Set passcode</button>
     </div>
     <div class="lock-error" id="authError"></div>
   </div>
@@ -1089,8 +1094,8 @@ columns: 分类 | 笔记
     <label for="imppass">This backup is encrypted — enter its passphrase</label>
     <input id="imppass" type="password" autocomplete="off" placeholder="Passphrase">
     <div class="row">
-      <button class="cancel" onclick="closeImportPassModal()">Cancel</button>
-      <button class="save" onclick="doImportDecrypt()">Import</button>
+      <button class="cancel" data-on-click="closeImportPassModal">Cancel</button>
+      <button class="save" data-on-click="doImportDecrypt">Import</button>
     </div>
     <div class="lock-error" id="impError"></div>
   </div>
@@ -1101,7 +1106,7 @@ columns: 分类 | 笔记
     <h2 id="audioLinkTitle">Link a recording</h2>
     <div id="audioLinkList" class="alink-list"></div>
     <div class="row">
-      <button class="cancel" onclick="closeAudioLinkPicker()">Close</button>
+      <button class="cancel" data-on-click="closeAudioLinkPicker">Close</button>
     </div>
   </div>
 </div>
@@ -1110,7 +1115,7 @@ columns: 分类 | 笔记
   <div class="sheet help-sheet">
     <h2>Markdown formatting help</h2>
     <div class="help-body mdbody">
-      <div class="help-search"><input type="search" placeholder="Search help… (e.g. table, bold, tab)" aria-label="Search Markdown help" autocomplete="off" oninput="filterHelp(this)"></div>
+      <div class="help-search"><input type="search" placeholder="Search help… (e.g. table, bold, tab)" aria-label="Search Markdown help" autocomplete="off" data-on-input="filterHelp" data-args-input='["$el"]'></div>
       <section class="hcard hc-n"><div class="hc-title"><span class="hc-ic">⚡</span>Quick reference</div>
       <div class="hq-grid"><div class="hq-item"><code>**bold**</code>Bold</div><div class="hq-item"><code>*italic*</code>Italic</div><div class="hq-item"><code>~~text~~</code>Strikethrough</div><div class="hq-item"><code>==text==</code>Highlight</div><div class="hq-item"><code>## Title</code>Heading</div><div class="hq-item"><code>- item</code>Bullet list</div><div class="hq-item"><code>1. item</code>Numbered list</div><div class="hq-item"><code>- [ ] task</code>Checklist</div><div class="hq-item"><code>&gt; quote</code>Quote</div><div class="hq-item"><code>&gt; [!note]</code>Callout card</div><div class="hq-item"><code>`code`</code>Inline code</div><div class="hq-item"><code>```</code>Code block</div><div class="hq-item"><code>| a | b |</code>Table</div><div class="hq-item"><code>&lt;&lt; &nbsp;^^</code>Merged cell</div><div class="hq-item"><code>[[Title]]</code>Wiki link</div><div class="hq-item"><code>#tag</code>Tag</div><div class="hq-item"><code>---</code>Divider</div></div>
       </section>
@@ -1191,7 +1196,7 @@ columns: 分类 | 笔记
       <div class="help-none" style="display:none;">No match — try another word.</div>
     </div>
     <div class="row">
-      <button class="cancel" onclick="closeMarkdownHelp()">Close</button>
+      <button class="cancel" data-on-click="closeMarkdownHelp">Close</button>
     </div>
   </div>
 </div>
@@ -1203,65 +1208,65 @@ columns: 分类 | 笔记
     <input id="moveCatInput" type="text" list="catlist3" placeholder="e.g. Recipes, Work">
     <datalist id="catlist3"></datalist>
     <div class="row">
-      <button class="cancel" onclick="closeMoveCategory()">Cancel</button>
-      <button class="save" onclick="confirmMoveCategory()">Move</button>
+      <button class="cancel" data-on-click="closeMoveCategory">Cancel</button>
+      <button class="save" data-on-click="confirmMoveCategory">Move</button>
     </div>
   </div>
 </div>
 
-<input id="noteImgPick" type="file" accept="image/*" style="display:none" onchange="onNoteImagePick(event)">
+<input id="noteImgPick" type="file" accept="image/*" style="display:none" data-on-change="onNoteImagePick" data-args-change='["$ev"]'>
 <div id="reader">
   <div class="rbar">
-    <button class="back" onclick="closeReader()">&larr; Shelf</button>
+    <button class="back" data-on-click="closeReader">&larr; Shelf</button>
     <div class="rtitle" id="rtitle"></div>
-    <button class="bmbtn" id="exportItemBtn" onclick="exportCurrentItem()" title="Export this file">&#8679;</button>
-    <button class="bmbtn" id="settingsBtn" onclick="toggleSettingsPanel()" style="display:none;" title="Reading settings">&#9881;</button>
-    <button class="bmbtn" id="findBtn" onclick="toggleFindBar()" style="display:none;" title="Find in this note (Ctrl+F)">&#128269;</button>
-    <button class="bmbtn" id="editNoteBtn" onclick="startEditNote()" style="display:none;" title="Edit this note">&#9998;</button>
-    <button class="bmbtn" id="outlineBtn" onclick="toggleOutlinePanel()" style="display:none;" title="Table of contents">&#9776;</button>
-    <button class="bmbtn" id="bmBtn" onclick="toggleBookmarkPanel()" style="display:none;">&#128278;<span id="bmCount"></span></button>
+    <button class="bmbtn" id="exportItemBtn" data-on-click="exportCurrentItem" title="Export this file">&#8679;</button>
+    <button class="bmbtn" id="settingsBtn" data-on-click="toggleSettingsPanel" style="display:none;" title="Reading settings">&#9881;</button>
+    <button class="bmbtn" id="findBtn" data-on-click="toggleFindBar" style="display:none;" title="Find in this note (Ctrl+F)">&#128269;</button>
+    <button class="bmbtn" id="editNoteBtn" data-on-click="startEditNote" style="display:none;" title="Edit this note">&#9998;</button>
+    <button class="bmbtn" id="outlineBtn" data-on-click="toggleOutlinePanel" style="display:none;" title="Table of contents">&#9776;</button>
+    <button class="bmbtn" id="bmBtn" data-on-click="toggleBookmarkPanel" style="display:none;">&#128278;<span id="bmCount"></span></button>
   </div>
   <div id="settingsPanel" class="bmpanel" style="display:none;">
     <div class="stitle">Page color</div>
     <div class="seg">
-      <button data-v="auto" onclick="setPref('theme','auto')">Auto</button>
-      <button data-v="light" onclick="setPref('theme','light')">Light</button>
-      <button data-v="dark" onclick="setPref('theme','dark')">Dark</button>
-      <button data-v="sepia" onclick="setPref('theme','sepia')">Sepia</button>
+      <button data-v="auto" data-on-click="setPref" data-args-click='["theme","auto"]'>Auto</button>
+      <button data-v="light" data-on-click="setPref" data-args-click='["theme","light"]'>Light</button>
+      <button data-v="dark" data-on-click="setPref" data-args-click='["theme","dark"]'>Dark</button>
+      <button data-v="sepia" data-on-click="setPref" data-args-click='["theme","sepia"]'>Sepia</button>
     </div>
     <div class="stitle">Font</div>
     <div class="seg">
-      <button data-v="serif" onclick="setPref('font','serif')">Serif</button>
-      <button data-v="sans" onclick="setPref('font','sans')">Sans</button>
-      <button data-v="mono" onclick="setPref('font','mono')">Mono</button>
-      <button data-v="zh" onclick="setPref('font','zh')">中文</button>
+      <button data-v="serif" data-on-click="setPref" data-args-click='["font","serif"]'>Serif</button>
+      <button data-v="sans" data-on-click="setPref" data-args-click='["font","sans"]'>Sans</button>
+      <button data-v="mono" data-on-click="setPref" data-args-click='["font","mono"]'>Mono</button>
+      <button data-v="zh" data-on-click="setPref" data-args-click='["font","zh"]'>中文</button>
     </div>
     <div class="stitle">Text size</div>
     <div class="seg" style="padding-bottom:13px;">
-      <button data-v="s" onclick="setPref('size','s')">S</button>
-      <button data-v="m" onclick="setPref('size','m')">M</button>
-      <button data-v="l" onclick="setPref('size','l')">L</button>
-      <button data-v="xl" onclick="setPref('size','xl')">XL</button>
+      <button data-v="s" data-on-click="setPref" data-args-click='["size","s"]'>S</button>
+      <button data-v="m" data-on-click="setPref" data-args-click='["size","m"]'>M</button>
+      <button data-v="l" data-on-click="setPref" data-args-click='["size","l"]'>L</button>
+      <button data-v="xl" data-on-click="setPref" data-args-click='["size","xl"]'>XL</button>
     </div>
   </div>
   <div id="bmPanel" class="bmpanel" style="display:none;"></div>
   <div id="outlinePanel" class="bmpanel" style="display:none;"></div>
   <div id="findBar" style="display:none;">
     <div class="find-row">
-      <input type="search" id="findInput" placeholder="Find in note&hellip;" autocomplete="off" oninput="onFindInput()" onkeydown="onFindKeydown(event)">
+      <input type="search" id="findInput" placeholder="Find in note&hellip;" autocomplete="off" data-on-input="onFindInput" data-on-keydown="onFindKeydown" data-args-keydown='["$ev"]'>
       <span id="findCount" class="find-count"></span>
-      <button class="find-btn" id="findCaseBtn" onclick="toggleFindCase()" title="Match case" aria-pressed="false">Aa</button>
-      <button class="find-btn" onclick="findStep(-1)" title="Previous match (Shift+Enter)">&#8593;</button>
-      <button class="find-btn" onclick="findStep(1)" title="Next match (Enter)">&#8595;</button>
-      <button class="find-btn" onclick="closeFindBar()" title="Close">&#10005;</button>
+      <button class="find-btn" id="findCaseBtn" data-on-click="toggleFindCase" title="Match case" aria-pressed="false">Aa</button>
+      <button class="find-btn" data-on-click="findStep" data-args-click='[-1]' title="Previous match (Shift+Enter)">&#8593;</button>
+      <button class="find-btn" data-on-click="findStep" data-args-click='[1]' title="Next match (Enter)">&#8595;</button>
+      <button class="find-btn" data-on-click="closeFindBar" title="Close">&#10005;</button>
     </div>
     <div class="find-row" id="replaceRow" style="display:none;">
-      <input type="text" id="replaceInput" placeholder="Replace with&hellip;" autocomplete="off" onkeydown="onReplaceKeydown(event)">
-      <button class="find-btn wide" onclick="replaceCurrent()" title="Replace this match and jump to the next">Replace</button>
-      <button class="find-btn wide" onclick="replaceAll()" title="Replace every match (Undo reverses it in one step)">All</button>
+      <input type="text" id="replaceInput" placeholder="Replace with&hellip;" autocomplete="off" data-on-keydown="onReplaceKeydown" data-args-keydown='["$ev"]'>
+      <button class="find-btn wide" data-on-click="replaceCurrent" title="Replace this match and jump to the next">Replace</button>
+      <button class="find-btn wide" data-on-click="replaceAll" title="Replace every match (Undo reverses it in one step)">All</button>
     </div>
     <div class="find-row" id="findEditHint" style="display:none;">
-      <button class="find-btn wide" onclick="startEditFromFind()" title="Replacing edits the note text, so this opens the editor">Replace&hellip;</button>
+      <button class="find-btn wide" data-on-click="startEditFromFind" title="Replacing edits the note text, so this opens the editor">Replace&hellip;</button>
     </div>
   </div>
   <div id="rcontent"></div>
@@ -1269,7 +1274,7 @@ columns: 分类 | 笔记
 
 <div id="tagsPage">
   <div class="rbar">
-    <button class="back" onclick="closeTagsPage()">&larr; Shelf</button>
+    <button class="back" data-on-click="closeTagsPage">&larr; Shelf</button>
     <div class="rtitle" id="tagsPageTitle">Tags</div>
   </div>
   <div id="tagsPageBody"></div>

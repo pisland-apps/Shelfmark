@@ -170,6 +170,27 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.4** (2026-09-29) — Removed every inline event handler, so the
+  Content-Security-Policy is now `script-src 'self'` (no `'unsafe-inline'`).
+  Even if markup containing a `<script>` tag or an `onclick=` attribute got
+  into the page, the browser would refuse to run it. No visible change.
+  - All ~120 `onclick`/`onchange`/`oninput`/`onkeydown` attributes (static
+    ones in `index.html`, plus the ones built in template strings in
+    `app.js`: PDF and audio controls, the note editor toolbar, bookmarks,
+    outline, code-block Copy) became `data-on-click` / `data-on-change` /
+    `data-on-input` / `data-on-keydown` attributes. One delegated listener
+    at the bottom of `app.js` ("Event dispatcher") handles them.
+  - The dispatcher only calls functions listed in `UI_ACTIONS` (an explicit
+    allow-list; it never uses `eval` or looks names up on `window`).
+    **When you add a button, give it `data-on-click="yourFunction"` and add
+    `yourFunction` to `UI_ACTIONS`.** A plain `onclick="..."` will silently
+    do nothing under this CSP. Arguments: `data-arg-click="text"` (one string,
+    use for ids), `data-args-click='[1,"x"]'` (JSON; `"$ev"` = the event,
+    `"$el"` = the element), `data-stop-click`, `data-self-click`,
+    `data-click-target="elementId"`. Full contract is in the comment above
+    `UI_ACTIONS`.
+  - Handlers that were already assigned in code (`row.onclick = ...`) are
+    unchanged; those are fine under the CSP.
 - **v1.51.3** (2026-09-29) — Security/robustness pass, prompted by treating
   a note's content as untrusted (it can arrive via an imported backup or a
   synced notes folder, not just your own typing), plus one privacy default:
@@ -680,7 +701,7 @@ most common reason the two look out of sync.
   narrow phone; they're now reachable only through the palette (the header
   is down to 🔍 and **+ Add**). The old buttons are still in the DOM,
   just hidden with `display:none` on `#legacyHeaderIcons` — several of
-  their onclick handlers touch that specific element directly without a
+  their click handlers touch that specific element directly without a
   null-check, so hiding was safer than deleting them outright. Worth
   revisiting at some point: either null-guard those handlers and remove the
   dead markup, or leave it as-is since it costs nothing at runtime.
