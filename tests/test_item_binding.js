@@ -129,7 +129,8 @@ const legacyMeta=(title)=>({title,category:'C',type:'markdown',mime:'text/markdo
   await w.del('n1-copy2');
 
   // 11. export -> wipe -> import: items go out as plain content and come back bound, under their own ids
-  const items=await w.buildExportItems();
+  // (v1.52.0: buildExportItems is gone; a plain export through the real doExport yields the same items)
+  const items=await (async()=>{ w.Blob=require('buffer').Blob; let got=null; w.downloadBlob=async(b)=>{ got=Buffer.from(await b.arrayBuffer()).toString(); }; w.setExportMode('plain'); await w.doExport(); return JSON.parse(got).items; })();
   ok(items.length>=4&&items.every(i=>typeof i.content==='string'),'export still yields plain items ('+items.length+')');
   for(const i of items) await w.del(i.id);
   ok((await w.getAll()).length===0,'shelf emptied');

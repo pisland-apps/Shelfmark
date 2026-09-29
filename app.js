@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.14';
+const APP_VERSION = '1.52.0';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1034,7 +1034,6 @@ function openExportModal(){
   setExportMode('enc');
   document.getElementById('exportOverlay').style.display = 'flex';
 }
-function closeExportModal(){ document.getElementById('exportOverlay').style.display = 'none'; }
 
 // ---- Shelf identity (v1.49.0) -----------------------------------------------
 // Every shelf has a random `shelfId` (made once, kept in the encrypted prefs)
@@ -1093,17 +1092,13 @@ function describeBackupOwner(info){
 }
 const NO_OWNER_NOTE = 'This file has no owner information (it was made before v1.49.0), so it can\u2019t be checked against this shelf.';
 
-async function buildExportItems(){
-  const metas = await getAll();
-  const out = [];
-  for(const m of metas){
-    const full = await getOne(m.id);
-    const content = full.type === 'markdown' ? full.content : await blobToDataURL(full.content);
-    out.push({id:full.id, title:full.title, category:full.category, type:full.type, mime:full.mime,
-      addedAt:full.addedAt, updatedAt: typeof full.updatedAt === 'number' ? full.updatedAt : full.addedAt,
-      progress:full.progress, bookmarks:full.bookmarks, cover:full.cover || null, content});
-  }
-  return out;
+// The metadata half of a backup item (everything except the content), shared
+// by the plain and the v2 encrypted writers. `getOne` hands back DECRYPTED
+// content, so backups stay portable across passcodes (see item-id binding).
+function exportMetaOf(full){
+  return {id:full.id, title:full.title, category:full.category, type:full.type, mime:full.mime,
+    addedAt:full.addedAt, updatedAt: typeof full.updatedAt === 'number' ? full.updatedAt : full.addedAt,
+    progress:full.progress, bookmarks:full.bookmarks, cover:full.cover || null};
 }
 // Shared by both the whole-shelf JSON export (below) and exporting a single
 // item's own file (exportCurrentItem, in the reader section) — same
@@ -1136,93 +1131,298 @@ async function downloadBlob(blob, filename){
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
 }
-async function downloadJSON(obj, filename){
-  await downloadBlob(new Blob([JSON.stringify(obj)], {type:'application/json'}), filename);
+// ---- Backup file format v2 (v1.52.0) ----------------------------------------
+// Why: the old encrypted export built the whole shelf as strings (data: URLs,
+// one JSON string, its bytes, the ciphertext, that ciphertext as base64, and
+// the wrapper JSON again) - several copies of a 1.33x-1.78x blow-up alive at
+// once, and Chromium's ~512 MiB string limit is reached at roughly 290 MiB of
+// shelf. v2 keeps memory near ONE ITEM: items are written one at a time, and
+// each item's bytes are sealed in fixed-size segments, each with its own IV.
+//
+// Layout (all integers big-endian):
+//   "SHELFMARK2\n"            magic - old files start with "{" or "["
+//   <header JSON>"\n"         format:2, encrypted:true, kdf, iterations, salt,
+//                             chunkSize, itemCount + the usual identity fields
+//   frame*                    frame = u32 ctLen | u8 last | iv(12) | ciphertext
+//     key-check frame         proves the passphrase ("Incorrect passphrase")
+//     per item: META frame, then one or more CONTENT frames (last=1 on the
+//               final one; a zero-byte item has one empty frame)
+//     TRAILER frame           {itemCount}; the file must end right after it
+// Every frame is AES-GCM sealed with additional data = fixed prefix + SHA-256
+// of the header bytes + item index + segment index + kind + last flag, so a
+// dropped, reordered, duplicated, truncated or spliced-in-from-another-backup
+// frame fails to decrypt, not just a flipped byte. The passphrase key check is
+// the first frame, so a failure there is a wrong passphrase and a failure later
+// is a damaged or altered file.
+const BACKUP_MAGIC = 'SHELFMARK2\n';
+let BACKUP_CHUNK = 8 * 1024 * 1024;            // segment size (a test can shrink it)
+const BACKUP_MAX_CHUNK = 64 * 1024 * 1024;     // largest chunkSize an imported file may declare
+const BACKUP_META_MAX = 16 * 1024 * 1024;      // largest metadata frame (a cover + bookmarks)
+const BACKUP_MAX_ITEMS = 1000000;
+const BACKUP_MAX_ITEM_BYTES = 2 * 1024 * 1024 * 1024;
+const BACKUP_HEADER_MAX = 64 * 1024;
+// A backup made by v1.51.14 or earlier is one JSON string that has to be read
+// whole. Past this size it is refused with a message instead of freezing the tab.
+const LEGACY_IMPORT_MAX = 256 * 1024 * 1024;
+const BK_KEYCHECK = 0, BK_META = 1, BK_SEG = 2, BK_TRAILER = 3;
+class BackupFormatError extends Error {}   // damaged, incomplete, or altered file
+class BackupWrongKey extends Error {}      // the passphrase check frame failed
+class BackupCancelled extends Error {}     // the user pressed Cancel
+
+function bkAad(hh, idx, seg, kind, last){
+  const pre = new TextEncoder().encode('shelfmark:backup:v2:');
+  const out = new Uint8Array(pre.length + 32 + 10);
+  // The key-check frame is bound to the passphrase only, NOT the header hash: that way
+  // a wrong passphrase and an edited/damaged header stay distinguishable messages.
+  out.set(pre, 0); out.set(kind === BK_KEYCHECK ? new Uint8Array(32) : hh, pre.length);
+  const dv = new DataView(out.buffer); const o = pre.length + 32;
+  dv.setUint32(o, idx); dv.setUint32(o + 4, seg); out[o + 8] = kind; out[o + 9] = last ? 1 : 0;
+  return out;
+}
+async function bkSealFrame(key, plain, aad, last){
+  const { iv, cipher } = await aesEncrypt(key, plain, aad);
+  const ct = new Uint8Array(cipher);
+  const f = new Uint8Array(5 + 12 + ct.length);
+  new DataView(f.buffer).setUint32(0, ct.length);
+  f[4] = last ? 1 : 0; f.set(iv, 5); f.set(ct, 17);
+  return f;
+}
+async function bkHeaderHash(hdrBytes){ return new Uint8Array(await crypto.subtle.digest('SHA-256', hdrBytes)); }
+function bkHeaderBytes(hdr){ return new TextEncoder().encode(BACKUP_MAGIC + JSON.stringify(hdr) + '\n'); }
+
+// Writes the encrypted v2 file to `sink` one item at a time.
+async function writeEncryptedBackup(sink, metas, key, hdr, progress, cancelled){
+  const enc = s => new TextEncoder().encode(s);
+  const hdrBytes = bkHeaderBytes(hdr);
+  const hh = await bkHeaderHash(hdrBytes);
+  await sink.write(hdrBytes);
+  await sink.write(await bkSealFrame(key, enc('shelfmark-backup-ok'), bkAad(hh, 0, 0, BK_KEYCHECK, true), true));
+  let idx = 0;
+  for(const m of metas){
+    if(cancelled()) throw new BackupCancelled();
+    progress(idx + 1, metas.length);
+    const full = await getOne(m.id);
+    if(!full) throw new Error('An item changed while exporting. Please try the export again.');
+    const bytes = full.type === 'markdown' ? enc(full.content) : new Uint8Array(await full.content.arrayBuffer());
+    const meta = { ...exportMetaOf(full), size: bytes.length };
+    await sink.write(await bkSealFrame(key, enc(JSON.stringify(meta)), bkAad(hh, idx, 0, BK_META, true), true));
+    let seg = 0, off = 0;
+    do{
+      const end = Math.min(off + BACKUP_CHUNK, bytes.length);
+      const last = end >= bytes.length;
+      await sink.write(await bkSealFrame(key, bytes.subarray(off, end), bkAad(hh, idx, seg, BK_SEG, last), last));
+      off = end; seg++;
+    } while(off < bytes.length);
+    idx++;
+  }
+  await sink.write(await bkSealFrame(key, enc(JSON.stringify({ itemCount: idx })), bkAad(hh, idx, 0, BK_TRAILER, true), true));
+}
+// Plain export keeps the exact old JSON format (older versions can read it),
+// but is assembled from one small part per item instead of one giant string.
+async function writePlainBackup(sink, metas, hdr, progress, cancelled){
+  const head = JSON.stringify({ ...hdr, encrypted:false });
+  await sink.write(head.slice(0, -1) + ',"items":[');
+  let first = true, i = 0;
+  for(const m of metas){
+    if(cancelled()) throw new BackupCancelled();
+    progress(++i, metas.length);
+    const full = await getOne(m.id);
+    if(!full) throw new Error('An item changed while exporting. Please try the export again.');
+    const content = full.type === 'markdown' ? full.content : await blobToDataURL(full.content);
+    await sink.write((first ? '' : ',') + JSON.stringify({ ...exportMetaOf(full), content }));
+    first = false;
+  }
+  await sink.write(']}');
 }
 
+// Where the file goes. With showSaveFilePicker (desktop Chromium) it streams
+// straight to disk. The picker must be opened from the click itself, BEFORE
+// any await (PBKDF2, IndexedDB), or the browser refuses it - so the caller
+// makes this its first async call. Returns null if the person closed the
+// picker. Everywhere else it falls back to a Blob built from parts (the
+// browser can keep those out of the JS heap) handed to downloadBlob.
+async function openBackupSink(filename, mime, ext){
+  if(typeof window.showSaveFilePicker === 'function'){
+    let handle = null;
+    try{ handle = await window.showSaveFilePicker({ suggestedName: filename, types:[{ description:'Shelfmark backup', accept:{ [mime]: [ext] } }] }); }
+    catch(err){ if(err && err.name === 'AbortError') return null; /* any other refusal: use the fallback */ }
+    if(handle){
+      const ws = await handle.createWritable();
+      return { streamed:true, write: x => ws.write(x), close: () => ws.close(), abort: () => Promise.resolve().then(()=>ws.abort()).catch(()=>{}) };
+    }
+  }
+  const parts = [];
+  return { streamed:false,
+    write: async x => { parts.push(new Blob([x])); },
+    close: async () => { await downloadBlob(new Blob(parts, { type: mime }), filename); },
+    abort: async () => { parts.length = 0; } };
+}
+
+let exportRunning = false, exportCancel = false, shelfCountHint = null;
+function setBackupBusy(btnId, progId, busy, text){
+  const b = document.getElementById(btnId); if(b) b.disabled = !!busy;
+  const p = document.getElementById(progId); if(p) p.textContent = text || '';
+}
 function doExport(){ return holdAutoLock(doExportInner); }
 async function doExportInner(){
+  if(exportRunning) return;
   const errEl = document.getElementById('expError');
   errEl.textContent = '';
-  const items = await buildExportItems();
-  if(!items.length){ errEl.textContent = 'Your shelf is empty — nothing to export yet.'; return; }
-
-  await ensureShelfId();
+  const plain = exportMode === 'plain';
+  // Everything up to openBackupSink is synchronous on purpose (see above).
+  let pass = '';
+  if(!plain){
+    pass = document.getElementById('exppass').value;
+    if(pass.length < 4){ errEl.textContent = 'Use at least 4 characters.'; return; }
+    if(pass !== document.getElementById('exppass2').value){ errEl.textContent = "Passphrases don't match."; return; }
+  }
+  if(shelfCountHint === 0){ errEl.textContent = 'Your shelf is empty — nothing to export yet.'; return; }
   // Save the name/choice typed in the modal so it sticks for next time.
   prefs.shelfName = cleanShelfName(document.getElementById('expShelfName').value);
-  if(exportMode === 'enc') prefs.exportShelfName = document.getElementById('expNameInFile').checked;
-  putPrefs(prefs).catch(()=>{});
-  const includeName = exportMode === 'plain' ? true : prefs.exportShelfName !== false;
-
-  if(exportMode === 'plain'){
-    await downloadJSON({...backupHeader(items.length, includeName), encrypted:false, items},
-      backupFilename(includeName, '.json'));
+  if(!plain) prefs.exportShelfName = document.getElementById('expNameInFile').checked;
+  const includeName = plain ? true : prefs.exportShelfName !== false;
+  const ext = plain ? '.json' : '.shelfmark';
+  const mime = plain ? 'application/json' : 'application/octet-stream';
+  const filename = backupFilename(includeName, ext);
+  exportRunning = true; exportCancel = false;
+  setBackupBusy('expGoBtn', 'expProgress', true, 'Choosing where to save…');
+  let sink = null;
+  try{
+    sink = await openBackupSink(filename, mime, ext);
+    if(!sink){ setBackupBusy('expGoBtn', 'expProgress', false, ''); return; }   // picker closed: nothing happened
+    await ensureShelfId();
+    putPrefs(prefs).catch(()=>{});
+    const metas = await getAll();
+    if(!metas.length){
+      await sink.abort();
+      errEl.textContent = 'Your shelf is empty — nothing to export yet.';
+      return;
+    }
+    const cancelled = () => exportCancel;
+    const progress = (i, n) => { document.getElementById('expProgress').textContent = 'Exporting item '+i+' of '+n+'…'; };
+    const hdr = backupHeader(metas.length, includeName);
+    if(plain){
+      await writePlainBackup(sink, metas, hdr, progress, cancelled);
+    } else {
+      document.getElementById('expProgress').textContent = 'Preparing the key…';
+      const salt = randomBytes(16);
+      const key = await deriveKey(pass, salt, PBKDF2_ITERATIONS);
+      await writeEncryptedBackup(sink, metas, key,
+        { ...hdr, encrypted:true, format:2, kdf:'PBKDF2', iterations: PBKDF2_ITERATIONS, salt: buf2b64(salt), chunkSize: BACKUP_CHUNK },
+        progress, cancelled);
+    }
+    if(cancelled()) throw new BackupCancelled();
+    await sink.close();
+    sink = null;
     closeExportModal();
-    return;
+  }catch(err){
+    if(sink){ try{ await sink.abort(); }catch(e){} }
+    if(err instanceof BackupCancelled){ /* the person cancelled: nothing was saved */ }
+    else errEl.textContent = 'Export failed: '+(err && err.message ? err.message : 'unknown error')+'. Nothing was saved.';
+  }finally{
+    exportRunning = false;
+    setBackupBusy('expGoBtn', 'expProgress', false, '');
   }
-
-  const pass = document.getElementById('exppass').value;
-  const pass2 = document.getElementById('exppass2').value;
-  if(pass.length < 4){ errEl.textContent = 'Use at least 4 characters.'; return; }
-  if(pass !== pass2){ errEl.textContent = "Passphrases don't match."; return; }
-
-  const salt = randomBytes(16);
-  const key = await deriveKey(pass, salt, PBKDF2_ITERATIONS);
-  const { iv, cipher } = await encryptJSON(key, { items });
-  await downloadJSON({
-    ...backupHeader(items.length, includeName), encrypted:true,
-    kdf:'PBKDF2', iterations: PBKDF2_ITERATIONS,
-    salt: buf2b64(salt), iv: buf2b64(iv), cipher: buf2b64(cipher)
-  }, backupFilename(includeName, '.enc.json'));
-  closeExportModal();
 }
 
-let pendingImportInfo = null;
+let pendingImportInfo = null, pendingImportV2 = null, importRunning = false, importCancel = false;
+function showImportPassModal(info, shelfEmpty, differs){
+  // Show where it came from BEFORE asking for the passphrase.
+  pendingImportInfo = info;
+  const sum = document.getElementById('impSummary');
+  if(!info){
+    sum.textContent = shelfEmpty ? '' : NO_OWNER_NOTE;
+    sum.style.color = 'var(--ink-soft)';
+  } else if(differs){
+    sum.textContent = 'This backup is from '+describeBackupOwner(info)+', not this shelf. Importing will merge its items into this shelf.';
+    sum.style.color = '#b23b3b';
+  } else {
+    sum.textContent = 'This backup is from '+(info.id === prefs.shelfId ? 'this shelf' : describeBackupOwner(info))+(info.id === prefs.shelfId && (info.count != null || info.date) ? ' ('+[info.count != null ? info.count+' item'+(info.count===1?'':'s') : '', info.date].filter(Boolean).join(', ')+')' : '')+'.';
+    sum.style.color = 'var(--ink-soft)';
+  }
+  sum.style.display = sum.textContent ? 'block' : 'none';
+  document.getElementById('imppass').value = '';
+  document.getElementById('impError').textContent = '';
+  document.getElementById('impProgress').textContent = '';
+  document.getElementById('importPassOverlay').style.display = 'flex';
+}
+// Reads and checks a v2 header. Returns {hdr, hdrBytes} or throws BackupFormatError.
+async function readBackupHeaderV2(f){
+  const buf = new Uint8Array(await f.slice(0, Math.min(f.size, BACKUP_HEADER_MAX)).arrayBuffer());
+  const nl = buf.indexOf(10, BACKUP_MAGIC.length);
+  if(nl < 0) throw new BackupFormatError('header');
+  let hdr;
+  try{ hdr = JSON.parse(new TextDecoder().decode(buf.subarray(BACKUP_MAGIC.length, nl))); }catch(e){ throw new BackupFormatError('header'); }
+  const okInt = (v, lo, hi) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+  if(!hdr || typeof hdr !== 'object' || hdr.format !== 2 || hdr.encrypted !== true || hdr.kdf !== 'PBKDF2') throw new BackupFormatError('header');
+  if(typeof hdr.iterations !== 'number' || !safeIterations(hdr.iterations)) throw new BackupFormatError('iterations');
+  if(!okInt(hdr.chunkSize, 1, BACKUP_MAX_CHUNK) || !okInt(hdr.itemCount, 0, BACKUP_MAX_ITEMS)) throw new BackupFormatError('header');
+  try{ if(typeof hdr.salt !== 'string' || b642buf(hdr.salt).length !== 16) throw 0; }catch(e){ throw new BackupFormatError('header'); }
+  return { hdr, hdrBytes: buf.slice(0, nl + 1) };
+}
 async function onImportFile(e){
   const f = e.target.files[0];
   e.target.value = '';
   if(!f) return;
-  let parsed;
-  try{ parsed = JSON.parse(await f.text()); }
-  catch(err){ alert("Couldn't read that file — make sure it's a Shelfmark export."); return; }
-
-  const info = backupIdentity(parsed);
+  let head = '';
+  try{ head = new TextDecoder().decode(new Uint8Array(await f.slice(0, BACKUP_MAGIC.length).arrayBuffer())); }catch(err){}
+  const v2 = head === BACKUP_MAGIC;
+  let parsed = null, info = null, v2Head = null;
+  if(v2){
+    try{ v2Head = await readBackupHeaderV2(f); }
+    catch(err){
+      alert(err && err.message === 'iterations'
+        ? "This backup can't be opened: its key-derivation setting is invalid. The file may be damaged or not made by Shelfmark."
+        : "Couldn't read that file — its header is damaged or it isn't a Shelfmark export.");
+      return;
+    }
+    info = backupIdentity(v2Head.hdr);
+  } else {
+    if(f.size > LEGACY_IMPORT_MAX){
+      alert("This backup is in the older single-string format and is too large ("+Math.round(f.size/1048576)+" MB) to open in one piece here (limit "+Math.round(LEGACY_IMPORT_MAX/1048576)+" MB). Open it in the version that made it and export again, or split the shelf into smaller backups.");
+      return;
+    }
+    try{ parsed = JSON.parse(await f.text()); }
+    catch(err){ alert("Couldn't read that file — make sure it's a Shelfmark export."); return; }
+    info = backupIdentity(parsed);
+  }
   let shelfEmpty = false;
   try{ shelfEmpty = (await getAll()).length === 0; }catch(err){}
   const differs = !!info && info.id !== prefs.shelfId && !shelfEmpty;
 
+  if(v2){
+    pendingImportBackup = null;
+    pendingImportV2 = { file: f, hdr: v2Head.hdr, hdrBytes: v2Head.hdrBytes };
+    showImportPassModal(info, shelfEmpty, differs);
+    return;
+  }
   if(parsed && parsed.encrypted === true){
-    // Show where it came from BEFORE asking for the passphrase.
     if(!safeIterations(parsed.iterations)){
       alert("This backup can't be opened: its key-derivation setting is invalid ("+String(parsed.iterations).slice(0,20)+"). The file may be damaged or not made by Shelfmark.");
       return;
     }
+    pendingImportV2 = null;
     pendingImportBackup = parsed;
-    pendingImportInfo = info;
-    const sum = document.getElementById('impSummary');
-    if(!info){
-      sum.textContent = shelfEmpty ? '' : NO_OWNER_NOTE;
-      sum.style.color = 'var(--ink-soft)';
-    } else if(differs){
-      sum.textContent = 'This backup is from '+describeBackupOwner(info)+', not this shelf. Importing will merge its items into this shelf.';
-      sum.style.color = '#b23b3b';
-    } else {
-      sum.textContent = 'This backup is from '+(info.id === prefs.shelfId ? 'this shelf' : describeBackupOwner(info))+(info.id === prefs.shelfId && (info.count != null || info.date) ? ' ('+[info.count != null ? info.count+' item'+(info.count===1?'':'s') : '', info.date].filter(Boolean).join(', ')+')' : '')+'.';
-      sum.style.color = 'var(--ink-soft)';
-    }
-    sum.style.display = sum.textContent ? 'block' : 'none';
-    document.getElementById('imppass').value = '';
-    document.getElementById('impError').textContent = '';
-    document.getElementById('importPassOverlay').style.display = 'flex';
+    showImportPassModal(info, shelfEmpty, differs);
     return;
   }
   if(differs && !confirm('This backup is from '+describeBackupOwner(info)+', not this shelf.\n\nMerge its items into this shelf?')) return;
   await mergeImportedItems(Array.isArray(parsed) ? parsed : (parsed.items || []), info);
 }
-function closeImportPassModal(){ document.getElementById('importPassOverlay').style.display = 'none'; pendingImportBackup = null; pendingImportInfo = null; }
+function closeImportPassModal(){
+  if(importRunning) importCancel = true;
+  document.getElementById('importPassOverlay').style.display = 'none';
+  pendingImportBackup = null; pendingImportInfo = null; pendingImportV2 = null;
+}
+function closeExportModal(){
+  if(exportRunning) exportCancel = true;
+  document.getElementById('exportOverlay').style.display = 'none';
+}
 
 function doImportDecrypt(){ return holdAutoLock(doImportDecryptInner); }
 async function doImportDecryptInner(){
+  if(importRunning) return;
+  if(pendingImportV2) return doImportV2();
   const errEl = document.getElementById('impError');
   errEl.textContent = '';
   const pass = document.getElementById('imppass').value;
@@ -1239,6 +1439,121 @@ async function doImportDecryptInner(){
     await mergeImportedItems(items || [], info);
   }catch(err){
     errEl.textContent = 'Incorrect passphrase.';
+  }
+}
+
+// ---- v2 import ---------------------------------------------------------------
+async function bkRead(file, pos, n){
+  if(pos + n > file.size) throw new BackupFormatError('truncated');
+  return new Uint8Array(await file.slice(pos, pos + n).arrayBuffer());
+}
+// Walks a v2 file frame by frame. `keep` false = only authenticate (nothing is
+// retained). `onItem(meta, parts, idx)` is called with each item's decrypted
+// segments (ArrayBuffers) when keep is true. Memory: one segment, plus the
+// current item's segments when keep is true.
+async function bkWalk(file, ctx, keep, onItem, progress, cancelled){
+  let pos = ctx.dataStart;
+  const readFrame = async (idx, seg, kind, maxPlain, mustBeLast) => {
+    const lenB = await bkRead(file, pos, 5);
+    const ctLen = new DataView(lenB.buffer, lenB.byteOffset, 4).getUint32(0);
+    const last = lenB[4] === 1;
+    if(lenB[4] > 1 || ctLen < 16 || ctLen > maxPlain + 16 || (mustBeLast && !last)) throw new BackupFormatError('frame');
+    const body = await bkRead(file, pos + 5, 12 + ctLen);
+    pos += 5 + 12 + ctLen;
+    let plain;
+    try{ plain = await aesDecrypt(ctx.key, body.subarray(0, 12), body.subarray(12), bkAad(ctx.hh, idx, seg, kind, last)); }
+    catch(err){ throw kind === BK_KEYCHECK ? new BackupWrongKey() : new BackupFormatError('auth'); }
+    return { plain, last };
+  };
+  const check = await readFrame(0, 0, BK_KEYCHECK, 64, true);
+  if(new TextDecoder().decode(check.plain) !== 'shelfmark-backup-ok') throw new BackupWrongKey();
+  const n = ctx.hdr.itemCount;
+  for(let idx = 0; idx < n; idx++){
+    if(cancelled()) throw new BackupCancelled();
+    let meta;
+    try{ meta = JSON.parse(new TextDecoder().decode((await readFrame(idx, 0, BK_META, BACKUP_META_MAX, true)).plain)); }
+    catch(err){ if(err instanceof BackupFormatError) throw err; throw new BackupFormatError('meta'); }
+    if(!meta || typeof meta !== 'object' || !Number.isInteger(meta.size) || meta.size < 0 || meta.size > BACKUP_MAX_ITEM_BYTES) throw new BackupFormatError('meta');
+    let seg = 0, total = 0;
+    const parts = [];
+    for(;;){
+      const { plain, last } = await readFrame(idx, seg, BK_SEG, ctx.hdr.chunkSize, false);
+      total += plain.byteLength;
+      if(total > meta.size || (!last && plain.byteLength === 0)) throw new BackupFormatError('size');
+      if(keep) parts.push(plain);
+      seg++;
+      if(last) break;
+    }
+    if(total !== meta.size) throw new BackupFormatError('size');
+    if(onItem) await onItem(meta, parts, idx);
+    if(progress) progress(idx + 1, n);
+  }
+  const tr = await readFrame(n, 0, BK_TRAILER, 4096, true);
+  let t; try{ t = JSON.parse(new TextDecoder().decode(tr.plain)); }catch(err){ throw new BackupFormatError('trailer'); }
+  if(!t || t.itemCount !== n) throw new BackupFormatError('trailer');
+  if(pos !== file.size) throw new BackupFormatError('extra');
+}
+const BACKUP_DAMAGED_MSG = "This backup file is damaged, incomplete, or has been changed since it was made, so it can't be trusted.";
+async function doImportV2(){
+  const errEl = document.getElementById('impError'), progEl = document.getElementById('impProgress');
+  errEl.textContent = '';
+  const pend = pendingImportV2;
+  const pass = document.getElementById('imppass').value;
+  const info = pendingImportInfo;
+  importRunning = true; importCancel = false;
+  setBackupBusy('impGoBtn', 'impProgress', true, 'Preparing the key…');
+  let session = null, modalClosed = false;
+  try{
+    const key = await deriveKey(pass, b642buf(pend.hdr.salt), safeIterations(pend.hdr.iterations));
+    const ctx = { key, hdr: pend.hdr, hh: await bkHeaderHash(pend.hdrBytes), dataStart: pend.hdrBytes.length };
+    const cancelled = () => importCancel;
+    // Pass 1: authenticate the WHOLE file before touching the shelf, so a
+    // truncated or altered file imports nothing at all.
+    await bkWalk(pend.file, ctx, false, null, (i, n) => { progEl.textContent = 'Checking item '+i+' of '+n+'…'; }, cancelled);
+    document.getElementById('importPassOverlay').style.display = 'none'; modalClosed = true;
+    pendingImportV2 = null; pendingImportInfo = null;
+    // Pass 2: import one item at a time.
+    session = await beginImport(info);
+    const dec = new TextDecoder();
+    let stopped = false;
+    const onItem = async (meta, parts) => {
+      if(stopped) return;
+      const it = { ...meta };
+      if(KNOWN_ITEM_TYPES.has(meta.type)){
+        if(meta.type === 'markdown'){
+          let s = ''; for(const p of parts) s += dec.decode(p, { stream:true });
+          it.content = s + dec.decode();
+        } else {
+          it.content = new Blob(parts, { type: meta.mime || undefined });
+        }
+      }
+      if(!(await importOneItem(session, it))) stopped = true;
+    };
+    try{
+      await bkWalk(pend.file, ctx, true, async (m, p, i) => {
+        progEl.textContent = 'Importing item '+(i+1)+' of '+ctx.hdr.itemCount+'…';
+        await onItem(m, p);
+      }, null, cancelled);
+    }catch(err){
+      // The file passed the check a moment ago, so this is a cancel or the file
+      // changing underneath us. Say exactly what was imported.
+      render();
+      const why = err instanceof BackupCancelled ? 'Import cancelled.' : BACKUP_DAMAGED_MSG;
+      alert(why+' '+importCountsText(session, 'Before it stopped, ')+'Re-import the same file to pick up the rest.');
+      return;
+    }
+    await finishImport(session);
+  }catch(err){
+    if(err instanceof BackupWrongKey){ errEl.textContent = 'Incorrect passphrase.'; }
+    else if(err instanceof BackupCancelled){ /* cancelled while checking: nothing was imported */ }
+    else if(err instanceof BackupFormatError){
+      if(!modalClosed) errEl.textContent = BACKUP_DAMAGED_MSG+' Nothing was imported.';
+      else alert(BACKUP_DAMAGED_MSG);
+    }
+    else { errEl.textContent = "Couldn't import that file: "+(err && err.message ? err.message : 'unknown error'); }
+  }finally{
+    importRunning = false;
+    setBackupBusy('impGoBtn', 'impProgress', false, '');
   }
 }
 
@@ -1262,72 +1577,102 @@ const KNOWN_ITEM_TYPES = new Set(['markdown','pdf','image','audio']);
 function sanitizeImportedId(rawId){
   return (typeof rawId === 'string' && SAFE_ID_RE.test(rawId)) ? rawId : null;
 }
-async function mergeImportedItems(items, info){
+// The merge is split so the v2 importer can feed it ONE item at a time:
+// beginImport (read the shelf's item list once), importOneItem (per item),
+// finishImport (identity adoption + the summary). mergeImportedItems is the
+// old whole-list entry point, behaving exactly as before.
+async function beginImport(info){
+  const existingItems = await getAll();
   // v1.51.9: two kinds of skip are counted separately, because they mean very
   // different things. keptNewer is normal and harmless (the shelf already has a
   // newer copy); unreadable means the backup item itself could not be used.
-  let added = 0, updated = 0, keptNewer = 0, unreadable = 0, stoppedOnQuota = false;
-  try{
-    const existingItems = await getAll();
-    const wasEmpty = existingItems.length === 0;
-    for(const it of items){
-      if(!it || !KNOWN_ITEM_TYPES.has(it.type)){ unreadable++; continue; }
-      const safeId = it.id ? sanitizeImportedId(it.id) : null;
-      let existing = safeId ? existingItems.find(x=>x.id===safeId) : null;
-      if(!existing){
-        existing = existingItems.find(x=>x.title===it.title && x.type===it.type && x.addedAt===it.addedAt);
-      }
-      // Newer-wins on a genuine conflict: only replace an existing record if
-      // the imported copy doesn't carry an older updatedAt than what's
-      // already here (older items have no updatedAt at all, so they still
-      // compare as "unknown" and are allowed through, matching pre-v1.51.3
-      // behavior for backups made before this field existed).
-      if(existing && typeof existing.updatedAt === 'number' && typeof it.updatedAt === 'number' && it.updatedAt < existing.updatedAt){
-        keptNewer++; continue;
-      }
-      let content = it.content;
-      if(it.type !== 'markdown'){
-        if(typeof content !== 'string' || !content.startsWith('data:')){ unreadable++; continue; }
-        try{
-          const res = await fetch(content);
-          content = await res.blob();
-        }catch(err){ unreadable++; continue; }
-      }
-      const id = existing ? existing.id : (safeId || Date.now()+'-'+Math.random().toString(36).slice(2));
-      const record = {
-        id, title: it.title || 'Untitled', category: it.category || 'Uncategorized',
-        type: it.type, content, mime: it.mime,
-        addedAt: it.addedAt || Date.now(), updatedAt: typeof it.updatedAt === 'number' ? it.updatedAt : Date.now(),
-        progress: it.progress || null,
-        bookmarks: it.bookmarks || [], cover: isValidCoverDataUrl(it.cover) ? it.cover : null
-      };
+  return { info, existingItems, wasEmpty: existingItems.length === 0,
+    added:0, updated:0, keptNewer:0, unreadable:0, stoppedOnQuota:false };
+}
+// Returns false when the import must stop (storage full), true otherwise.
+async function importOneItem(s, it){
+  const existingItems = s.existingItems;
+  if(!it || !KNOWN_ITEM_TYPES.has(it.type)){ s.unreadable++; return true; }
+  const safeId = it.id ? sanitizeImportedId(it.id) : null;
+  let existing = safeId ? existingItems.find(x=>x.id===safeId) : null;
+  if(!existing){
+    existing = existingItems.find(x=>x.title===it.title && x.type===it.type && x.addedAt===it.addedAt);
+  }
+  // Newer-wins on a genuine conflict: only replace an existing record if
+  // the imported copy doesn't carry an older updatedAt than what's
+  // already here (older items have no updatedAt at all, so they still
+  // compare as "unknown" and are allowed through, matching pre-v1.51.3
+  // behavior for backups made before this field existed).
+  if(existing && typeof existing.updatedAt === 'number' && typeof it.updatedAt === 'number' && it.updatedAt < existing.updatedAt){
+    s.keptNewer++; return true;
+  }
+  let content = it.content;
+  if(it.type !== 'markdown'){
+    // A Blob only comes from the v2 importer (JSON cannot hold one); a JSON
+    // backup must still carry a data: URI.
+    if(content instanceof Blob){ /* already decrypted bytes */ }
+    else {
+      if(typeof content !== 'string' || !content.startsWith('data:')){ s.unreadable++; return true; }
       try{
-        await put(record);
-      }catch(err){
-        if(isQuotaError(err)){ stoppedOnQuota = true; break; } // stop; keep whatever imported so far
-        throw err;
-      }
-      if(existing){ updated++; } else { added++; existingItems.push(record); }
+        const res = await fetch(content);
+        content = await res.blob();
+      }catch(err){ s.unreadable++; return true; }
     }
-    // Restoring onto an empty shelf (new device, after an erase): take on the
-    // backup's identity so later backups from here match the original shelf.
-    if(wasEmpty && added && info){
-      prefs.shelfId = info.id;
-      if(info.name && !prefs.shelfName) prefs.shelfName = info.name;
-      putPrefs(prefs).catch(()=>{});
+  }
+  const id = existing ? existing.id : (safeId || Date.now()+'-'+Math.random().toString(36).slice(2));
+  const record = {
+    id, title: it.title || 'Untitled', category: it.category || 'Uncategorized',
+    type: it.type, content, mime: it.mime,
+    addedAt: it.addedAt || Date.now(), updatedAt: typeof it.updatedAt === 'number' ? it.updatedAt : Date.now(),
+    progress: it.progress || null,
+    bookmarks: it.bookmarks || [], cover: isValidCoverDataUrl(it.cover) ? it.cover : null
+  };
+  try{
+    await put(record);
+  }catch(err){
+    if(isQuotaError(err)){ s.stoppedOnQuota = true; return false; } // stop; keep whatever imported so far
+    throw err;
+  }
+  if(existing){ s.updated++; } else { s.added++; existingItems.push(record); }
+  return true;
+}
+function importSummaryParts(s){
+  const parts = [];
+  if(s.added) parts.push(`added ${s.added} new item${s.added===1?'':'s'}`);
+  if(s.updated) parts.push(`updated ${s.updated} existing item${s.updated===1?'':'s'}`);
+  if(s.keptNewer) parts.push(`left ${s.keptNewer} item${s.keptNewer===1?'':'s'} unchanged because your shelf already has a newer copy`);
+  if(s.unreadable) parts.push(`skipped ${s.unreadable} item${s.unreadable===1?'':'s'} that couldn't be read (unknown type or damaged data)`);
+  return parts;
+}
+function importCountsText(s, lead){
+  const p = importSummaryParts(s);
+  return p.length ? lead + p.join(', ') + '. ' : lead + 'nothing had been imported. ';
+}
+async function finishImport(s){
+  const { info, wasEmpty } = s;
+  // Restoring onto an empty shelf (new device, after an erase): take on the
+  // backup's identity so later backups from here match the original shelf.
+  if(wasEmpty && s.added && info){
+    prefs.shelfId = info.id;
+    if(info.name && !prefs.shelfName) prefs.shelfName = info.name;
+    putPrefs(prefs).catch(()=>{});
+  }
+  render();
+  const tail = (!info && !wasEmpty) ? '\n\n'+NO_OWNER_NOTE : '';
+  const parts = importSummaryParts(s);
+  if(s.stoppedOnQuota){
+    alert((parts.length ? parts.join(', ')+', then s' : 'S')+"topped partway through — your device's storage is full. Free up space or remove a few items, then re-import the same file to pick up the rest (already-imported items will be skipped)."+tail);
+  } else {
+    alert((parts.length ? parts.join(', ')+'.' : "That file didn't contain any recognizable items.")+tail);
+  }
+}
+async function mergeImportedItems(items, info){
+  try{
+    const s = await beginImport(info);
+    for(const it of items){
+      if(!(await importOneItem(s, it))) break;
     }
-    render();
-    const tail = (!info && !wasEmpty) ? '\n\n'+NO_OWNER_NOTE : '';
-    const parts = [];
-    if(added) parts.push(`added ${added} new item${added===1?'':'s'}`);
-    if(updated) parts.push(`updated ${updated} existing item${updated===1?'':'s'}`);
-    if(keptNewer) parts.push(`left ${keptNewer} item${keptNewer===1?'':'s'} unchanged because your shelf already has a newer copy`);
-    if(unreadable) parts.push(`skipped ${unreadable} item${unreadable===1?'':'s'} that couldn't be read (unknown type or damaged data)`);
-    if(stoppedOnQuota){
-      alert((parts.length ? parts.join(', ')+', then s' : 'S')+"topped partway through — your device's storage is full. Free up space or remove a few items, then re-import the same file to pick up the rest (already-imported items will be skipped)."+tail);
-    } else {
-      alert((parts.length ? parts.join(', ')+'.' : "That file didn't contain any recognizable items.")+tail);
-    }
+    await finishImport(s);
   }catch(err){
     alert("Couldn't read that file — make sure it's a Shelfmark export.");
   }
@@ -1694,6 +2039,7 @@ function onSearchInput(){
 
 async function render(){
   const allItems = (await getAll()).sort((a,b)=>b.addedAt-a.addedAt);
+  shelfCountHint = allItems.length;   // lets Export refuse an empty shelf before opening the save dialog
   const items = searchQuery
     ? allItems.filter(it => it.title.toLowerCase().includes(searchQuery)
         || (it.category||'').toLowerCase().includes(searchQuery)
@@ -2221,7 +2567,7 @@ async function openReader(id){
   updateMiniPlayer(); // may need to hide now that the reader is showing this track
 }
 // ---- Export a single item as its own file ----
-// Distinct from the whole-shelf backup (doExport/downloadJSON above): this
+// Distinct from the whole-shelf backup (doExport above): this
 // hands back the note/PDF/picture/recording exactly as it'd look outside
 // Shelfmark — plain markdown text, or the original file bytes — with no
 // encryption and no wrapper JSON, so it can be opened in any other app.

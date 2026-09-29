@@ -12,6 +12,6 @@ module.exports=function(root){
   const {webcrypto}=require('crypto'); Object.defineProperty(w,'crypto',{value:webcrypto,configurable:true});
   w.TextEncoder=TextEncoder; w.TextDecoder=TextDecoder;
   w.matchMedia=w.matchMedia||(()=>({matches:false,addEventListener(){},removeEventListener(){}}));
-  w.eval(fs.readFileSync(root+'app.js','utf8')+'\n;window.__setPref=(k,v)=>{ prefs[k]=v; };window.__ext=()=>({extRoot,extRootName});window.__setExt=(r,n)=>{ extRoot=r; extRootName=n; };window.__setPendingImport=v=>{ pendingImportBackup=v; };window.__key=()=>cryptoKey;window.__lastDeleted=()=>lastDeleted;');
+  w.eval(fs.readFileSync(root+'app.js','utf8')+'\n;window.__setPref=(k,v)=>{ prefs[k]=v; };window.__ext=()=>({extRoot,extRootName});window.__setExt=(r,n)=>{ extRoot=r; extRootName=n; };window.__setPendingImport=v=>{ pendingImportBackup=v; };window.__key=()=>cryptoKey;window.__lastDeleted=()=>lastDeleted;window.__setChunk=n=>{ BACKUP_CHUNK=n; };window.__getPref=k=>prefs[k];window.__exportRunning=()=>exportRunning;window.__setExportCancel=v=>{ exportCancel=v; };window.__setImportCancel=v=>{ importCancel=v; };');
   return w;
 };

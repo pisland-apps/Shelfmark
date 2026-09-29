@@ -29,6 +29,9 @@ in this folder ships to users. Run from this folder:
 - `test_autolock.js` — idle / background auto-lock and Lock now (v1.51.11): timing rules,
   activity resets, sound and export/import holds, queued writes finish first, draft kept,
   settings panel, no-passcode mode never locks. Replaces the page reload with a stub.
+- `test_export_stream.js` — chunked/streamed backup format v2 (v1.52.0): round trips at tiny chunk sizes, tamper/truncate/reorder
+  refusals, wrong passphrase vs damaged file, save-dialog path, cancel, plain export, and old-format fixtures
+  (`fixtures/`, made with `make_legacy_fixtures.js` against a v1.51.14 project).
 - `test_fences.js` — code fences must start a line (v1.51.14): mid-line backticks never open a block,
   indented / CRLF / legacy-closer fences still work, unclosed fence stays text, Tags page and editor use the
   same rule, plus a 400-input fuzz that must keep `<pre>` / `<code>` balanced.

@@ -183,6 +183,55 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.52.0** (2026-09-29) — Whole-shelf backups no longer hold the shelf in memory:
+  a new streamed, chunked encrypted format, and one-item-at-a-time import.
+  - **Why.** The old encrypted export built the shelf as several giant strings at once
+    (data: URLs, one JSON string, its bytes, the ciphertext, that ciphertext as base64,
+    the wrapper JSON), 1.33x to 1.78x the shelf each. Chromium's single-string limit
+    (about 512 MiB) puts the ceiling near a 290 MB shelf, and memory ran out well before.
+  - **Measured** (real Chromium, 4 GB / 1 CPU test machine, 20 MB PDFs): v1.51.14 exported
+    a 100 MB shelf as a 178 MB file (1.78x) using about +1.5 GB of memory, and the tab
+    then crashed importing that same file; a 200 MB shelf crashed the tab during export.
+    v1.52.0 exported and re-imported 100, 200, 300 and 400 MB shelves; the file is the same
+    size as the shelf (1.00x) and every item came back byte-identical (SHA-256). Peak memory
+    was about 1.1 to 1.3 GB during export and 1.3 to 1.8 GB during import (baseline about
+    0.6 to 0.7 GB): far lower than before, but it still grows somewhat with shelf size,
+    so it is "much flatter", not flat.
+  - **Encrypted backups are now `.shelfmark` files** (binary, not JSON). Each item's bytes
+    are sealed in 8 MB segments with their own IVs. Every segment is bound (AES-GCM
+    additional data) to the file header, its item number, its segment number and a
+    last-segment flag, and the file ends with an authenticated item-count trailer, so a
+    dropped, reordered, duplicated, truncated or spliced-in piece fails, not just a
+    flipped byte.
+  - **Import** reads the file in slices, never as one string. It first checks the whole
+    file (nothing is retained), and only then imports item by item, so a damaged or
+    altered file imports **nothing** and says so. A wrong passphrase still reads
+    "Incorrect passphrase."; a damaged file reads as damaged. Same newer-wins rule,
+    counts, storage-full stop and shelf-identity adoption as before. Cancel is honoured.
+  - **Saving.** Where the browser has the save dialog (desktop Chromium) the file streams
+    straight to disk; elsewhere it is built from small parts and downloaded as before.
+    The dialog is opened first thing on the click (it is refused after any wait).
+    Export shows "item n of N", and Cancel discards the half-written file.
+  - **Plain JSON export** keeps exactly the old format (older versions can read it) but is
+    assembled item by item.
+  - **Behaviour change (one-way):** a `.shelfmark` file **cannot be opened by v1.51.14 or
+    earlier**. Every older backup (encrypted or plain, with or without `iterations`,
+    `shelfId` or `updatedAt`) still imports in v1.52.0.
+  - **Known, left alone.** (1) Each item is still handled whole in memory while it is
+    read, sealed or stored, so one very large single file costs a few times its own size.
+    (2) An old-format (single JSON string) backup over 256 MB is refused with a message
+    instead of freezing the tab; open it in the version that made it and re-export.
+    (3) A plain JSON backup is still one JSON file, so importing a very large one is
+    limited by the same 256 MB guard; use an encrypted backup for big shelves.
+    (4) The import picker no longer filters by file type (a `.shelfmark` file is not JSON).
+    (5) Test suites: `test_autolock.js` still hangs in the jsdom run (as on v1.51.12).
+  - Tests: `tests/test_export_stream.js` (89 checks: round trip at chunk sizes 1, 7, 14, 100,
+    101 and 1000; zero-byte and exact-multiple items; truncation, flipped bytes, dropped,
+    swapped, duplicated and grafted frames, edited header, hostile header fields, a 4 GB
+    frame length; wrong passphrase; the save-dialog path; cancel; plain round trip; and
+    the v1.51.14 fixtures in `tests/fixtures/`, made by `tests/make_legacy_fixtures.js`).
+    Against v1.51.14 the new-format checks fail. `test_item_binding.js` now reads its
+    export through a plain `doExport`, since `buildExportItems` is gone.
 - **v1.51.14** (2026-09-29) — Fixes: code fences must start a line; Undo no longer
   survives a passcode change.
   - **Code fences.** An opening fence (three backticks) now has to be at the start of a

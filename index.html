@@ -880,11 +880,11 @@
         <button class="icon-btn" id="loopBtn" data-on-click="toggleLoopAudio" title="Loop audio within a category">&#128257;</button>
         <button class="icon-btn" data-on-click="openTagsPage" title="Browse tags">#</button>
         <button class="icon-btn" id="selectModeBtn" data-on-click="toggleSelectMode" title="Select multiple items">&#9745;</button>
-        <button class="icon-btn" data-click-target="importPick" title="Import from JSON">&#8681;</button>
-        <button class="icon-btn" data-on-click="openExportModal" title="Export shelf as JSON">&#8679;</button>
+        <button class="icon-btn" data-click-target="importPick" title="Import a backup">&#8681;</button>
+        <button class="icon-btn" data-on-click="openExportModal" title="Export shelf backup">&#8679;</button>
         <button class="icon-btn" data-on-click="quickNewNote" title="New blank note — skips the Add panel">&#128221;</button>
       </div>
-      <input type="file" id="importPick" accept="application/json" style="display:none" data-on-change="onImportFile" data-args-change='["$ev"]'>
+      <input type="file" id="importPick" style="display:none" data-on-change="onImportFile" data-args-change='["$ev"]'>
       <button class="add-btn" data-on-click="openAdd">+ Add</button>
     </div>
   </div>
@@ -1002,6 +1002,8 @@
       <button class="cancel" data-on-click="closeExportModal">Cancel</button>
       <button class="save" id="expGoBtn" data-on-click="doExport">Export</button>
     </div>
+    <div id="expProgress" style="font-size:12.5px;color:var(--ink-soft);margin-top:10px;min-height:1em;"></div>
+    <div id="expFormatNote" style="font-size:12px;color:var(--ink-soft);margin-top:6px;line-height:1.5;">Encrypted backups use the new .shelfmark format (v1.52.0+): any shelf size, but versions before 1.52.0 cannot open it. Plain JSON stays readable by every version.</div>
     <div class="lock-error" id="expError"></div>
   </div>
 </div>
@@ -1115,8 +1117,9 @@ columns: 分类 | 笔记
     <input id="imppass" type="password" autocomplete="off" placeholder="Passphrase">
     <div class="row">
       <button class="cancel" data-on-click="closeImportPassModal">Cancel</button>
-      <button class="save" data-on-click="doImportDecrypt">Import</button>
+      <button class="save" id="impGoBtn" data-on-click="doImportDecrypt">Import</button>
     </div>
+    <div id="impProgress" style="font-size:12.5px;color:var(--ink-soft);margin-top:10px;min-height:1em;"></div>
     <div class="lock-error" id="impError"></div>
   </div>
 </div>
