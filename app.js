@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.2';
-const APP_VERSION_DATE = '2026-09-28';
+const APP_VERSION = '1.51.3';
+const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -710,6 +710,11 @@ async function putMetaOnly(id, metaUpdates){
     await putRaw(rec);
   });
 }
+// Thrown when a linked note's on-disk file changed since it was opened and
+// the user chose not to overwrite that outside change (v1.51.3). Callers
+// already catch putContentOnly's errors and leave the editor open with the
+// text intact, so this reuses that path rather than needing its own UI.
+class ExtConflictError extends Error {}
 // Content-only update (editing a note's text)
 async function putContentOnly(id, type, contentValue){
   return serialized(async ()=>{
@@ -724,11 +729,24 @@ async function putContentOnly(id, type, contentValue){
     if(type === 'markdown'){
       meta = await decryptJSON(cryptoKey, rec.metaIv, rec.metaCipher);
       if(meta.extPath){
+        // v1.51.3: the file may have been edited outside Shelfmark (e.g. in
+        // Obsidian) since this note was opened — writing blind here used to
+        // silently discard those outside changes with no warning at all.
+        let liveMtime = null;
+        try{ liveMtime = (await (await extFileHandle(meta.extPath, false)).getFile()).lastModified; }catch(e){ /* file missing/unreadable: fall through and let extWriteFile surface it */ }
+        if(liveMtime !== null && meta.extMtime !== null && liveMtime !== meta.extMtime){
+          const overwrite = confirm(
+            `"${meta.extPath}" was changed outside Shelfmark since you opened this note (e.g. edited in Obsidian).\n\n`+
+            `Save anyway and overwrite that outside version? Cancel to keep your edits here without saving — reopen the note afterward to load the outside version instead.`
+          );
+          if(!overwrite) throw new ExtConflictError('Save cancelled: the linked file changed outside Shelfmark.');
+        }
         const mtime = await extWriteFile(meta.extPath, contentValue);
         meta.extMtime = mtime;
-        const m = await encryptJSON(cryptoKey, meta);
-        rec.metaIv = m.iv; rec.metaCipher = m.cipher;
       }
+      meta.updatedAt = Date.now();
+      const m = await encryptJSON(cryptoKey, meta);
+      rec.metaIv = m.iv; rec.metaCipher = m.cipher;
     }
     await putRaw(rec);
   });
@@ -872,7 +890,8 @@ async function buildExportItems(){
     const full = await getOne(m.id);
     const content = full.type === 'markdown' ? full.content : await blobToDataURL(full.content);
     out.push({id:full.id, title:full.title, category:full.category, type:full.type, mime:full.mime,
-      addedAt:full.addedAt, progress:full.progress, bookmarks:full.bookmarks, cover:full.cover || null, content});
+      addedAt:full.addedAt, updatedAt: typeof full.updatedAt === 'number' ? full.updatedAt : full.addedAt,
+      progress:full.progress, bookmarks:full.bookmarks, cover:full.cover || null, content});
   }
   return out;
 }
@@ -1005,26 +1024,58 @@ async function doImportDecrypt(){
   }
 }
 
+// A backup file is untrusted input — it may be an old copy of this shelf, a
+// shelf from another device, or (v1.51.3) a deliberately crafted file. Three
+// checks below exist because of that, not because a genuine Shelfmark export
+// would ever trip them:
+//   - id: written unescaped into an inline onclick="...('${id}')" handler
+//     when the item is opened (see openReader), so a raw id from the file
+//     used to be able to break out of that string and run script. Now any id
+//     that isn't plain word-characters/dot/dash is replaced with a fresh one.
+//   - content for non-markdown items used to be handed straight to fetch(),
+//     so a crafted item could make the app request an arbitrary URL during
+//     import. Now only a data: URI is accepted.
+//   - type is checked against the four kinds the app knows, instead of
+//     trusting whatever string the file contains.
+const SAFE_ID_RE = /^[\w.-]{1,64}$/;
+const KNOWN_ITEM_TYPES = new Set(['markdown','pdf','image','audio']);
+function sanitizeImportedId(rawId){
+  return (typeof rawId === 'string' && SAFE_ID_RE.test(rawId)) ? rawId : null;
+}
 async function mergeImportedItems(items, info){
-  let added = 0, updated = 0, stoppedOnQuota = false;
+  let added = 0, updated = 0, skipped = 0, stoppedOnQuota = false;
   try{
     const existingItems = await getAll();
     const wasEmpty = existingItems.length === 0;
     for(const it of items){
-      let existing = it.id ? existingItems.find(x=>x.id===it.id) : null;
+      if(!it || !KNOWN_ITEM_TYPES.has(it.type)){ skipped++; continue; }
+      const safeId = it.id ? sanitizeImportedId(it.id) : null;
+      let existing = safeId ? existingItems.find(x=>x.id===safeId) : null;
       if(!existing){
         existing = existingItems.find(x=>x.title===it.title && x.type===it.type && x.addedAt===it.addedAt);
       }
+      // Newer-wins on a genuine conflict: only replace an existing record if
+      // the imported copy doesn't carry an older updatedAt than what's
+      // already here (older items have no updatedAt at all, so they still
+      // compare as "unknown" and are allowed through, matching pre-v1.51.3
+      // behavior for backups made before this field existed).
+      if(existing && typeof existing.updatedAt === 'number' && typeof it.updatedAt === 'number' && it.updatedAt < existing.updatedAt){
+        skipped++; continue;
+      }
       let content = it.content;
       if(it.type !== 'markdown'){
-        const res = await fetch(content);
-        content = await res.blob();
+        if(typeof content !== 'string' || !content.startsWith('data:')){ skipped++; continue; }
+        try{
+          const res = await fetch(content);
+          content = await res.blob();
+        }catch(err){ skipped++; continue; }
       }
-      const id = existing ? existing.id : (it.id || Date.now()+'-'+Math.random().toString(36).slice(2));
+      const id = existing ? existing.id : (safeId || Date.now()+'-'+Math.random().toString(36).slice(2));
       const record = {
         id, title: it.title || 'Untitled', category: it.category || 'Uncategorized',
         type: it.type, content, mime: it.mime,
-        addedAt: it.addedAt || Date.now(), progress: it.progress || null,
+        addedAt: it.addedAt || Date.now(), updatedAt: typeof it.updatedAt === 'number' ? it.updatedAt : Date.now(),
+        progress: it.progress || null,
         bookmarks: it.bookmarks || [], cover: isValidCoverDataUrl(it.cover) ? it.cover : null
       };
       try{
@@ -1047,6 +1098,7 @@ async function mergeImportedItems(items, info){
     const parts = [];
     if(added) parts.push(`added ${added} new item${added===1?'':'s'}`);
     if(updated) parts.push(`updated ${updated} existing item${updated===1?'':'s'}`);
+    if(skipped) parts.push(`skipped ${skipped} item${skipped===1?'':'s'} that looked corrupted or outdated`);
     if(stoppedOnQuota){
       alert((parts.length ? parts.join(', ')+', then s' : 'S')+"topped partway through — your device's storage is full. Free up space or remove a few items, then re-import the same file to pick up the rest (already-imported items will be skipped)."+tail);
     } else {
@@ -1059,7 +1111,15 @@ async function mergeImportedItems(items, info){
 
 const FONT_MAP = {serif:"Georgia,'Times New Roman',serif", sans:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", mono:"'SFMono-Regular',Consolas,Menlo,monospace", zh:"'PingFang SC','Heiti SC','Microsoft YaHei',sans-serif"};
 const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
-let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, itemSortMode:'newest', collapsedCats:[], categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true};
+// allowRemoteMedia (v1.51.3): off by default. A note's ![](https://...) or
+// audio link otherwise loads live and silently, from any note that reached
+// the shelf — including one from an unencrypted backup import or a synced
+// notes folder, not just something the user typed. That's a tracking-pixel
+// / IP-address leak, quietly at odds with the app's "nothing leaves this
+// device" README claim. With this off, a remote image/audio renders as a
+// tap-to-load placeholder instead of a live request; data:/blob: media
+// (pasted-in pictures, on-shelf audio links) are unaffected either way.
+let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, allowRemoteMedia:false, itemSortMode:'newest', collapsedCats:[], categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -1085,6 +1145,11 @@ function toggleLoopAudio(){
   prefs.loopAudio = !prefs.loopAudio;
   applyPrefs(prefs);
   putPrefs(prefs).catch(()=>{});
+}
+async function toggleRemoteMedia(){
+  prefs.allowRemoteMedia = !prefs.allowRemoteMedia;
+  putPrefs(prefs).catch(()=>{});
+  await rerenderNoteView().catch(()=>{}); // if a note is open, its placeholders/live media need to flip now
 }
 function setPref(key, val){
   prefs[key] = val;
@@ -1228,7 +1293,7 @@ async function saveItem(){
   const item = {
     id: Date.now()+'-'+Math.random().toString(36).slice(2),
     title, category, type: pendingType, content, mime,
-    addedAt: Date.now(), progress: null,
+    addedAt: Date.now(), updatedAt: Date.now(), progress: null,
     ...(pendingCoverDataUrl ? {cover: pendingCoverDataUrl} : {})
   };
   try{
@@ -4186,6 +4251,57 @@ function tableToHtml(block){
 // deleted item linkTypes has no entry for) falls back to the note glyph
 // rather than guessing — it's still a working jump widget either way, since
 // openNoteLink()/openReader() don't care what the icon looked like.
+// Scheme allowlist for note links/images (v1.51.3). A note's markdown can
+// come from an unencrypted backup import or a linked external folder, so it
+// is untrusted input, not just the user's own typing. Before this, any
+// scheme was accepted — `[x](javascript:...)` rendered a real, clickable
+// `<a>` in the app's own origin, which (combined with an in-memory or
+// non-extractable IndexedDB key) could reach the decrypted shelf. Only
+// http(s)/mailto/tel are allowed as *links*; only data:/blob:/http(s) are
+// allowed as image/audio *sources*. Anything else renders as inert text.
+function isSafeLinkUrl(url){
+  return /^(https?:|mailto:|tel:)/i.test(url.trim());
+}
+function isSafeMediaUrl(url){
+  return /^(https?:|data:|blob:)/i.test(url.trim());
+}
+// data:/blob: are always local (a pasted-in picture, an on-shelf audio
+// link); only http(s) is a live request off the device, and that's the part
+// gated by the allowRemoteMedia preference above.
+function isRemoteMediaUrl(url){
+  return /^https?:/i.test(url.trim());
+}
+// Delegated once at load, not re-wired per render (renderMarkdown's output
+// gets swapped into #mdView from several places — initial open, save,
+// checkbox/table edits — and a single document-level listener covers all of
+// them without needing a matching wire call at each one). Tapping the
+// placeholder swaps in the real element for that one instance only; nothing
+// else on the page reflects the allowRemoteMedia preference until re-render.
+document.addEventListener('click', (e)=>{
+  const el = e.target.closest && e.target.closest('.md-remote-blocked');
+  if(!el) return;
+  const kind = el.dataset.remoteKind, url = el.dataset.remoteUrl;
+  const label = el.querySelector('.remote-label');
+  const labelText = label ? label.textContent.replace(/ — tap to load$/, '') : '';
+  if(kind === 'audio'){
+    const wrap = document.createElement('div');
+    wrap.className = 'md-audio';
+    wrap.innerHTML = `<div class="md-audio-label">${escapeHtml(labelText)}</div><audio controls preload="none" src="${url}"></audio>`;
+    el.replaceWith(wrap);
+  } else {
+    const img = document.createElement('img');
+    img.className = 'md-img'; img.src = url; img.alt = labelText;
+    el.replaceWith(img);
+  }
+});
+function remoteMediaPlaceholder(kind, url, label){
+  // Placeholder only — no request happens until the user taps it. wireRemoteMediaLoads()
+  // (called wherever renderMarkdown's output is inserted) turns a tap into
+  // a real <img>/<audio> using the same URL, so this stays a single opt-in per element.
+  return `<div class="md-remote-blocked" data-remote-kind="${kind}" data-remote-url="${url}">`
+       + `<span class="remote-icon">${kind === 'audio' ? '&#127925;' : '&#128444;&#65039;'}</span>`
+       + `<span class="remote-label">${label || (kind === 'audio' ? 'Remote audio' : 'Remote image')} — tap to load</span></div>`;
+}
 function shelfLinkIcon(type){
   if(type === 'pdf') return '&#128196;';
   return '&#128220;';
@@ -4376,7 +4492,12 @@ function renderMarkdown(src, linkTypes){
   // works. Must run BEFORE the plain-link pass below, since a leftover
   // `[alt](url)` after stripping the leading `!` would otherwise also match
   // the link regex and get turned into a stray `!<a>...</a>`.
-  s = s.replace(/!\[(.*?)\]\((.+?)\)/g,(_,alt,url)=>`<img class="md-img" src="${url.trim()}" alt="${alt}">`);
+  s = s.replace(/!\[(.*?)\]\((.+?)\)/g,(_,alt,url)=>{
+    const trimmed = url.trim();
+    if(!isSafeMediaUrl(trimmed)) return `![${alt}](${url})`;
+    if(isRemoteMediaUrl(trimmed) && !prefs.allowRemoteMedia) return remoteMediaPlaceholder('image', trimmed, alt);
+    return `<img class="md-img" src="${trimmed}" alt="${alt}">`;
+  });
   const AUDIO_EXT = /\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|weba)(\?.*)?$/i;
   const SHELF_LINK = /^shelf:\/\/(.+)$/;
   s = s.replace(/\[(.+?)\]\((.+?)\)/g,(_,label,url)=>{
@@ -4405,10 +4526,13 @@ function renderMarkdown(src, linkTypes){
            + `<button class="expand" title="Open full player">&#8599;</button></div>`;
     }
     if(AUDIO_EXT.test(trimmedUrl) || /^data:audio\//i.test(trimmedUrl)){
+      if(!isSafeMediaUrl(trimmedUrl)) return `[${label}](${url})`;
+      if(isRemoteMediaUrl(trimmedUrl) && !prefs.allowRemoteMedia) return remoteMediaPlaceholder('audio', trimmedUrl, label);
       return `<div class="md-audio"><div class="md-audio-label">${label}</div>`
            + `<audio controls preload="none" src="${trimmedUrl}"></audio></div>`;
     }
-    return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`;
+    if(!isSafeLinkUrl(trimmedUrl)) return `[${label}](${url})`;
+    return `<a href="${trimmedUrl}" target="_blank" rel="noopener">${label}</a>`;
   });
   // ~~strike~~ / ==highlight==: last inline pass, once links/images/widgets
   // are already HTML (see applyInlineMarks for why the order matters).
@@ -4994,6 +5118,7 @@ function buildStaticCommands(){
     { id:'select', icon: selectMode ? '&times;' : '&#9745;', label: selectMode ? 'Exit selection mode' : 'Select multiple items', hint:'', action: ()=>toggleSelectMode() },
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
+    { id:'remote-media', icon:'&#127760;', label:'Remote images/audio in notes: turn '+(prefs.allowRemoteMedia ? 'off' : 'on'), hint: prefs.allowRemoteMedia ? 'on' : 'off (tap to load)', action: ()=>toggleRemoteMedia() },
     authMode === 'device'
       ? { id:'passcode-set', icon:'&#128274;', label:'Set a passcode\u2026', hint:'currently none', action: ()=>openAuthModal('set') }
       : { id:'passcode-remove', icon:'&#128275;', label:'Remove passcode\u2026', hint:'', action: ()=>openAuthModal('remove') },
@@ -5204,7 +5329,7 @@ async function extRefreshOne(id){
   let file; try{ file = await (await extFileHandle(meta.extPath, false)).getFile(); }catch(e){ return; }
   if(file.lastModified === meta.extMtime) return;
   await putContentOnlyRaw(id, await file.text());
-  await putMetaOnly(id, { extMtime: file.lastModified });
+  await putMetaOnly(id, { extMtime: file.lastModified, updatedAt: Date.now() });
 }
 // Store text without writing back to disk (used only when the disk is the source).
 async function putContentOnlyRaw(id, text){
@@ -5227,7 +5352,7 @@ async function extSync(interactive){
       if(cur){
         if(cur.extMtime !== file.lastModified){
           await putContentOnlyRaw(cur.id, await file.text());
-          await putMetaOnly(cur.id, { extMtime: file.lastModified }); updated++;
+          await putMetaOnly(cur.id, { extMtime: file.lastModified, updatedAt: Date.now() }); updated++;
         }
       } else {
         const dirPart = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
@@ -5235,7 +5360,7 @@ async function extSync(interactive){
           id: Date.now()+'-'+Math.random().toString(36).slice(2),
           title: f.path.split('/').pop().replace(/\.md$/i,''),
           category: dirPart || 'Uncategorized', type:'markdown', mime:'text/markdown',
-          content: await file.text(), addedAt: file.lastModified, progress: null,
+          content: await file.text(), addedAt: file.lastModified, updatedAt: file.lastModified, progress: null,
           extPath: f.path, extMtime: file.lastModified
         }); added++;
       }

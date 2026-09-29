@@ -146,10 +146,17 @@ most common reason the two look out of sync.
 
 ## Security notes
 
-- No network calls carry your data anywhere. The only external requests
-  this build makes are none at all — Google Fonts was removed in this
-  version specifically so the app has zero external dependencies and works
-  fully offline; UI text now uses system fonts instead of Lora/Inter.
+- No network calls carry your data anywhere by default. The app itself makes
+  no external requests, and a remote `http(s)` image or audio link inside a
+  note (from a note you wrote, an imported backup, or a synced notes folder)
+  renders as a tap-to-load placeholder rather than loading automatically —
+  turn on "Remote images/audio in notes" (command palette) if you want those
+  to load live; each load is still a request to that server, revealing your
+  IP address and confirming the note was opened.
+- Treat an imported backup, and any folder you link for notes sync, as
+  untrusted input, not just your own data — they're read from disk/file and
+  parsed, so a corrupted or tampered file is handled defensively (bad items
+  are skipped, not blindly trusted) rather than assumed safe.
 - Forgetting your passcode has no recovery path by design (there's no
   server holding a spare key). The lock screen's "Forgot passcode" option
   wipes the local IndexedDB database entirely so you can start over —
@@ -162,6 +169,35 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.51.3** (2026-09-29) — Security/robustness pass, prompted by treating
+  a note's content as untrusted (it can arrive via an imported backup or a
+  synced notes folder, not just your own typing), plus one privacy default:
+  - Only `http(s)`/`mailto`/`tel` are accepted as link targets and only
+    `http(s)`/`data`/`blob` as image/audio sources; anything else (notably
+    `javascript:`) now renders as plain text instead of a live, clickable
+    element. Added a Content-Security-Policy meta tag as defense-in-depth
+    (blocks cross-origin requests, plugins, and off-site form submission).
+  - Import (JSON restore) now validates each item before trusting it: an
+    item id is checked against a safe pattern instead of being written
+    verbatim into the reader's inline handler; `type` is checked against
+    the four known kinds; non-markdown `content` must be a `data:` URI
+    before it's fetched. A bad item is skipped, not treated as reason to
+    abort the whole import.
+  - Items now carry an `updatedAt`. Restoring an older backup no longer
+    silently overwrites a newer local edit to the same item — the newer
+    copy wins and the older one is skipped, reported as such in the import
+    summary.
+  - Saving a linked note (one synced from your notes folder) now checks
+    the file's current modified time against what Shelfmark last saw
+    before writing. If the file changed outside Shelfmark (e.g. edited in
+    Obsidian) since you opened the note, you're asked before your save
+    overwrites that outside change, instead of it happening silently.
+  - New "Remote images/audio in notes" setting (command palette), off by
+    default: a remote `http(s)` image or audio link in a note now shows as
+    a tap-to-load placeholder instead of loading automatically, so opening
+    an imported or synced note can't silently phone home. `data:`/`blob:`
+    media (pasted-in pictures, on-shelf audio links) are unaffected.
 
 - **v1.51.2** (2026-09-28) — App guide: the Category index card now explains
   each optional line (`types`, `exclude`, `columns`) on its own, says that
