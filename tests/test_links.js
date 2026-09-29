@@ -1,6 +1,6 @@
 // Shelfmark link/image URL parsing + hostile-input tests (renderMarkdown, real app.js in jsdom).
 // Run: node test_links.js [path-to-project-dir/]
-process.on('unhandledRejection',()=>{});
+require('./guard.js')();
 const w=require('./load.js')(process.argv[2]);
 const {JSDOM}=require('jsdom');
 let fails=0,n=0; const ok=(c,m)=>{ n++; if(!c){fails++; console.log('FAIL',m);} };

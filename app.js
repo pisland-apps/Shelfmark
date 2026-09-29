@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.52.1';
+const APP_VERSION = '1.52.3';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -203,9 +203,25 @@ async function wipeAllData(){
   // resurface after "erase and start over" and re-sync on the next focus.
   try{ await extForget(); }catch(e){ /* never let this block the erase itself */ }
   db.close();
-  await new Promise(res=>{ const r = indexedDB.deleteDatabase('shelfmark'); r.onsuccess=r.onerror=r.onblocked=()=>res(); });
-  location.reload();
+  // v1.52.2: "blocked" means another window still has the shelf open. That used to
+  // count as done, so the page reloaded while the data was still there (and then
+  // waited on the pending delete). Other windows now close themselves when they see
+  // the delete (onversionchange), so a short wait is enough; if it is still blocked
+  // we say so and do not reload. The delete stays queued and completes on its own.
+  const outcome = await new Promise(res=>{
+    const r = indexedDB.deleteDatabase('shelfmark');
+    let timer = null;
+    r.onsuccess = ()=>{ clearTimeout(timer); res('ok'); };
+    r.onerror = ()=>{ clearTimeout(timer); res('error'); };
+    r.onblocked = ()=>{ timer = setTimeout(()=>res('blocked'), WIPE_BLOCK_WAIT_MS); };
+  });
+  if(outcome === 'blocked'){
+    alert('Not erased yet: another Shelfmark window is still open. Close it, then reload this page. The erase finishes as soon as the other window closes.');
+    return;
+  }
+  reloadPage();
 }
+let WIPE_BLOCK_WAIT_MS = 5000;
 
 // ---- lock screen wiring -----------------------------------------------------
 async function initLockScreen(){
@@ -786,9 +802,28 @@ function openDB(){
       if(!d.objectStoreNames.contains('settings')) d.createObjectStore('settings',{keyPath:'id'});
       if(!d.objectStoreNames.contains('security')) d.createObjectStore('security',{keyPath:'id'});
     };
-    req.onsuccess = ()=>res(req.result);
+    // v1.52.2: let another window erase or upgrade the database. Without this the
+    // request waits for us forever ("blocked"): an erase in one window never
+    // finished while another one was open, and a later schema upgrade would be
+    // stuck behind an old window. We close our connection and ask for a reload.
+    req.onsuccess = ()=>{
+      const d = req.result;
+      d.onversionchange = ()=>{ try{ d.close(); }catch(e){} showDbNotice('Shelfmark was erased or updated in another window. Reload this page to continue.'); };
+      res(d);
+    };
+    req.onblocked = ()=>showDbNotice('Close your other Shelfmark windows so this one can open.');
     req.onerror = ()=>rej(req.error);
   });
+}
+// A plain, always-visible banner (no dependency on the rest of the UI being ready).
+function showDbNotice(msg){
+  let el = document.getElementById('dbNotice');
+  if(!el){
+    el = document.createElement('div'); el.id = 'dbNotice'; el.setAttribute('role','alert');
+    el.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;padding:12px 16px;background:#7a3b2e;color:#fff;font:14px/1.4 sans-serif;text-align:center';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
 }
 function blobToDataURL(blob){
   return new Promise((res,rej)=>{
@@ -893,9 +928,33 @@ async function decryptContent(rec, type, mime){
   if(type === 'markdown') return new TextDecoder().decode(plain);
   return new Blob([plain], { type: mime || undefined });
 }
+// v1.52.3: listing must not pull the whole shelf into memory. store.getAll() returns
+// every record WITH its content ciphertext (PDFs, recordings, pictures) although a
+// listing only needs the metadata. This walks a cursor and keeps just the four
+// fields decryptMeta reads, so at most one full record is alive at a time. Same
+// error behaviour as getAllRaw (a failed read gives an empty list).
+function getAllMetaRaw(){
+  return new Promise(res=>{
+    const out = [];
+    const r = tx('readonly').openCursor();
+    r.onsuccess = ()=>{
+      const c = r.result;
+      if(!c) return res(out);
+      const v = c.value;
+      out.push({ id:v.id, metaIv:v.metaIv, metaCipher:v.metaCipher, metaBound:v.metaBound });
+      c.continue();
+    };
+    r.onerror = ()=>res([]);
+  });
+}
 async function getAll(){
-  const raws = await getAllRaw();
+  const raws = await getAllMetaRaw();
   return Promise.all(raws.map(decryptMeta));
+}
+// One item's metadata without touching any other record or its content.
+async function getMeta(id){
+  const rec = await getOneRaw(id);
+  return rec ? decryptMeta(rec) : null;
 }
 async function getOne(id){
   const rec = await getOneRaw(id);
@@ -2343,7 +2402,7 @@ async function confirmMoveCategory(){
 let editId = null;
 async function openEdit(id){
   editId = id;
-  const it = await getAll().then(all=>all.find(x=>x.id===id));
+  const it = await getMeta(id);
   if(!it) return;
   document.getElementById('etitle').value = it.title;
   document.getElementById('ecat').value = (it.category && it.category !== 'Uncategorized') ? it.category : '';

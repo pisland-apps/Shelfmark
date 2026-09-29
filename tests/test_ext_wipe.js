@@ -1,6 +1,6 @@
 // v1.51.6: erasing the shelf must also delete the linked-folder database ('shelfmark-ext').
 // Run: node test_ext_wipe.js [path-to-project-dir/]
-process.on('unhandledRejection',()=>{});
+require('./guard.js')();
 const w=require('./load.js')(process.argv[2]);
 let fails=0,n=0; const ok=(c,m)=>{ n++; if(!c){fails++; console.log('FAIL',m);} else console.log('ok  ',m); };
 const names=async()=>(await w.indexedDB.databases()).map(d=>d.name);

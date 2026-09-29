@@ -1,6 +1,6 @@
 // v1.51.7: folder sync tells rename / move / delete / already-on-shelf apart (extSync, real app.js in jsdom,
 // against an in-memory fake folder). Run: node test_ext_sync.js [path-to-project-dir/]
-process.on('unhandledRejection',()=>{});
+require('./guard.js')();
 const w=require('./load.js')(process.argv[2]);
 let fails=0,n=0; const ok=(c,m)=>{ n++; if(!c){fails++; console.log('FAIL',m);} else console.log('ok  ',m); };
 

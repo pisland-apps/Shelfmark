@@ -2,7 +2,7 @@
 const fs=require('fs'); const {JSDOM}=require('jsdom');
 require('fake-indexeddb/auto');
 const {indexedDB,IDBKeyRange}=require('fake-indexeddb');
-const path=require('path');
+const path=require('path'); const vm=require('vm');
 module.exports=function(root){
   root = root || (path.resolve(__dirname,'..')+'/');
   const html=fs.readFileSync(root+'index.html','utf8').replace(/<script src="app.js"><\/script>/,'');
@@ -12,6 +12,6 @@ module.exports=function(root){
   const {webcrypto}=require('crypto'); Object.defineProperty(w,'crypto',{value:webcrypto,configurable:true});
   w.TextEncoder=TextEncoder; w.TextDecoder=TextDecoder;
   w.matchMedia=w.matchMedia||(()=>({matches:false,addEventListener(){},removeEventListener(){}}));
-  w.eval(fs.readFileSync(root+'app.js','utf8')+'\n;window.__setPref=(k,v)=>{ prefs[k]=v; };window.__ext=()=>({extRoot,extRootName});window.__setExt=(r,n)=>{ extRoot=r; extRootName=n; };window.__setPendingImport=v=>{ pendingImportBackup=v; };window.__key=()=>cryptoKey;window.__lastDeleted=()=>lastDeleted;window.__setChunk=n=>{ BACKUP_CHUNK=n; };window.__getPref=k=>prefs[k];window.__getDb=()=>db;window.__setDb=v=>{ db=v; };window.__exportRunning=()=>exportRunning;window.__setExportCancel=v=>{ exportCancel=v; };window.__setImportCancel=v=>{ importCancel=v; };');
+  new vm.Script(fs.readFileSync(root+'app.js','utf8')+'\n;window.__setPref=(k,v)=>{ prefs[k]=v; };window.__ext=()=>({extRoot,extRootName});window.__setExt=(r,n)=>{ extRoot=r; extRootName=n; };window.__setPendingImport=v=>{ pendingImportBackup=v; };window.__key=()=>cryptoKey;window.__lastDeleted=()=>lastDeleted;window.__setChunk=n=>{ BACKUP_CHUNK=n; };window.__getPref=k=>prefs[k];window.__getDb=()=>db;window.__setDb=v=>{ db=v; };window.__exportRunning=()=>exportRunning;window.__setExportCancel=v=>{ exportCancel=v; };window.__setImportCancel=v=>{ importCancel=v; };',{importModuleDynamically:vm.constants&&vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER}).runInContext(dom.getInternalVMContext());
   return w;
 };

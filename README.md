@@ -183,6 +183,31 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.52.3** (2026-09-29) — Fix: the shelf listing no longer loads every file's content into memory.
+  - **The problem.** Listing items (home screen, palette, search, `[[links]]`, tags, and about 15 more
+    places) went through `store.getAll()`, which returns whole records, PDF / recording / picture
+    ciphertext included, only for the app to decrypt the small metadata part. Opening the edit
+    dialog for one item did the same for the whole shelf. In a Node + fake-indexeddb measurement with
+    a 200 MB shelf, that added about 160 MB of memory per listing versus about 40 MB for the fix
+    (directional only; not measured in a browser).
+  - **The fix.** `getAll()` now walks a cursor and keeps only the four fields it decrypts (`getAllMetaRaw`),
+    and the edit dialog reads one record (`getMeta`). Results are identical to before, including for
+    old-format records. No data or format change; nothing to migrate and no rollback issue.
+  - Tests: `tests/test_list_meta.js` (8 checks).
+  - **Still worth doing by hand:** a shelf with a few hundred MB of PDFs on a phone: open the app,
+    change category, open the palette, edit an item, and check that nothing stalls.
+- **v1.52.2** (2026-09-29) — Fix: erasing (or upgrading) with two Shelfmark windows open.
+  - **The problem.** The main database never reacted to `versionchange`, unlike the folder-link one. With
+    the app open in a browser tab and as an installed app, "erase shelf" in one window was blocked by the
+    other, yet was treated as finished: the page reloaded with the data still there and then waited on the
+    pending delete. A future schema upgrade would have been blocked the same way.
+  - **The fix.** Every window now closes its connection when another one erases or upgrades and shows a
+    banner asking to reload. Erase waits up to 5 seconds for the delete; if another window still blocks
+    it, it says so and does not reload (the delete finishes on its own once that window closes).
+  - Tests: `tests/test_db_versionchange.js` (10 checks; on v1.52.1 it does not finish, and the new
+    watchdog ends the run).
+  - **Still worth doing by hand:** installed app plus a browser tab on the same shelf: erase in one and
+    check the other shows the banner and the shelf is empty after reload.
 - **v1.52.1** (2026-09-29) — Fix: a save that failed at the very end (typically "storage
   full") could be reported as saved and then quietly dropped.
   - **The bug (since the first version, found while testing v1.52.0).** IndexedDB reports a

@@ -1,7 +1,7 @@
 // v1.51.8: KDF iteration count (new = 600k, old records keep their own), crafted-backup clamp,
 // legacy backups without an `iterations` field, 4-char minimum unchanged, advisory strength hint.
 // Run: node test_kdf.js [path-to-project-dir/]
-process.on('unhandledRejection',()=>{});
+require('./guard.js')();
 const w=require('./load.js')(process.argv[2]);
 let fails=0,n=0; const ok=(c,m)=>{ n++; if(!c){fails++; console.log('FAIL',m);} else console.log('ok  ',m); };
 const $=id=>w.document.getElementById(id);

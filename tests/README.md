@@ -46,3 +46,15 @@ in this folder ships to users. Run from this folder:
 - `test_inline_code.js` — inline code spans (v1.51.12): double-backtick spans, unmatched backticks,
   nothing after a bad span turning into code, tag extraction. Cases are in `inline_code_cases.js`
   so the same checks can be run in a real browser.
+
+## Notes (v1.52.2 – v1.52.3)
+
+- **Node 22 or newer.** `load.js` runs `app.js` as a script inside the jsdom context so its top-level
+  `let` / `const` are visible to tests. That uses `vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER`; expect one
+  harmless `ExperimentalWarning` line.
+- **`guard.js`** is required at the top of most test files: an unhandled rejection is printed and makes the
+  run fail, and a watchdog stops a suite that hangs. Run one suite with `node test_autolock.js`.
+- `test_db_versionchange.js`: erase / versionchange with a second connection ("another window").
+- `test_list_meta.js`: listing reads metadata only.
+- `test_autolock.js` uses short real sleeps (20 ms). If it is flaky, suspect a slow machine first.
+

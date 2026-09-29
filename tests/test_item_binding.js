@@ -5,7 +5,7 @@
 // Legacy records here are built with raw WebCrypto (NOT the app's helpers) so they are a fair
 // stand-in for what v1.51.12 left on disk.
 // Run: node test_item_binding.js [path-to-project-dir/]
-process.on('unhandledRejection',()=>{});
+require('./guard.js')();
 const w=require('./load.js')(process.argv[2]);
 const {webcrypto}=require('crypto');
 let fails=0,n=0; const ok=(c,m)=>{ n++; if(!c){fails++; console.log('FAIL',m);} else console.log('ok  ',m); };

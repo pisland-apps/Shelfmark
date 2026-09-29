@@ -1,6 +1,6 @@
 // v1.51.11: idle / background auto-lock and "Lock now" (passcode mode only).
 // Run: node test_autolock.js [path-to-project-dir/]
-process.on('unhandledRejection',()=>{});
+require('./guard.js')(45000);
 const w=require('./load.js')(process.argv[2]);
 let fails=0,n=0; const ok=(c,m)=>{ n++; if(!c){fails++; console.log('FAIL',m);} else console.log('ok  ',m); };
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));

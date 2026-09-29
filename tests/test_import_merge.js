@@ -1,6 +1,6 @@
 // v1.51.9: the import summary separates "shelf already has a newer copy" (harmless) from "couldn't be read".
 // Run: node test_import_merge.js [path-to-project-dir/]
-process.on('unhandledRejection',()=>{});
+require('./guard.js')();
 const w=require('./load.js')(process.argv[2]);
 let fails=0,n=0; const ok=(c,m)=>{ n++; if(!c){fails++; console.log('FAIL',m);} else console.log('ok  ',m); };
 let alerts=[]; w.alert=m=>alerts.push(String(m));

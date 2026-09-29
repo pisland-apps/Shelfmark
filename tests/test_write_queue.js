@@ -1,7 +1,7 @@
 // v1.51.10: put() / del() / undo-restore go through the write queue like every other writer.
 // Interleavings are forced by delaying getOneRaw (the read half of a read-modify-write).
 // Run: node test_write_queue.js [path-to-project-dir/]
-process.on('unhandledRejection',()=>{});
+require('./guard.js')();
 const w=require('./load.js')(process.argv[2]);
 let fails=0,n=0; const ok=(c,m)=>{ n++; if(!c){fails++; console.log('FAIL',m);} else console.log('ok  ',m); };
 const note=(id,title,content)=>({id,title,category:'C',type:'markdown',mime:'text/markdown',content,addedAt:1,updatedAt:1});
