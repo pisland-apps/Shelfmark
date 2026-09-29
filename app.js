@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.4';
+const APP_VERSION = '1.51.5';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2924,7 +2924,12 @@ async function buildLinkTypeMap(){
 // sitting inside a word or URL fragment ("page#section", "C#") by requiring
 // the character immediately before "#" to be neither a word character nor
 // "/" nor another "#".
-const TAG_RE = /(?<![\w/#])#([\p{L}\p{N}_][\p{L}\p{N}_-]{0,49})/gu;
+// The "&" in the lookbehind matters: convertHashtags runs on text that
+// escapeHtml has already processed, where an apostrophe is the entity `&#39;`.
+// Without "&" excluded, that "#39" matched as a tag, so every apostrophe in a
+// note ("it's") rendered as "it&" + a #39 pill + ";s", and an apostrophe inside
+// a link URL/alt text spliced a <button> into the attribute.
+const TAG_RE = /(?<![\w/#&])#([\p{L}\p{N}_][\p{L}\p{N}_-]{0,49})/gu;
 // Strips fenced and inline code out of the raw text before tag-matching, so
 // a "#" typed inside a code sample (e.g. a shell flag or C# in a snippet)
 // is never picked up as a tag. Only used for extraction — never written
@@ -4261,6 +4266,101 @@ function tableToHtml(block){
 // non-extractable IndexedDB key) could reach the decrypted shelf. Only
 // http(s)/mailto/tel are allowed as *links*; only data:/blob:/http(s) are
 // allowed as image/audio *sources*. Anything else renders as inert text.
+// Markdown link/image destination scanner (v1.51.5). Replaces the old
+// non-greedy `\((.+?)\)` capture, which ended the URL at the FIRST ")" and so
+// cut `[a](https://en.wikipedia.org/wiki/Foo_(bar))` short, leaving a stray
+// ")" as visible text.
+//
+// `s` here is already HTML-escaped by renderMarkdown, so a typed "<" / ">" /
+// quote arrive as &lt; / &gt; / &quot; / &#39;, and "(" / ")" are untouched.
+// parseMdLinkTail(s, i) is called with i just past the "(" and returns
+// { url, end } (end = index just past the closing ")"), or null. It tries, in
+// order:
+//   1. <angle form>  — `[a](<my file (v2).pdf>)`: everything up to the closing
+//      angle bracket, so spaces and unbalanced parens are fine.
+//   2. bare form      — walks forward counting "(" and ")" and stops at the
+//      first ")" that has no matching "(" — so one level (or more) of nested
+//      parens is kept in the URL. The URL ends at the first space. An optional
+//      "title" or 'title' may follow before the ")"; it is parsed and thrown
+//      away (never rendered, so it adds no new attribute to escape).
+//   3. legacy fallback — if neither fits (e.g. `[a](https://x.com/foo(bar)` with
+//      an unbalanced "(", or a raw space inside the URL), behave exactly as
+//      before: the URL runs to the first ")" on the line. Nothing that used to
+//      render as a link stops rendering as one.
+// Everything is same-line only, as before.
+function parseMdLinkTail(s, i){
+  const n = s.length;
+  const isSp = c => c === 32 || c === 9;
+  let j = i;
+  while(j < n && isSp(s.charCodeAt(j))) j++;
+  const lineEnd = (() => { const k = s.indexOf('\n', i); return k === -1 ? n : k; })();
+
+  // 1. <angle form>
+  if(s.startsWith('&lt;', j)){
+    const close = s.indexOf('&gt;', j + 4);
+    if(close !== -1 && close < lineEnd && close > j + 4){
+      const url = s.slice(j + 4, close);
+      const end = mdLinkClose(s, close + 4, lineEnd);
+      if(end !== -1) return { url, end };
+    }
+  }
+
+  // 2. bare form with balanced parentheses
+  {
+    const start = j;
+    let depth = 0, k = j;
+    for(; k < lineEnd; k++){
+      const c = s.charCodeAt(k);
+      if(c === 32 || c === 9) break;
+      if(c === 40) depth++;                       // (
+      else if(c === 41){ if(depth === 0) break; depth--; }   // )
+    }
+    if(k > start && depth === 0){
+      const end = mdLinkClose(s, k, lineEnd);
+      if(end !== -1) return { url: s.slice(start, k), end };
+    }
+  }
+
+  // 3. legacy fallback: first ")" on the line, at least one character in
+  const close = s.indexOf(')', i + 1);
+  if(close !== -1 && close < lineEnd) return { url: s.slice(i, close), end: close + 1 };
+  return null;
+}
+// After a destination: optional spaces, optional "title" / 'title', optional
+// spaces, then ")". Returns the index just past ")" or -1.
+function mdLinkClose(s, k, lineEnd){
+  const isSp = c => c === 32 || c === 9;
+  let j = k;
+  while(j < lineEnd && isSp(s.charCodeAt(j))) j++;
+  if(j > k){                                       // a title needs a space before it
+    for(const q of ['&quot;', '&#39;']){
+      if(s.startsWith(q, j)){
+        const e = s.indexOf(q, j + q.length);
+        if(e !== -1 && e < lineEnd){
+          j = e + q.length;
+          while(j < lineEnd && isSp(s.charCodeAt(j))) j++;
+        }
+        break;
+      }
+    }
+  }
+  return (j < lineEnd || j === s.length) && s.charCodeAt(j) === 41 ? j + 1 : -1;
+}
+// Finds `[label](dest)` (or `![alt](dest)` when isImage) and calls
+// fn(label, url, whole) for each, where `whole` is the exact source text of
+// the match, so a caller that decides not to render it can hand it back
+// unchanged. A "[...](" whose destination doesn't parse is left as plain text.
+function replaceMdLinks(s, isImage, fn){
+  const head = isImage ? /!\[(.*?)\]\(/g : /\[(.+?)\]\(/g;
+  let out = '', last = 0, m;
+  while((m = head.exec(s))){
+    const tail = parseMdLinkTail(s, head.lastIndex);
+    if(!tail){ head.lastIndex = m.index + 1; continue; }
+    out += s.slice(last, m.index) + fn(m[1], tail.url, s.slice(m.index, tail.end));
+    last = head.lastIndex = tail.end;
+  }
+  return out + s.slice(last);
+}
 function isSafeLinkUrl(url){
   return /^(https?:|mailto:|tel:)/i.test(url.trim());
 }
@@ -4494,15 +4594,15 @@ function renderMarkdown(src, linkTypes){
   // works. Must run BEFORE the plain-link pass below, since a leftover
   // `[alt](url)` after stripping the leading `!` would otherwise also match
   // the link regex and get turned into a stray `!<a>...</a>`.
-  s = s.replace(/!\[(.*?)\]\((.+?)\)/g,(_,alt,url)=>{
+  s = replaceMdLinks(s, true, (alt, url, whole)=>{
     const trimmed = url.trim();
-    if(!isSafeMediaUrl(trimmed)) return `![${alt}](${url})`;
+    if(!isSafeMediaUrl(trimmed)) return whole;
     if(isRemoteMediaUrl(trimmed) && !prefs.allowRemoteMedia) return remoteMediaPlaceholder('image', trimmed, alt);
     return `<img class="md-img" src="${trimmed}" alt="${alt}">`;
   });
   const AUDIO_EXT = /\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|weba)(\?.*)?$/i;
   const SHELF_LINK = /^shelf:\/\/(.+)$/;
-  s = s.replace(/\[(.+?)\]\((.+?)\)/g,(_,label,url)=>{
+  s = replaceMdLinks(s, false, (label, url, whole)=>{
     const trimmedUrl = url.trim();
     const shelfMatch = trimmedUrl.match(SHELF_LINK);
     if(shelfMatch){
@@ -4528,12 +4628,12 @@ function renderMarkdown(src, linkTypes){
            + `<button class="expand" title="Open full player">&#8599;</button></div>`;
     }
     if(AUDIO_EXT.test(trimmedUrl) || /^data:audio\//i.test(trimmedUrl)){
-      if(!isSafeMediaUrl(trimmedUrl)) return `[${label}](${url})`;
+      if(!isSafeMediaUrl(trimmedUrl)) return whole;
       if(isRemoteMediaUrl(trimmedUrl) && !prefs.allowRemoteMedia) return remoteMediaPlaceholder('audio', trimmedUrl, label);
       return `<div class="md-audio"><div class="md-audio-label">${label}</div>`
            + `<audio controls preload="none" src="${trimmedUrl}"></audio></div>`;
     }
-    if(!isSafeLinkUrl(trimmedUrl)) return `[${label}](${url})`;
+    if(!isSafeLinkUrl(trimmedUrl)) return whole;
     return `<a href="${trimmedUrl}" target="_blank" rel="noopener">${label}</a>`;
   });
   // ~~strike~~ / ==highlight==: last inline pass, once links/images/widgets

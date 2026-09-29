@@ -170,6 +170,30 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.5** (2026-09-29) — Link/image URLs with parentheses, plus one
+  older bug found while testing it.
+  - `[a](https://en.wikipedia.org/wiki/Foo_(bar))` now links to the full URL.
+    Before, the URL was cut at the first `)` and a stray `)` was left as
+    visible text. The old `\((.+?)\)` regex is replaced by a small scanner
+    (`parseMdLinkTail` / `replaceMdLinks` in `app.js`) that counts nested
+    parentheses and stops at the first unmatched `)`. Same for `![alt](url)`.
+  - Anything that linked before still links: if the URL can't be parsed
+    cleanly (an unbalanced `(`, or a raw space inside it) the scanner falls
+    back to the old "up to the first `)`" behavior.
+  - New: `[a](<https://example.com/my file (v2).pdf>)` — angle brackets let a
+    URL contain spaces and unbalanced parentheses. An optional
+    `"title"` after the URL is accepted and ignored instead of ending up in
+    the `href`.
+  - **Bug fix (was in v1.51.3/v1.51.4):** every apostrophe in a note was
+    rendered as `it&` + a `#39` tag pill + `;s`. `escapeHtml` turns `'` into
+    `&#39;`, and the hashtag pass then read `#39` as a tag. The hashtag
+    pattern now ignores a `#` that directly follows `&`. Apostrophes inside
+    link URLs and image alt text were affected too (the pill's HTML was
+    spliced into the attribute).
+  - Added `tests/` (dev only, not deployed): the dispatcher tests from
+    v1.51.4 plus `test_links.js`, which covers the cases above and the
+    hostile-input checks (unsafe schemes, attribute breakout, a 6 MB
+    data-URI image). See `tests/README.md`.
 - **v1.51.4** (2026-09-29) — Removed every inline event handler, so the
   Content-Security-Policy is now `script-src 'self'` (no `'unsafe-inline'`).
   Even if markup containing a `<script>` tag or an `onclick=` attribute got
