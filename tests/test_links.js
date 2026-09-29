@@ -32,11 +32,10 @@ ok(doc(render('#real and it\'s #also')).querySelectorAll('.tag-pill').length===2
 one("[a](https://x.com/it's)","https://x.com/it's",'a','apostrophe inside a URL');
 // ---- images
 { const i=imgs('![pic](data:image/png;base64,AAAA)'); ok(i.length===1&&i[0].src==='data:image/png;base64,AAAA'&&i[0].alt==='pic','data: image still works'); }
-w.__setPref('allowRemoteMedia',true);
-{ const i=imgs('![t](https://x.com/img_(1).png)'); ok(i.length===1&&i[0].src==='https://x.com/img_(1).png','image URL with nested parens'); ok(text('![t](https://x.com/img_(1).png)')==='','no stray ")" after image'); }
-w.__setPref('allowRemoteMedia',false);
-ok(doc(render('![t](https://x.com/img_(1).png)')).querySelectorAll('.md-remote-blocked').length===1,'remote image with parens still gated by allowRemoteMedia');
-{ const d=doc(render('![t](https://x.com/img_(1).png)')).querySelector('.md-remote-blocked'); ok(d&&d.dataset.remoteUrl==='https://x.com/img_(1).png','placeholder carries the full URL'); }
+// v1.52.4: a remote image is never an <img>; it is a plain, non-loading link.
+{ const d=doc(render('![t](https://x.com/img_(1).png)')); ok(d.querySelectorAll('img').length===0,'remote image with parens is not an <img> (nothing loads)');
+  const a=d.querySelector('.md-remote-blocked a'); ok(a&&a.getAttribute('href')==='https://x.com/img_(1).png'&&a.target==='_blank'&&/noopener/.test(a.rel),'placeholder is a link with the full URL, new tab, noopener');
+  ok(text('![t](https://x.com/img_(1).png)').indexOf(')')===-1,'no stray \")\" after the remote image'); }
 // ---- angle form + titles
 one('[a](<https://x.com/my file (v2).pdf>)','https://x.com/my file (v2).pdf','a','<angle form> with space and parens');
 one('[a](https://x.com "A title")','https://x.com','a','optional "title" is accepted and dropped');

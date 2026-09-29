@@ -8,7 +8,7 @@
 // the badge (and your GitHub repo) shows a newer number. See APP_VERSION's
 // comment in app.js, and the deploy checklist in README.md.
 // ============================================================================
-const CACHE_VERSION = 'shelfmark-v1.52.3';
+const CACHE_VERSION = 'shelfmark-v1.52.5';
 
 const PRECACHE_URLS = [
   './',
@@ -29,9 +29,18 @@ const PRECACHE_URLS = [
 // './' and resolving all navigations through it (below) avoids that.
 
 self.addEventListener('install', (event)=>{
+  // cache:'reload' skips the browser's HTTP cache. cache.addAll() goes through it, and static
+  // hosts (GitHub Pages: about 10 minutes) can hand back the PREVIOUS app.js, which would then be
+  // stored under the NEW cache name and served until the next version bump. Same all-or-nothing
+  // behaviour as addAll: any failed file fails the install.
   event.waitUntil(
     caches.open(CACHE_VERSION)
-      .then(cache => cache.addAll(PRECACHE_URLS))
+      .then(cache => Promise.all(PRECACHE_URLS.map(url =>
+        fetch(new Request(url, { cache: 'reload' })).then(res => {
+          if(!res.ok) throw new Error('Precache failed: ' + url + ' (' + res.status + ')');
+          return cache.put(url, res);
+        })
+      )))
       .then(()=>self.skipWaiting())
   );
 });
@@ -69,7 +78,7 @@ self.addEventListener('fetch', (event)=>{
           caches.open(CACHE_VERSION).then(cache => cache.put(req, copy));
         }
         return res;
-      }).catch(()=>cached);
+      });
     })
   );
 });

@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.52.3';
+const APP_VERSION = '1.52.5';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -388,6 +388,9 @@ function autoLockTick(){
 }
 function autoLockComeBack(){
   autoLockTick();                       // was it away / idle for too long?
+  // If a lock was due but held back (sound still playing, or an export / import running),
+  // the person is back and using the app, so the clocks restart here; the due state is NOT
+  // kept for the next check. Only the timer path (autoLockTick) retries a held-back lock.
   if(!lockingNow){ hiddenSince = null; lastActivityAt = Date.now(); }
 }
 function startAutoLock(){
@@ -428,14 +431,30 @@ function setAutoLockPref(el){
 function getAllRawStrict(){
   return new Promise((res,rej)=>{ const r = tx('readonly').getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); });
 }
+// v1.52.5: reads the OLD records one at a time (by id) instead of loading the whole
+// shelf first. The new ciphertext still has to be held until the single transaction below
+// (that is what keeps the change all-or-nothing), but the old copy no longer sits in memory
+// next to it. Measured in Node with fake-indexeddb (200 MB shelf, directional only): the read
+// phase peaked at about 2.1x the shelf before and about 1.3x now; the overall peak did NOT
+// change there, because the final single write transaction is what sets it in that environment.
+// Not yet measured in a real browser. Making the write itself lighter would need a staged
+// (batched) rewrite that keeps the all-or-nothing property; not done.
+// The whole operation also holds off auto-lock so a background timer cannot fire mid-way.
+function getAllKeysStrict(){
+  return new Promise((res,rej)=>{ const r = tx('readonly').getAllKeys(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); });
+}
+function getOneRawStrict(id){
+  return new Promise((res,rej)=>{ const r = tx('readonly').get(id); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
+}
 async function reencryptEverything(newKey, newAuthRec, onProgress){
   const oldKey = cryptoKey;
-  return serialized(async ()=>{
-    const raws = await getAllRawStrict();
+  return holdAutoLock(()=>serialized(async ()=>{
+    const ids = await getAllKeysStrict();
     const prefsRec = await new Promise((res,rej)=>{ const r = txS('readonly').get('prefs'); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error); });
     const out = [];
-    for(let i=0;i<raws.length;i++){
-      const rec = raws[i];
+    for(let i=0;i<ids.length;i++){
+      const rec = await getOneRawStrict(ids[i]);
+      if(!rec) continue; // removed since the key list was read (cannot happen while the queue is held)
       const n = { ...rec };
       for(const slot of Object.keys(ITEM_BLOBS)){
         if(!rec[ITEM_BLOBS[slot].cipher]) continue;
@@ -444,8 +463,7 @@ async function reencryptEverything(newKey, newAuthRec, onProgress){
         await sealItemBlob(newKey, n, slot, plain);
       }
       out.push(n);
-      raws[i] = null; // let the old ciphertext be collected as we go
-      if(onProgress) onProgress(i+1, out.length + (raws.length - i - 1));
+      if(onProgress) onProgress(i+1, ids.length);
     }
     let newPrefs = null;
     if(prefsRec){
@@ -466,7 +484,7 @@ async function reencryptEverything(newKey, newAuthRec, onProgress){
     cryptoKey = newKey;
     keyEpoch++;
     dropUndoSlot();
-  });
+  }));
 }
 
 // ---- Passcode & lock info panel (v1.47.1) -----------------------------------
@@ -1756,15 +1774,13 @@ async function mergeImportedItems(items, info){
 
 const FONT_MAP = {serif:"Georgia,'Times New Roman',serif", sans:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", mono:"'SFMono-Regular',Consolas,Menlo,monospace", zh:"'PingFang SC','Heiti SC','Microsoft YaHei',sans-serif"};
 const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
-// allowRemoteMedia (v1.51.3): off by default. A note's ![](https://...) or
-// audio link otherwise loads live and silently, from any note that reached
-// the shelf — including one from an unencrypted backup import or a synced
-// notes folder, not just something the user typed. That's a tracking-pixel
-// / IP-address leak, quietly at odds with the app's "nothing leaves this
-// device" README claim. With this off, a remote image/audio renders as a
-// tap-to-load placeholder instead of a live request; data:/blob: media
-// (pasted-in pictures, on-shelf audio links) are unaffected either way.
-let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, allowRemoteMedia:false, itemSortMode:'newest', collapsedCats:[], categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
+// Remote media (v1.52.4): a note's ![](https://...) image or https audio link is never
+// loaded by the app. The page's Content-Security-Policy (img-src / media-src allow only
+// 'self', data: and blob:) blocks it anyway, so nothing can reach out from a note, whether
+// it was typed, imported from a backup or synced from a folder. Such a link renders as a
+// plain link (see remoteMediaPlaceholder) that the person can open in a new tab. data:/blob:
+// media (pasted-in pictures, on-shelf audio links) still display in the note.
+let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, itemSortMode:'newest', collapsedCats:[], categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -1790,11 +1806,6 @@ function toggleLoopAudio(){
   prefs.loopAudio = !prefs.loopAudio;
   applyPrefs(prefs);
   putPrefs(prefs).catch(()=>{});
-}
-async function toggleRemoteMedia(){
-  prefs.allowRemoteMedia = !prefs.allowRemoteMedia;
-  putPrefs(prefs).catch(()=>{});
-  await rerenderNoteView().catch(()=>{}); // if a note is open, its placeholders/live media need to flip now
 }
 function setPref(key, val){
   prefs[key] = val;
@@ -5078,42 +5089,18 @@ function isSafeLinkUrl(url){
 function isSafeMediaUrl(url){
   return /^(https?:|data:|blob:)/i.test(url.trim());
 }
-// data:/blob: are always local (a pasted-in picture, an on-shelf audio
-// link); only http(s) is a live request off the device, and that's the part
-// gated by the allowRemoteMedia preference above.
+// data:/blob: are always local (a pasted-in picture, an on-shelf audio link);
+// http(s) points off the device and is never loaded inside a note.
 function isRemoteMediaUrl(url){
   return /^https?:/i.test(url.trim());
 }
-// Delegated once at load, not re-wired per render (renderMarkdown's output
-// gets swapped into #mdView from several places — initial open, save,
-// checkbox/table edits — and a single document-level listener covers all of
-// them without needing a matching wire call at each one). Tapping the
-// placeholder swaps in the real element for that one instance only; nothing
-// else on the page reflects the allowRemoteMedia preference until re-render.
-document.addEventListener('click', (e)=>{
-  const el = e.target.closest && e.target.closest('.md-remote-blocked');
-  if(!el) return;
-  const kind = el.dataset.remoteKind, url = el.dataset.remoteUrl;
-  const label = el.querySelector('.remote-label');
-  const labelText = label ? label.textContent.replace(/ — tap to load$/, '') : '';
-  if(kind === 'audio'){
-    const wrap = document.createElement('div');
-    wrap.className = 'md-audio';
-    wrap.innerHTML = `<div class="md-audio-label">${escapeHtml(labelText)}</div><audio controls preload="none" src="${url}"></audio>`;
-    el.replaceWith(wrap);
-  } else {
-    const img = document.createElement('img');
-    img.className = 'md-img'; img.src = url; img.alt = labelText;
-    el.replaceWith(img);
-  }
-});
+// Not an <img>/<audio>: no request is made when a note is shown. It is an ordinary link that
+// opens in a new tab only when tapped. `url` and `label` arrive already HTML-escaped from
+// renderMarkdown, exactly like the URL and label of a normal [text](url) link.
 function remoteMediaPlaceholder(kind, url, label){
-  // Placeholder only — no request happens until the user taps it. wireRemoteMediaLoads()
-  // (called wherever renderMarkdown's output is inserted) turns a tap into
-  // a real <img>/<audio> using the same URL, so this stays a single opt-in per element.
-  return `<div class="md-remote-blocked" data-remote-kind="${kind}" data-remote-url="${url}">`
-       + `<span class="remote-icon">${kind === 'audio' ? '&#127925;' : '&#128444;&#65039;'}</span>`
-       + `<span class="remote-label">${label || (kind === 'audio' ? 'Remote audio' : 'Remote image')} — tap to load</span></div>`;
+  const text = label || (kind === 'audio' ? 'Remote audio' : 'Remote image');
+  return `<div class="md-remote-blocked"><span class="remote-icon">${kind === 'audio' ? '&#127925;' : '&#128444;&#65039;'}</span>`
+       + `<a class="remote-label" href="${url}" target="_blank" rel="noopener noreferrer">${text}</a></div>`;
 }
 function shelfLinkIcon(type){
   if(type === 'pdf') return '&#128196;';
@@ -5312,7 +5299,7 @@ function renderMarkdown(src, linkTypes){
   s = replaceMdLinks(s, true, (alt, url, whole)=>{
     const trimmed = url.trim();
     if(!isSafeMediaUrl(trimmed)) return whole;
-    if(isRemoteMediaUrl(trimmed) && !prefs.allowRemoteMedia) return remoteMediaPlaceholder('image', trimmed, alt);
+    if(isRemoteMediaUrl(trimmed)) return remoteMediaPlaceholder('image', trimmed, alt);
     return `<img class="md-img" src="${trimmed}" alt="${alt}">`;
   });
   const AUDIO_EXT = /\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|weba)(\?.*)?$/i;
@@ -5344,7 +5331,7 @@ function renderMarkdown(src, linkTypes){
     }
     if(AUDIO_EXT.test(trimmedUrl) || /^data:audio\//i.test(trimmedUrl)){
       if(!isSafeMediaUrl(trimmedUrl)) return whole;
-      if(isRemoteMediaUrl(trimmedUrl) && !prefs.allowRemoteMedia) return remoteMediaPlaceholder('audio', trimmedUrl, label);
+      if(isRemoteMediaUrl(trimmedUrl)) return remoteMediaPlaceholder('audio', trimmedUrl, label);
       return `<div class="md-audio"><div class="md-audio-label">${label}</div>`
            + `<audio controls preload="none" src="${trimmedUrl}"></audio></div>`;
     }
@@ -5940,7 +5927,6 @@ function buildStaticCommands(){
     { id:'select', icon: selectMode ? '&times;' : '&#9745;', label: selectMode ? 'Exit selection mode' : 'Select multiple items', hint:'', action: ()=>toggleSelectMode() },
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
-    { id:'remote-media', icon:'&#127760;', label:'Remote images/audio in notes: turn '+(prefs.allowRemoteMedia ? 'off' : 'on'), hint: prefs.allowRemoteMedia ? 'on' : 'off (tap to load)', action: ()=>toggleRemoteMedia() },
     ...(authMode === 'passcode' ? [ { id:'lock-now', icon:'&#128274;', label:'Lock now', hint:'', action: ()=>lockNow() } ] : []),
     authMode === 'device'
       ? { id:'passcode-set', icon:'&#128274;', label:'Set a passcode\u2026', hint:'currently none', action: ()=>openAuthModal('set') }

@@ -57,4 +57,6 @@ in this folder ships to users. Run from this folder:
 - `test_db_versionchange.js`: erase / versionchange with a second connection ("another window").
 - `test_list_meta.js`: listing reads metadata only.
 - `test_autolock.js` uses short real sleeps (20 ms). If it is flaky, suspect a slow machine first.
-
+- `test_remote_media.js`: remote images / audio are never loaded, and the tap handler is gone (v1.52.4).
+- `test_service_worker.js`: precache uses `cache:'reload'`, install is all-or-nothing (v1.52.5).
+- `test_rekey_hold.js`: passcode change holds off auto-lock and reports real progress (v1.52.5).

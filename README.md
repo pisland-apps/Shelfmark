@@ -153,13 +153,12 @@ most common reason the two look out of sync.
 
 ## Security notes
 
-- No network calls carry your data anywhere by default. The app itself makes
-  no external requests, and a remote `http(s)` image or audio link inside a
-  note (from a note you wrote, an imported backup, or a synced notes folder)
-  renders as a tap-to-load placeholder rather than loading automatically —
-  turn on "Remote images/audio in notes" (command palette) if you want those
-  to load live; each load is still a request to that server, revealing your
-  IP address and confirming the note was opened.
+- Nothing in a note can make the app contact a server. The app itself makes no external
+  requests, and the page's Content-Security-Policy only allows images and audio from the
+  app itself, `data:` and `blob:`. A remote `http(s)` image or audio link inside a note (one
+  you wrote, or one from an imported backup or a synced notes folder) is shown as a plain link
+  and is never loaded; tapping it opens the address in a new tab, which is then an ordinary
+  visit to that site. Pictures pasted into a note (`data:`) still display.
 - Treat an imported backup, and any folder you link for notes sync, as
   untrusted input, not just your own data — they're read from disk/file and
   parsed, so a corrupted or tampered file is handled defensively (bad items
@@ -183,6 +182,38 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.52.5** (2026-09-29) — Smaller fixes from the v1.52.1 review.
+  - **Service worker: no stale precache.** The offline cache was filled with `cache.addAll()`, which goes
+    through the browser's HTTP cache. On a host that caches files for a few minutes (GitHub Pages sends about
+    10), a deploy soon after a previous visit could store the *old* `app.js` under the *new* cache name.
+    Each file is now fetched with `cache: 'reload'`. Still all-or-nothing (any failed file fails the
+    install). A dead `.catch(()=>cached)` in the fetch handler was removed.
+  - **Passcode change:** holds off auto-lock while it runs, and reads the old records one at a time instead of
+    loading the whole shelf first. Measured in Node with fake-indexeddb on a 200 MB shelf (directional
+    only): the read phase peaked at about 2.1x the shelf before and about 1.3x now. The overall peak did
+    not change in that test, because the single all-or-nothing write at the end sets it there. Not measured
+    in a real browser. A big shelf may still run out of memory on a phone when changing the passcode; the
+    failure is safe (nothing is written, the old passcode keeps working). Making the write lighter would need
+    a staged rewrite and is not done.
+  - **Auto-lock and audio:** documented, not changed. While sound is playing the shelf stays open, so a
+    recording set to repeat keeps it open until you stop it (the panel text now says so). If a lock was due
+    but held back and you come back to the app, the timers restart; only the timer retries a held-back lock.
+  - Tests: `tests/test_service_worker.js` (5 checks), `tests/test_rekey_hold.js` (6 checks; 4 fail on v1.52.3).
+  - **Still worth doing by hand:** deploy twice within ten minutes and check the installed app picks up the new
+    build; change the passcode on a shelf with a few hundred MB on a phone.
+- **v1.52.4** (2026-09-29) — Remote images / audio in notes: removed the "load" switch.
+  - **Why.** The switch could never work: the Content-Security-Policy (`img-src` / `media-src` allow only
+    the app itself, `data:` and `blob:`) blocks a remote image or audio file no matter what the app asks
+    for, so "tap to load" produced a broken picture, and the README said otherwise. The tap handler also
+    rebuilt an `<audio>` element from the link with `innerHTML`; a crafted link could add extra attributes
+    to it (an `onplay=` was added in a test). The policy stopped it from running, but it was the same kind
+    of gap steps 1 and 2 closed.
+  - **What changed.** A remote `![](https://...)` or https audio link is now shown as a plain link (opens in
+    a new tab when tapped, `noopener`); nothing is ever loaded from a note. The command-palette entry,
+    the setting and the tap handler are gone. Old saved settings that still contain the key are harmless.
+  - **Behaviour change to know about:** remote images can no longer be shown inside a note. If you want one,
+    save the picture and paste it in (it is then a `data:` image on your shelf).
+  - Tests: `tests/test_remote_media.js` (16 checks; 10 fail on v1.52.3), `tests/test_links.js` updated.
 - **v1.52.3** (2026-09-29) — Fix: the shelf listing no longer loads every file's content into memory.
   - **The problem.** Listing items (home screen, palette, search, `[[links]]`, tags, and about 15 more
     places) went through `store.getAll()`, which returns whole records, PDF / recording / picture

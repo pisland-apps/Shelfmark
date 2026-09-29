@@ -1062,7 +1062,7 @@ columns: 分类 | 笔记
       <p>No lock screen &mdash; Shelfmark opens straight to your shelf. Your data is still stored encrypted, but the key is kept in this browser next to it, so <em>anyone who can open this browser on this device can read your shelf</em>. Best on a personal device you trust. If the browser ever loses that key (clearing site data, for example) the shelf can&rsquo;t be opened, so keep an encrypted export as a backup.</p>
       </section>
       <section class="hcard hc-n" id="autoLockSection"><div class="hc-title"><span class="hc-ic">&#9202;&#65039;</span>Auto-lock</div>
-      <p>Lock the shelf by itself so it isn&rsquo;t left open. Locking forgets the key and returns to the lock screen; an unsaved note edit is kept as a draft. It waits while sound is playing or an export/import is running.</p>
+      <p>Lock the shelf by itself so it isn&rsquo;t left open. Locking forgets the key and returns to the lock screen; an unsaved note edit is kept as a draft. It waits while sound is playing (a recording set to repeat keeps the shelf open until you stop it) or an export/import is running.</p>
       <label for="autoLockIdle">When I haven&rsquo;t touched it for</label>
       <select id="autoLockIdle" data-on-change="setAutoLockPref" data-args-change='["$el"]' data-pref="autoLockIdleMin">
         <option value="0">Never</option><option value="2">2 minutes</option><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="30">30 minutes</option>
