@@ -171,6 +171,32 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.10** (2026-09-29) — Two hardening fixes from the remaining-fixes list,
+  plus a rendering bug found while testing the second one.
+  - **Writes are queued.** `put()`, `del()` and the Undo restore now go through
+    the same write queue as every other writer (`putMetaOnly`,
+    `putContentOnly`, drafts). Before, a delete could land while another writer
+    was between reading a record and writing it back, and that writer then
+    put its stale copy back: a deleted item came back, or an import/add was
+    overwritten by an old copy. Encryption in `put()` now happens inside the
+    queue, so an item added during a passcode change is stored under the new
+    key instead of the old one. A failed put still rejects for its caller and
+    does not block later writes.
+  - **Placeholder forgery.** `renderMarkdown` marks fenced code blocks with a
+    NUL-delimited token. A literal NUL in a note (crafted backup, synced `.md`)
+    is now stripped first, so it can't splice another block's HTML into the
+    page or print "undefined". The token swap is one pass, so text inside a
+    block can never pose as a token either. Same guard for the inline-mark
+    placeholders in `applyInlineMarks`.
+  - **Bug found on the way:** code samples containing `$&`, `` $` `` or `$'`
+    (a regex, a shell line; `$'` is stored as `$&#39;`) came out garbled, e.g.
+    `s.replace(/x/, '$&')` showed `CODEBLOCK0amp;`. The old splice passed the
+    HTML as a plain replacement string, where JS treats those as commands; it
+    now uses a replacer function.
+  - Tests: `tests/test_write_queue.js` (10 checks; forces the interleavings, and
+    fails on v1.51.9), and 26 new cases in `tests/test_links.js` (forged
+    tokens, `$`-patterns).
+
 - **v1.51.9** (2026-09-29) — Clearer import summary. The message used to say
   "skipped N items that looked corrupted or outdated", which lumped two very
   different things together and alarmed people whose shelf was simply newer

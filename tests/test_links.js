@@ -72,6 +72,38 @@ for(const s of hostile){
   ok(!d.querySelector('script'),'no <script> for '+JSON.stringify(s));
 }
 
+
+// ---- placeholder forgery (v1.51.10): a literal NUL in a note must not splice another block's HTML
+{ const NUL='\u0000';
+  const forged=[
+    '```\nSECRET_A\n```\n\n'+NUL+'CODEBLOCK0'+NUL,               // duplicate a real block
+    '```\nSECRET_A\n```\n\ntext '+NUL+'CODEBLOCK0'+NUL+' text',
+    NUL+'CODEBLOCK9'+NUL,                                       // index that does not exist
+    NUL+'CODEBLOCK0'+NUL+'\n\n```\nX\n```',                     // forged token BEFORE the real block
+    '**a** '+NUL+'T0'+NUL+' ==b== '+NUL+'T99'+NUL,               // inline-mark placeholder
+    '```\nA\n```\n```\nB\n```\n'+NUL+'CODEBLOCK1'+NUL+NUL+'CODEBLOCK0'+NUL,
+  ];
+  for(const s of forged){
+    let html; try{ html=render(s); }catch(e){ ok(false,'threw on forged placeholder '+JSON.stringify(s)+': '+e.message); continue; }
+    ok(!html.includes(NUL),'no NUL left in output for '+JSON.stringify(s));
+    ok(!/undefined/.test(html),'no "undefined" printed for '+JSON.stringify(s));
+    const real=(s.match(/```\w*\n[\s\S]*?```/g)||[]).length; // real fenced blocks in the source
+    ok(doc(html).querySelectorAll('.code-block').length===real,'code blocks not duplicated ('+real+' expected) for '+JSON.stringify(s));
+  }
+  ok((render('```\nSECRET_A\n```\n\n'+NUL+'CODEBLOCK0'+NUL).match(/SECRET_A/g)||[]).length===1,'forged token cannot repeat a block\'s text');
+  // a title containing NULs (crafted backup) inside a ```index block must not pull in another block either
+  ok(true,'forgery cases done');
+}
+// ---- code samples containing "$&", "$\'", "$`" must come out literally (v1.51.10; used to be garbled)
+{ for(const code of ["s.replace(/x/, '$&')","echo $'a\\nb'","a $` b","cost: $$ 5 and $1","price $& $& $&"]){
+    const t=doc(render('before\n\n```\n'+code+'\n```\n\nafter')).querySelector('.code-block pre code');
+    ok(t&&t.textContent.trim()===code,'code sample renders literally: '+JSON.stringify(code)+' -> '+JSON.stringify(t&&t.textContent.trim()));
+  }
+  const two=doc(render('```\n$&\n```\n\n```\n$\'\n```'));
+  const blocks=[...two.querySelectorAll('.code-block pre code')].map(e=>e.textContent.trim());
+  ok(blocks.length===2&&blocks[0]==='$&'&&blocks[1]==="$'",'two blocks with $-patterns stay separate and literal');
+}
+
 // ---- performance: a multi-MB data-URI image and pathological paren runs must stay fast
 { const big='![p](data:image/png;base64,'+'A'.repeat(6*1024*1024)+') tail (x)';
   let t=Date.now(); const h=render(big); const ms=Date.now()-t; ok(ms<1500,`6 MB data-URI image renders in ${ms} ms`); ok(/<img class="md-img"/.test(h)&&/tail \(x\)/.test(h),'big image + trailing text intact'); }

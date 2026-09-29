@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.9';
+const APP_VERSION = '1.51.10';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -641,7 +641,14 @@ function tx(mode){ return db.transaction('items',mode).objectStore('items'); }
 function getAllRaw(){ return new Promise((res)=>{ const r = tx('readonly').getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>res([]); }); }
 function getOneRaw(id){ return new Promise((res)=>{ const r = tx('readonly').get(id); r.onsuccess=()=>res(r.result); }); }
 function putRaw(rec){ return new Promise((res,rej)=>{ const r = tx('readwrite').put(rec); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
-function del(id){ return new Promise((res,rej)=>{ const r = tx('readwrite').delete(id); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+function delRaw(id){ return new Promise((res,rej)=>{ const r = tx('readwrite').delete(id); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+// v1.51.10: del() / put() / restoreRaw() go through the same write queue as
+// putMetaOnly, putContentOnly and the draft writers. Unqueued, a delete could
+// land while one of those was mid-way through reading the record, and the
+// slower writer would then put its stale copy back (a deleted item coming back
+// to life; an import or add being overwritten by an old copy).
+function del(id){ return serialized(()=>delRaw(id)); }
+function restoreRaw(rec){ return serialized(()=>putRaw(rec)); }
 function isQuotaError(err){
   return !!err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
 }
@@ -716,9 +723,14 @@ async function getOne(id){
   meta.content = await decryptContent(rec, meta.type, meta.mime);
   return meta;
 }
-async function put(item){
-  const rec = await encryptItemRecord(item);
-  await putRaw(rec);
+// The encryption happens INSIDE the queue on purpose: reencryptEverything (a
+// passcode change) is queued too, and an item encrypted before it but written
+// after it would be stored under the old key and never open again.
+function put(item){
+  return serialized(async ()=>{
+    const rec = await encryptItemRecord(item);
+    await putRaw(rec);
+  });
 }
 // Metadata-only update (rename, recategorize, progress, bookmarks) — keeps
 // the existing encrypted content blob untouched, just re-encrypts metadata.
@@ -1714,7 +1726,7 @@ async function undoDelete(){
   const { items } = lastDeleted;
   lastDeleted = null;
   hideUndoToast();
-  try{ for(const { rec } of items) await putRaw(rec); }
+  try{ for(const { rec } of items) await restoreRaw(rec); }
   catch(err){ alert("Couldn't bring that back — please try again."); return; }
   render();
 }
@@ -4475,7 +4487,7 @@ function applyInlineMarks(html){
   });
   s = s.replace(/~~([^\s~](?:.*?[^\s~])?)~~/g,'<del>$1</del>');
   s = s.replace(/==([^\s=](?:.*?[^\s=])?)==/g,'<mark class="md-mark">$1</mark>');
-  return s.replace(/\u0000T(\d+)\u0000/g, (_, i)=>held[+i]);
+  return s.replace(/\u0000T(\d+)\u0000/g, (_, i)=>held[+i] !== undefined ? held[+i] : '');
 }
 // Indentation in reading view (v1.45.1). Leading spaces/tabs used to vanish
 // because HTML collapses them, so the editor's Tab indent looked like it did
@@ -4563,7 +4575,11 @@ function renderShelfIndex(optText, linkTypes){
 
 function renderMarkdown(src, linkTypes){
   linkTypes = linkTypes || {};
-  let s = escapeHtml(src);
+  // v1.51.10: a literal NUL in the note is removed first. NUL is the marker
+  // used for the placeholders below, so a crafted note (a backup file, a synced
+  // .md) containing "\u0000CODEBLOCK3\u0000" could otherwise splice another
+  // block's HTML into the page, or print "undefined".
+  let s = escapeHtml(src).replace(/\u0000/g, '');
   // Fenced code blocks are pulled out into placeholder tokens FIRST, before
   // any other regex runs, and only spliced back in as real HTML at the very
   // end (see the `codeBlocks` replace below). Otherwise a snippet containing
@@ -4690,7 +4706,12 @@ function renderMarkdown(src, linkTypes){
   // Splice the real code-block HTML back in now that every other pass —
   // which would have mangled ** / ` / [..](..) if they'd appeared inside a
   // code sample — has already run.
-  codeBlocks.forEach((html, i)=>{ s = s.replace(`\u0000CODEBLOCK${i}\u0000`, html); });
+  // One pass with a replacer FUNCTION. The old loop used a plain string as the
+  // replacement, and JS reads "$&", "$'" and "$`" in it as instructions, so a
+  // code sample containing them (a regex, a shell line; note that an escaped
+  // "$'" becomes "$&#39;") came out garbled. A single pass also never
+  // re-reads inserted HTML, so nothing inside a block can pose as a placeholder.
+  s = s.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (m, i)=> codeBlocks[+i] !== undefined ? codeBlocks[+i] : '').replace(/\u0000/g, '');
   return s.split(/\n{2,}/).map((block,idx)=>{
     let html;
     if(/^<h[1-6]/.test(block)){

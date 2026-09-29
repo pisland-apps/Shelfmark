@@ -11,7 +11,8 @@ in this folder ships to users. Run from this folder:
 - `test_links.js` — `renderMarkdown` link/image URL parsing (nested parentheses,
   legacy fallbacks, apostrophes) plus hostile-input cases: unsafe schemes,
   attribute breakout, inline `on*` attributes, and performance on a 6 MB
-  data-URI image. **Add new hostile strings to the `hostile` array there.**
+  data-URI image. **Add new hostile strings to the `hostile` array there.** It also covers forged
+  code-block placeholders and `$&`-style patterns in code samples (v1.51.10).
 - `load.js` — loads the real `app.js` + `index.html` into jsdom with
   fake-indexeddb, so tests call the app's own `renderMarkdown`.
 - `test_ext_wipe.js` — erasing the shelf also deletes the `shelfmark-ext`
@@ -23,3 +24,5 @@ in this folder ships to users. Run from this folder:
   backups still open, crafted iteration counts refused, minimum length still 4,
   advisory strength hint.
 - `test_import_merge.js` — import summary wording (v1.51.9): newer-on-shelf vs unreadable.
+- `test_write_queue.js` — put/del/undo go through the write queue (v1.51.10); forces the
+  stale-write interleavings by delaying `getOneRaw`.
