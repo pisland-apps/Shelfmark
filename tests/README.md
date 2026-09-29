@@ -26,3 +26,6 @@ in this folder ships to users. Run from this folder:
 - `test_import_merge.js` — import summary wording (v1.51.9): newer-on-shelf vs unreadable.
 - `test_write_queue.js` — put/del/undo go through the write queue (v1.51.10); forces the
   stale-write interleavings by delaying `getOneRaw`.
+- `test_autolock.js` — idle / background auto-lock and Lock now (v1.51.11): timing rules,
+  activity resets, sound and export/import holds, queued writes finish first, draft kept,
+  settings panel, no-passcode mode never locks. Replaces the page reload with a stub.

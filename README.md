@@ -7,6 +7,12 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Auto-lock and Lock now (passcode mode).** The shelf locks itself after 10
+  minutes without a tap/key/scroll, or after 5 minutes in the background
+  (both adjustable, or Never, under Ctrl+K → *Passcode & lock*). Ctrl+K →
+  *Lock now* locks at once. An unsaved note edit is kept as a draft. It waits
+  while sound is playing or an export/import is running. Not used in
+  no-passcode mode.
 - **Edit tables in reading view.** Tap a cell, type, Enter to save; Tab moves
   on; a bar adds/deletes rows and columns. No need to open the source editor.
 - **Foldable headings (H1–H6).** Tap the arrow at the right of any heading in
@@ -158,6 +164,12 @@ most common reason the two look out of sync.
   untrusted input, not just your own data — they're read from disk/file and
   parsed, so a corrupted or tampered file is handled defensively (bad items
   are skipped, not blindly trusted) rather than assumed safe.
+- Auto-lock (v1.51.11) closes the gap of leaving an unlocked shelf open on a
+  phone or shared computer: the key lives only in memory, and locking drops it
+  and reloads the page, which also discards every decrypted thing held in
+  memory (open note, PDF pages, audio, search results). It is a convenience
+  guard, not a defence against someone already using the unlocked app, and it
+  does not apply in no-passcode mode (the key is stored in the browser there).
 - Forgetting your passcode has no recovery path by design (there's no
   server holding a spare key). The lock screen's "Forgot passcode" option
   wipes the local IndexedDB database entirely so you can start over —
@@ -170,6 +182,30 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.51.11** (2026-09-29) — Auto-lock, plus a "Lock now" command (the app
+  had no manual lock before).
+  - **Idle lock and background lock** (passcode mode only). Defaults: 10 minutes
+    idle, 5 minutes in the background; each can be set to Never (idle: 2 / 5 /
+    10 / 30; background: 1 / 5 / 15) in the *Passcode & lock* panel. Settings are
+    kept in the encrypted prefs. Both rules are checked every 15 s and again when
+    the tab comes back to the foreground (timers are throttled in the background,
+    so the elapsed time is compared against the clock, not counted).
+  - **What locking does.** Cover the screen, save a mid-edit note as a draft, wait
+    (up to 4 s) for queued writes, drop `cryptoKey`, reload. The reload is on
+    purpose: it clears everything decrypted in memory without tracking each
+    piece. After unlocking, the draft is offered back as usual.
+  - **What it waits for.** It does not lock while sound is playing (a reload
+    would cut it off) or while an export/import runs (`holdAutoLock`); it locks at
+    the next check once that ends.
+  - **Lock now** in the command palette and in the *Passcode & lock* panel.
+  - **Known limits.** An unsaved table-cell edit (not a note edit) is not kept. Undo
+    for a delete made just before locking is gone after the reload. Idle is
+    measured by input events, so reading a long note without touching anything
+    counts as idle: raise the idle time, or set it to Never, if that annoys you.
+  - Tests: `tests/test_autolock.js`. Also checked by hand-scripted run in real
+    Chromium with a virtual clock (idle, background, palette, draft, settings,
+    audio hold, no-passcode mode).
 
 - **v1.51.10** (2026-09-29) — Two hardening fixes from the remaining-fixes list,
   plus a rendering bug found while testing the second one.

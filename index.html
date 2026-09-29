@@ -206,6 +206,10 @@
     background:var(--card);color:var(--ink);font-size:16px;font-family:inherit;
     margin-bottom:12px;box-sizing:border-box;outline:none;
   }
+  #secInfoOverlay select{
+    display:block;width:100%;padding:11px 12px;border-radius:9px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink);font-size:15px;font-family:inherit;box-sizing:border-box;
+  }
   .sheet input[type=password]::placeholder{color:var(--ink-soft);opacity:.75;}
   .sheet input[type=password]:focus,
   .lock-card input[type=password]:focus{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink);}
@@ -1054,6 +1058,18 @@ columns: 分类 | 笔记
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128275;</span>Without a passcode</div>
       <p>No lock screen &mdash; Shelfmark opens straight to your shelf. Your data is still stored encrypted, but the key is kept in this browser next to it, so <em>anyone who can open this browser on this device can read your shelf</em>. Best on a personal device you trust. If the browser ever loses that key (clearing site data, for example) the shelf can&rsquo;t be opened, so keep an encrypted export as a backup.</p>
+      </section>
+      <section class="hcard hc-n" id="autoLockSection"><div class="hc-title"><span class="hc-ic">&#9202;&#65039;</span>Auto-lock</div>
+      <p>Lock the shelf by itself so it isn&rsquo;t left open. Locking forgets the key and returns to the lock screen; an unsaved note edit is kept as a draft. It waits while sound is playing or an export/import is running.</p>
+      <label for="autoLockIdle">When I haven&rsquo;t touched it for</label>
+      <select id="autoLockIdle" data-on-change="setAutoLockPref" data-args-change='["$el"]' data-pref="autoLockIdleMin">
+        <option value="0">Never</option><option value="2">2 minutes</option><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="30">30 minutes</option>
+      </select>
+      <label for="autoLockAway">When the app has been in the background for</label>
+      <select id="autoLockAway" data-on-change="setAutoLockPref" data-args-change='["$el"]' data-pref="autoLockAwayMin">
+        <option value="0">Never</option><option value="1">1 minute</option><option value="5">5 minutes</option><option value="15">15 minutes</option>
+      </select>
+      <p><button type="button" class="cancel" style="width:auto;padding:8px 14px;" data-on-click="closeSecInfo lockNow">Lock now</button></p>
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">&#128260;</span>Switching</div>
       <p>You can switch at any time: every item is re-encrypted in one all-or-nothing step, so if anything goes wrong your current setup keeps working. Removing a passcode asks for it first.</p>

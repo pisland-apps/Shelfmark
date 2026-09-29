@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.10';
+const APP_VERSION = '1.51.11';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -244,6 +244,100 @@ async function unlockApp(){
   if(navigator.storage && navigator.storage.persist){
     navigator.storage.persist().catch(()=>{});
   }
+  startAutoLock();
+}
+
+// ---- Auto-lock and "Lock now" (v1.51.11) -----------------------------------
+// Passcode mode only. Two independent rules, both editable in the "Passcode &
+// lock" panel and stored (encrypted) in prefs:
+//   * idle  — no tap / key / scroll for N minutes
+//   * away  — the tab or app has been in the background for N minutes
+// Either one locks the shelf. Locking = wait for queued writes (so a draft
+// flush lands under the current key), drop `cryptoKey`, then RELOAD the page.
+// The reload is deliberate: it throws away everything decrypted that lives in
+// memory (open note, PDF pages, blob: URLs, audio, search results, undo slot)
+// without having to track each one, and the normal boot path shows the lock
+// screen. Not applied in no-passcode ("device") mode: there is no lock screen
+// to return to, and the key sits in the browser anyway.
+// Deliberately NOT locked while: sound is playing (a reload would cut it off;
+// it locks on the next check after playback stops), or an export / import is
+// running (autoLockHolds > 0).
+const AUTOLOCK_IDLE_CHOICES = [0, 2, 5, 10, 30];   // minutes, 0 = never
+const AUTOLOCK_AWAY_CHOICES = [0, 1, 5, 15];
+const AUTOLOCK_CHECK_MS = 15000;
+let autoLockStarted = false, lockingNow = false, autoLockHolds = 0;
+let lastActivityAt = Date.now(), hiddenSince = null;
+function autoLockMinutes(v, choices, dflt){
+  const n = Number(v);
+  return choices.includes(n) ? n : dflt;
+}
+function autoLockActive(){ return authMode === 'passcode' && !!cryptoKey; }
+function mediaIsPlaying(){
+  try{
+    if(shelfAudioEl && !shelfAudioEl.paused && !shelfAudioEl.ended) return true;
+    return Array.from(document.querySelectorAll('audio')).some(a => !a.paused && !a.ended);
+  }catch(e){ return false; }
+}
+// Wraps a long operation so the auto-lock will not fire in the middle of it.
+async function holdAutoLock(fn){
+  autoLockHolds++;
+  try{ return await fn(); }
+  finally{ autoLockHolds--; lastActivityAt = Date.now(); }
+}
+function reloadPage(){ location.reload(); }
+async function lockNow(){
+  if(lockingNow || !autoLockActive()) return false;
+  lockingNow = true;
+  // Cover the screen at once, then save what is mid-edit, then drop the key.
+  document.getElementById('lockScreen').classList.remove('hidden');
+  try{ if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); }catch(e){}
+  try{ flushDraftNow(); }catch(e){}
+  // Bounded wait: a stuck write must not keep the key in memory forever.
+  await Promise.race([dbWriteQueue, new Promise(r => setTimeout(r, 4000))]);
+  cryptoKey = null;
+  reloadPage();
+  return true;
+}
+function autoLockTick(){
+  if(!autoLockActive() || lockingNow) return;
+  const now = Date.now();
+  const idleMs = autoLockMinutes(prefs.autoLockIdleMin, AUTOLOCK_IDLE_CHOICES, 10) * 60000;
+  const awayMs = autoLockMinutes(prefs.autoLockAwayMin, AUTOLOCK_AWAY_CHOICES, 5) * 60000;
+  const idleDue = idleMs > 0 && now - lastActivityAt >= idleMs;
+  const awayDue = awayMs > 0 && hiddenSince !== null && now - hiddenSince >= awayMs;
+  if(!idleDue && !awayDue) return;
+  if(autoLockHolds > 0 || mediaIsPlaying()) return; // due, but not now: the next check tries again
+  lockNow();
+}
+function autoLockComeBack(){
+  autoLockTick();                       // was it away / idle for too long?
+  if(!lockingNow){ hiddenSince = null; lastActivityAt = Date.now(); }
+}
+function startAutoLock(){
+  lastActivityAt = Date.now();
+  hiddenSince = document.hidden ? Date.now() : null;
+  if(autoLockStarted) return;
+  autoLockStarted = true;
+  const bump = ()=>{ lastActivityAt = Date.now(); };
+  for(const ev of ['pointerdown','keydown','wheel','touchstart','scroll','mousemove']){
+    document.addEventListener(ev, bump, { capture:true, passive:true });
+  }
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden){ if(hiddenSince === null) hiddenSince = Date.now(); }
+    else autoLockComeBack();
+  });
+  window.addEventListener('pageshow', e=>{ if(e.persisted) autoLockComeBack(); }); // back/forward cache restore
+  setInterval(autoLockTick, AUTOLOCK_CHECK_MS);
+}
+function setAutoLockPref(el){
+  const which = el && el.dataset ? el.dataset.pref : '';
+  if(which !== 'autoLockIdleMin' && which !== 'autoLockAwayMin') return;
+  const choices = which === 'autoLockIdleMin' ? AUTOLOCK_IDLE_CHOICES : AUTOLOCK_AWAY_CHOICES;
+  const n = Number(el.value);
+  if(!choices.includes(n)) return;
+  prefs[which] = n;
+  putPrefs(prefs).catch(()=>{});
+  lastActivityAt = Date.now(); // changing the setting counts as being here
 }
 
 
@@ -310,6 +404,12 @@ function openSecInfo(){
   const btn = document.getElementById('secInfoActionBtn');
   btn.textContent = isDevice ? 'Set a passcode\u2026' : 'Remove passcode\u2026';
   btn.onclick = ()=>{ closeSecInfo(); openAuthModal(isDevice ? 'set' : 'remove'); };
+  const alSec = document.getElementById('autoLockSection');
+  if(alSec){
+    alSec.style.display = isDevice ? 'none' : '';
+    document.getElementById('autoLockIdle').value = String(autoLockMinutes(prefs.autoLockIdleMin, AUTOLOCK_IDLE_CHOICES, 10));
+    document.getElementById('autoLockAway').value = String(autoLockMinutes(prefs.autoLockAwayMin, AUTOLOCK_AWAY_CHOICES, 5));
+  }
   document.getElementById('secInfoOverlay').style.display = 'flex';
 }
 function closeSecInfo(){ document.getElementById('secInfoOverlay').style.display = 'none'; }
@@ -980,7 +1080,8 @@ async function downloadJSON(obj, filename){
   await downloadBlob(new Blob([JSON.stringify(obj)], {type:'application/json'}), filename);
 }
 
-async function doExport(){
+function doExport(){ return holdAutoLock(doExportInner); }
+async function doExportInner(){
   const errEl = document.getElementById('expError');
   errEl.textContent = '';
   const items = await buildExportItems();
@@ -1060,7 +1161,8 @@ async function onImportFile(e){
 }
 function closeImportPassModal(){ document.getElementById('importPassOverlay').style.display = 'none'; pendingImportBackup = null; pendingImportInfo = null; }
 
-async function doImportDecrypt(){
+function doImportDecrypt(){ return holdAutoLock(doImportDecryptInner); }
+async function doImportDecryptInner(){
   const errEl = document.getElementById('impError');
   errEl.textContent = '';
   const pass = document.getElementById('imppass').value;
@@ -1181,7 +1283,7 @@ const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
 // device" README claim. With this off, a remote image/audio renders as a
 // tap-to-load placeholder instead of a live request; data:/blob: media
 // (pasted-in pictures, on-shelf audio links) are unaffected either way.
-let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, allowRemoteMedia:false, itemSortMode:'newest', collapsedCats:[], categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true};
+let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, allowRemoteMedia:false, itemSortMode:'newest', collapsedCats:[], categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -5290,6 +5392,7 @@ function buildStaticCommands(){
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
     { id:'remote-media', icon:'&#127760;', label:'Remote images/audio in notes: turn '+(prefs.allowRemoteMedia ? 'off' : 'on'), hint: prefs.allowRemoteMedia ? 'on' : 'off (tap to load)', action: ()=>toggleRemoteMedia() },
+    ...(authMode === 'passcode' ? [ { id:'lock-now', icon:'&#128274;', label:'Lock now', hint:'', action: ()=>lockNow() } ] : []),
     authMode === 'device'
       ? { id:'passcode-set', icon:'&#128274;', label:'Set a passcode\u2026', hint:'currently none', action: ()=>openAuthModal('set') }
       : { id:'passcode-remove', icon:'&#128275;', label:'Remove passcode\u2026', hint:'', action: ()=>openAuthModal('remove') },
@@ -5702,7 +5805,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  updatePassHint, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  updatePassHint, lockNow, setAutoLockPref, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, createIndexNoteFromGuide,
