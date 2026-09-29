@@ -7,6 +7,12 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Index dropdown on every page (v1.54.0).** If your shelf has a note titled **Index**, every other
+  item's top bar gets an **Index ▾** button. Tap it and the Index note's content drops down (the live
+  ```` ```index ```` table or any links you wrote by hand); tap an item to jump straight to it, no trip back
+  to the shelf. Works on notes, PDFs, pictures and recordings, and is hidden on the Index note itself and
+  when no note is titled Index. Nothing is stored; it is rebuilt each time.
+
 - **Reading look per page (v1.53.0).** In a note's ⚙ panel, *Apply to* chooses **All pages**
   (the old app-wide setting) or **This page only**. A page's own page color / font / text size is
   saved with that note and wins over the app-wide one while the note is open; only the options you
@@ -188,6 +194,15 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.54.0** (2026-09-29) — "Index ▾" button in the reader top bar.
+  - Looks for a markdown note titled `Index` (case-insensitive, first match). If found, and you are not
+    already on it, the button shows on every item type; tapping it renders that note in a dropdown and
+    tapping a link opens the item (which closes the dropdown). Opens/closes with the other top-bar panels
+    (⚙, ☰, 🔖): only one is open at a time.
+  - The dropdown copy has its bookmark/outline hooks (`.mdblock`, `data-idx`) removed so the reader's
+    own bookmark, outline and find code can never match it.
+  - No data-format change; nothing stored. Tests: `tests/test_index_dropdown.js`.
 
 - **v1.53.0** (2026-09-29) — Page color, font and text size can be set for one note.
   - The ⚙ panel gained an *Apply to* switch: **All pages** (unchanged behaviour) or **This page only**.

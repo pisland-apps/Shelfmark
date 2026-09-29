@@ -368,6 +368,16 @@
     flex:1;background:var(--paper2);border:1px solid var(--line);border-radius:6px;
     padding:6px 8px;font-size:12px;color:var(--ink);font-family:inherit;cursor:pointer;
   }
+  /* Index dropdown in the reader top bar (v1.54.0): the Index note's own content, shown
+     as a panel so you can jump to another item without going back to the shelf. */
+  .index-btn{font-family:inherit;font-size:13px;font-weight:600;color:var(--ink);border:1px solid var(--line);
+    border-radius:14px;padding:3px 10px;gap:4px;}
+  .index-btn.active{color:var(--audio);border-color:var(--audio);}
+  .index-caret{font-size:11px;}
+  .indexpanel{width:92vw;max-width:460px;max-height:70vh;}
+  .indexpanel .index-loading,.indexpanel .index-empty{padding:14px;font-size:13px;color:var(--ink-soft);}
+  .indexpanel .mdbody{max-width:none;padding:2px 12px 12px;font-size:14px;line-height:1.55;}
+  .indexpanel .mdbody .shelf-index{margin:8px 0;}
   .stitle{font-family:'Lora',serif;font-size:12px;color:var(--ink-soft);padding:12px 13px 6px;}
   .bmpanel .seg{padding:0 13px 8px;}
   .sscopehint{font-size:11px;color:var(--ink-soft);padding:0 13px 4px;line-height:1.4;}
@@ -1243,6 +1253,7 @@ columns: 分类 | 笔记
   <div class="rbar">
     <button class="back" data-on-click="closeReader">&larr; Shelf</button>
     <div class="rtitle" id="rtitle"></div>
+    <button class="bmbtn index-btn" id="indexBtn" data-on-click="toggleIndexPanel" style="display:none;" aria-expanded="false" title="Jump to another item from your Index note">Index <span class="index-caret">&#9662;</span></button>
     <button class="bmbtn" id="exportItemBtn" data-on-click="exportCurrentItem" title="Export this file">&#8679;</button>
     <button class="bmbtn" id="settingsBtn" data-on-click="toggleSettingsPanel" style="display:none;" title="Reading settings">&#9881;</button>
     <button class="bmbtn" id="findBtn" data-on-click="toggleFindBar" style="display:none;" title="Find in this note (Ctrl+F)">&#128269;</button>
@@ -1284,6 +1295,7 @@ columns: 分类 | 笔记
   </div>
   <div id="bmPanel" class="bmpanel" style="display:none;"></div>
   <div id="outlinePanel" class="bmpanel" style="display:none;"></div>
+  <div id="indexPanel" class="bmpanel indexpanel" style="display:none;"></div>
   <div id="findBar" style="display:none;">
     <div class="find-row">
       <input type="search" id="findInput" placeholder="Find in note&hellip;" autocomplete="off" data-on-input="onFindInput" data-on-keydown="onFindKeydown" data-args-keydown='["$ev"]'>

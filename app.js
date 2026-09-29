@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.53.0';
+const APP_VERSION = '1.54.0';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1888,6 +1888,7 @@ function refreshSettingsUI(){
   if(gear) gear.classList.toggle('active', !!curReadOverride);
 }
 function toggleSettingsPanel(){
+  closeIndexPanel();
   bmPanelOpen = false;
   document.getElementById('bmPanel').style.display = 'none';
   outlinePanelOpen = false;
@@ -2540,6 +2541,8 @@ async function openReader(id){
   document.getElementById('bmPanel').style.display = 'none';
   outlinePanelOpen = false;
   document.getElementById('outlinePanel').style.display = 'none';
+  closeIndexPanel();
+  document.getElementById('indexBtn').style.display = 'none'; // shown again by refreshIndexBtn once we know an Index note exists
   const c = document.getElementById('rcontent');
   c.className = ''; c.innerHTML = ''; c.style.display = ''; c.style.flexDirection = '';
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
@@ -2565,6 +2568,7 @@ async function openReader(id){
   // width reads as 0, so the very first page was rendering at a hardcoded
   // 320px fallback and staying that small even once the reader appeared.
   document.getElementById('reader').classList.add('open');
+  refreshIndexBtn(id).catch(()=>{}); // not awaited: the Index button must never delay opening the item
 
   if(it.type === 'pdf'){
     pdfZoomMode = 'fit';
@@ -4642,6 +4646,7 @@ function insertTableTemplate(){
 
 let bmPanelOpen = false;
 function toggleBookmarkPanel(){
+  closeIndexPanel();
   settingsPanelOpen = false;
   document.getElementById('settingsPanel').style.display = 'none';
   outlinePanelOpen = false;
@@ -4735,8 +4740,66 @@ function updateBookmarkUI(bookmarks){
 // jumps to a heading's .mdblock instead of a saved spot, and there's no
 // per-row remove button since there's nothing to delete — the note's own
 // headings ARE the outline.
+// ---- Index dropdown in the reader top bar (v1.54.0) ----
+// If the shelf has a note titled "Index" (any case), every OTHER item's reader gets an
+// "Index ▾" button. Tapping it drops down that note's own content (the ```index block
+// or any hand-written links) so you can jump straight to another item without going
+// back to the shelf. Nothing is stored: the button is decided each time an item opens,
+// and the panel is rendered fresh each time it's opened, so it never goes stale.
+let indexPanelOpen = false, indexNoteId = null, indexPanelToken = 0;
+async function refreshIndexBtn(forId){
+  const btn = document.getElementById('indexBtn');
+  const items = await getAll(); // metadata only, nothing decrypted
+  if(curId !== forId) return; // the reader moved on while we were looking
+  const ix = items.find(it=>it.type === 'markdown' && (it.title || '').trim().toLowerCase() === 'index');
+  if(ix && ix.id !== forId){ indexNoteId = ix.id; btn.style.display = 'flex'; }
+  else { indexNoteId = null; btn.style.display = 'none'; }
+}
+function closeIndexPanel(){
+  indexPanelOpen = false;
+  indexPanelToken++; // a render still in flight must not reopen it
+  const panel = document.getElementById('indexPanel');
+  if(panel) panel.style.display = 'none';
+  const btn = document.getElementById('indexBtn');
+  if(btn){ btn.classList.remove('active'); btn.setAttribute('aria-expanded', 'false'); }
+}
+async function toggleIndexPanel(){
+  if(indexPanelOpen){ closeIndexPanel(); return; }
+  if(!indexNoteId) return;
+  // only one top-bar panel at a time
+  settingsPanelOpen = false; document.getElementById('settingsPanel').style.display = 'none';
+  bmPanelOpen = false; document.getElementById('bmPanel').style.display = 'none';
+  outlinePanelOpen = false; document.getElementById('outlinePanel').style.display = 'none';
+  const token = ++indexPanelToken;
+  indexPanelOpen = true;
+  const panel = document.getElementById('indexPanel');
+  const btn = document.getElementById('indexBtn');
+  btn.classList.add('active'); btn.setAttribute('aria-expanded', 'true');
+  panel.innerHTML = '<div class="index-loading">Loading…</div>';
+  panel.style.display = 'block';
+  const ix = await getOne(indexNoteId);
+  if(token !== indexPanelToken) return; // closed / superseded while loading
+  if(!ix || ix.type !== 'markdown'){ panel.innerHTML = '<div class="index-empty">The Index note is no longer on your shelf.</div>'; return; }
+  const map = await buildLinkTypeMap();
+  if(token !== indexPanelToken) return;
+  const body = document.createElement('div');
+  body.className = 'mdbody';
+  body.innerHTML = renderMarkdown(ix.content, map);
+  // The reader's own bookmark / outline / find code looks up ".mdblock[data-idx]" across
+  // the whole document. Strip those hooks so this copy can never be matched by them.
+  body.querySelectorAll('.mdblock').forEach(b=>{
+    b.classList.remove('mdblock');
+    b.removeAttribute('data-idx');
+    b.querySelectorAll(':scope > .bm-btn').forEach(x=>x.remove());
+  });
+  wireNoteLinks(body); // tapping an item runs openReader(), which closes this panel
+  panel.innerHTML = '';
+  panel.appendChild(body);
+}
+
 let outlinePanelOpen = false;
 function toggleOutlinePanel(){
+  closeIndexPanel();
   settingsPanelOpen = false;
   document.getElementById('settingsPanel').style.display = 'none';
   bmPanelOpen = false;
@@ -4908,6 +4971,7 @@ function closeReader(){
   stopDraftTimer();
   closeWikiAutocomplete();
   closeFindBar();
+  closeIndexPanel();
   document.getElementById('reader').classList.remove('open');
   if(curBlobUrl){ URL.revokeObjectURL(curBlobUrl); curBlobUrl = null; }
   if(curPdfDoc){ curPdfDoc.loadingTask.destroy(); curPdfDoc = null; }
@@ -6429,7 +6493,7 @@ const UI_ACTIONS = Object.freeze({
   saveEditNote, saveItem, selectAllToggle, setExportMode, setPref, showStorageDetail, skip,
   startEditFromFind, startEditNote, toggleBoldAtSelection, toggleBookmark, toggleBookmarkPanel,
   toggleDeepSearch, toggleFindBar, toggleFindCase, toggleHeadingAtLine,
-  toggleHighlightAtSelection, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
+  toggleHighlightAtSelection, toggleIndexPanel, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
   toggleSelectMode, toggleSettingsPanel, toggleShelfPlay, toggleSortMode,
   toggleStrikeAtSelection, undoDelete, undoEdit
 });

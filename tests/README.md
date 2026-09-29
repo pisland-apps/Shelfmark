@@ -61,3 +61,4 @@ in this folder ships to users. Run from this folder:
 - `test_service_worker.js`: precache uses `cache:'reload'`, install is all-or-nothing (v1.52.5).
 - `test_rekey_hold.js`: passcode change holds off auto-lock and reports real progress (v1.52.5).
 - `test_page_reading_prefs.js`: page color / font / size for one note only, restored on close, kept in metadata and backups (v1.53.0).
+- `test_index_dropdown.js`: "Index ▾" button in the reader top bar: shown when a note titled Index exists, drops down its content, tap-to-jump, hidden on the Index note itself (v1.54.0).
