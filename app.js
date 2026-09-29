@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.5';
+const APP_VERSION = '1.51.6';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -119,6 +119,10 @@ async function verifyPasscode(passcode){
   }catch(e){ return false; } // wrong passcode -> GCM tag check fails -> throws
 }
 async function wipeAllData(){
+  // v1.51.6: also forget the linked notes folder. Its handle lives in a
+  // separate IndexedDB ('shelfmark-ext'); leaving it behind let the old folder
+  // resurface after "erase and start over" and re-sync on the next focus.
+  try{ await extForget(); }catch(e){ /* never let this block the erase itself */ }
   db.close();
   await new Promise(res=>{ const r = indexedDB.deleteDatabase('shelfmark'); r.onsuccess=r.onerror=r.onblocked=()=>res(); });
   location.reload();
@@ -5374,10 +5378,24 @@ function extDb(){
 }
 async function extIdb(mode, fn){
   const d = await extDb();
+  // v1.51.6: close the connection when done. It used to stay open forever,
+  // which made indexedDB.deleteDatabase('shelfmark-ext') wait ("blocked").
+  d.onversionchange = ()=>d.close();
   return new Promise((res,rej)=>{
-    const t = d.transaction('h', mode); const out = fn(t.objectStore('h'));
-    t.oncomplete = ()=>res(out && out.result); t.onerror = ()=>rej(t.error);
+    let t;
+    try{ t = d.transaction('h', mode); }catch(e){ d.close(); rej(e); return; }
+    const out = fn(t.objectStore('h'));
+    t.oncomplete = ()=>{ d.close(); res(out && out.result); };
+    t.onerror = ()=>{ d.close(); rej(t.error); };
+    t.onabort = ()=>{ d.close(); rej(t.error); };
   });
+}
+// Drop the in-memory folder AND delete the whole 'shelfmark-ext' database.
+// Used by wipeAllData (erase). extUnlink() only removes the 'root' key because
+// it is a deliberate, reversible action that keeps the database itself.
+async function extForget(){
+  extRoot = null; extRootName = '';
+  await new Promise(res=>{ const r = indexedDB.deleteDatabase('shelfmark-ext'); r.onsuccess=r.onerror=r.onblocked=()=>res(); });
 }
 async function extLoad(){
   if(!EXT_SUPPORTED) return;

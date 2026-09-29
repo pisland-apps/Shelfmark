@@ -170,6 +170,24 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.6** (2026-09-29) — "Erase and start over" now also forgets the
+  linked notes folder.
+  - `wipeAllData` deleted the `shelfmark` IndexedDB database but not
+    `shelfmark-ext` (where the folder handle is kept), so after an erase the
+    old folder could come back and re-sync on the next window focus. It now
+    calls the new `extForget()`, which clears the in-memory `extRoot` /
+    `extRootName` and deletes `shelfmark-ext` too. A failure there never
+    blocks the erase itself.
+  - Root cause was slightly bigger: `extIdb()` opened a new connection on every
+    call and never closed it, so deleting the database would have been
+    "blocked" by the app's own connections. `extIdb()` now closes its
+    connection when the transaction ends (and on `versionchange`).
+  - "Unlink notes folder" is unchanged (it only removes the `root` key, on
+    purpose, since it is reversible).
+  - Tests: new `tests/test_ext_wipe.js` (fails on v1.51.5, passes now).
+    `tests/load.js` gained two small probes (`__ext`, `__setExt`) so tests can
+    read the folder state.
+
 - **v1.51.5** (2026-09-29) — Link/image URLs with parentheses, plus one
   older bug found while testing it.
   - `[a](https://en.wikipedia.org/wiki/Foo_(bar))` now links to the full URL.

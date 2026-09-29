@@ -14,3 +14,5 @@ in this folder ships to users. Run from this folder:
   data-URI image. **Add new hostile strings to the `hostile` array there.**
 - `load.js` — loads the real `app.js` + `index.html` into jsdom with
   fake-indexeddb, so tests call the app's own `renderMarkdown`.
+- `test_ext_wipe.js` — erasing the shelf also deletes the `shelfmark-ext`
+  (linked folder) database and resets the in-memory folder state (v1.51.6).
