@@ -183,6 +183,26 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.13** (2026-09-29) — Hardening: each encrypted record is now tied to its own id.
+  - Every encrypted blob of an item (details, content, unsaved draft) is sealed with
+    AES-GCM additional data naming the item's id and which blob it is. A record copied
+    onto a different id, or a blob swapped into another slot, no longer decrypts. This
+    guards against someone with write access to this browser's storage (not your
+    passcode) rearranging records; it hides nothing new and changes no key.
+  - **Old data keeps working.** Items saved before this version have no such tie and open
+    as before. Each blob picks it up the next time it is written: details on a rename,
+    move, progress or bookmark change; content on a note save; a draft on its next
+    autosave; everything on setting or removing the passcode. A large PDF or recording is
+    not rewritten by normal use, so it stays in the old form until the passcode is changed.
+    Nothing is migrated in the background and no prompt appears.
+  - Backups (encrypted and plain) are unchanged: they carry decrypted content and are
+    re-encrypted under each item's id on import, so old backups import as before.
+  - **One-way:** once an item has been saved by this version, an older version (v1.51.12
+    or earlier) cannot open it. Take a backup before updating if you might roll back.
+  - Tests: `tests/test_item_binding.js` (42 checks; 17 fail on v1.51.12). Also run in
+    real Chromium: copy-to-another-id refused, an old record and a 40 MB old PDF open
+    (one decrypt each), passcode change binds everything, reload + unlock.
+
 - **v1.51.12** (2026-09-29) — Fix: inline code holding a literal backtick turned
   the rest of the note into code.
   - A double-backtick span such as ``a ` b`` left an unclosed

@@ -12,6 +12,6 @@ module.exports=function(root){
   const {webcrypto}=require('crypto'); Object.defineProperty(w,'crypto',{value:webcrypto,configurable:true});
   w.TextEncoder=TextEncoder; w.TextDecoder=TextDecoder;
   w.matchMedia=w.matchMedia||(()=>({matches:false,addEventListener(){},removeEventListener(){}}));
-  w.eval(fs.readFileSync(root+'app.js','utf8')+'\n;window.__setPref=(k,v)=>{ prefs[k]=v; };window.__ext=()=>({extRoot,extRootName});window.__setExt=(r,n)=>{ extRoot=r; extRootName=n; };window.__setPendingImport=v=>{ pendingImportBackup=v; };');
+  w.eval(fs.readFileSync(root+'app.js','utf8')+'\n;window.__setPref=(k,v)=>{ prefs[k]=v; };window.__ext=()=>({extRoot,extRootName});window.__setExt=(r,n)=>{ extRoot=r; extRootName=n; };window.__setPendingImport=v=>{ pendingImportBackup=v; };window.__key=()=>cryptoKey;');
   return w;
 };

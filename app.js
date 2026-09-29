@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.12';
+const APP_VERSION = '1.51.13';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -72,20 +72,81 @@ async function deriveKey(passcode, salt, iterations){
     baseKey, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']
   );
 }
-async function aesEncrypt(key, bytes){
+// `aad` (v1.51.13) is optional AES-GCM additional authenticated data. Nothing
+// extra is stored: the same bytes must be supplied again to decrypt, or the tag
+// check fails. Only item records use it (see "Item-id binding" below); the
+// passcode verifier, prefs record and backup files are encrypted without it.
+async function aesEncrypt(key, bytes, aad){
   const iv = randomBytes(12);
-  const cipher = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, bytes);
+  const params = {name:'AES-GCM', iv};
+  if(aad) params.additionalData = aad;
+  const cipher = await crypto.subtle.encrypt(params, key, bytes);
   return { iv, cipher };
 }
-async function aesDecrypt(key, iv, cipher){
-  return crypto.subtle.decrypt({name:'AES-GCM', iv}, key, cipher);
+async function aesDecrypt(key, iv, cipher, aad){
+  const params = {name:'AES-GCM', iv};
+  if(aad) params.additionalData = aad;
+  return crypto.subtle.decrypt(params, key, cipher);
 }
-async function encryptJSON(key, obj){
-  return aesEncrypt(key, new TextEncoder().encode(JSON.stringify(obj)));
+async function encryptJSON(key, obj, aad){
+  return aesEncrypt(key, new TextEncoder().encode(JSON.stringify(obj)), aad);
 }
-async function decryptJSON(key, iv, cipher){
-  const plain = await aesDecrypt(key, iv, cipher);
+async function decryptJSON(key, iv, cipher, aad){
+  const plain = await aesDecrypt(key, iv, cipher, aad);
   return JSON.parse(new TextDecoder().decode(plain));
+}
+
+// ---- Item-id binding (v1.51.13) ---------------------------------------------
+// Each encrypted blob of an item record (metadata, content, draft) is sealed
+// with AES-GCM additional data naming the record's id and which blob it is:
+//     shelfmark:item:v1:<id>:<meta|content|draft>
+// so a blob copied onto another record, or swapped into another slot, no
+// longer decrypts. Threat: someone with write access to this browser's
+// IndexedDB (not the passcode) rearranging records. It does not hide anything
+// and changes no key.
+// OLD DATA: blobs written before v1.51.13 have no such data. A record marks
+// each blob it has bound with metaBound / contentBound / draftBound = true;
+// no marker means "written the old way". The marker only chooses which way to
+// try first (so a large old PDF is not decrypted twice on every open); the
+// other way is still tried if the first fails. Old blobs pick up the binding
+// when they are next written: metadata on a rename/progress/bookmark change,
+// content on a note save, drafts on the next autosave, everything on a
+// passcode set/remove. A large PDF or recording is not rewritten by ordinary
+// use, so it stays in the old form until the passcode is changed.
+const ITEM_BLOBS = {
+  meta:    { iv:'metaIv',    cipher:'metaCipher',    bound:'metaBound' },
+  content: { iv:'contentIv', cipher:'contentCipher', bound:'contentBound' },
+  draft:   { iv:'draftIv',   cipher:'draftCipher',   bound:'draftBound' }
+};
+function itemAad(id, slot){ return new TextEncoder().encode('shelfmark:item:v1:' + id + ':' + slot); }
+// Decrypt one blob of a raw item record. Returns the plaintext bytes.
+async function openItemBlob(key, rec, slot){
+  const f = ITEM_BLOBS[slot];
+  const aad = itemAad(rec.id, slot);
+  if(rec[f.bound]){
+    // Written with the binding: it must verify against THIS record's id. No
+    // fallback to the old way, so a blob moved onto another id is refused.
+    return aesDecrypt(key, rec[f.iv], rec[f.cipher], aad);
+  }
+  try{ return await aesDecrypt(key, rec[f.iv], rec[f.cipher]); }
+  catch(e){
+    // Marker missing but the blob was bound (should not happen: a safety net so
+    // a lost marker can never lock someone out of their own data).
+    return aesDecrypt(key, rec[f.iv], rec[f.cipher], aad);
+  }
+}
+async function openItemJSON(key, rec, slot){
+  return JSON.parse(new TextDecoder().decode(await openItemBlob(key, rec, slot)));
+}
+// Encrypt bytes into one blob of `rec` (any record object with an id), bound
+// to rec.id, and set the marker. Mutates rec.
+async function sealItemBlob(key, rec, slot, bytes){
+  const f = ITEM_BLOBS[slot];
+  const { iv, cipher } = await aesEncrypt(key, bytes, itemAad(rec.id, slot));
+  rec[f.iv] = iv; rec[f.cipher] = cipher; rec[f.bound] = true;
+}
+function sealItemJSON(key, rec, slot, obj){
+  return sealItemBlob(key, rec, slot, new TextEncoder().encode(JSON.stringify(obj)));
 }
 
 function txSec(mode){ return db.transaction('security', mode).objectStore('security'); }
@@ -356,16 +417,15 @@ async function reencryptEverything(newKey, newAuthRec, onProgress){
   return serialized(async ()=>{
     const raws = await getAllRawStrict();
     const prefsRec = await new Promise((res,rej)=>{ const r = txS('readonly').get('prefs'); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error); });
-    const BLOBS = [['metaIv','metaCipher'],['contentIv','contentCipher'],['draftIv','draftCipher']];
     const out = [];
     for(let i=0;i<raws.length;i++){
       const rec = raws[i];
       const n = { ...rec };
-      for(const [ivF, ciF] of BLOBS){
-        if(!rec[ciF]) continue;
-        const plain = await aesDecrypt(oldKey, rec[ivF], rec[ciF]);
-        const enc = await aesEncrypt(newKey, plain);
-        n[ivF] = enc.iv; n[ciF] = enc.cipher;
+      for(const slot of Object.keys(ITEM_BLOBS)){
+        if(!rec[ITEM_BLOBS[slot].cipher]) continue;
+        // Opens old-style and bound blobs alike; always written back bound.
+        const plain = await openItemBlob(oldKey, rec, slot);
+        await sealItemBlob(newKey, n, slot, plain);
       }
       out.push(n);
       raws[i] = null; // let the old ciphertext be collected as we go
@@ -789,26 +849,28 @@ async function showStorageDetail(){
   );
 }
 
-// Every item is stored as { id, metaIv, metaCipher, contentIv, contentCipher }.
+// Every item is stored as { id, metaIv, metaCipher, contentIv, contentCipher,
+// metaBound, contentBound } (+ draftIv/draftCipher/draftBound while a draft exists).
 // Metadata (title/category/type/mime/addedAt/progress/bookmarks) is one small
 // encrypted JSON blob; file content is encrypted separately (and only
 // decrypted on demand, when actually opened) so listing the shelf never has
 // to hold every PDF/image/audio blob decrypted in memory at once.
 async function encryptItemRecord(item){
   const { id, content, ...meta } = item;
-  const { iv: metaIv, cipher: metaCipher } = await encryptJSON(cryptoKey, meta);
+  const rec = { id };
+  await sealItemJSON(cryptoKey, rec, 'meta', meta);
   let contentBytes;
   if(meta.type === 'markdown') contentBytes = new TextEncoder().encode(content);
   else contentBytes = await content.arrayBuffer();
-  const { iv: contentIv, cipher: contentCipher } = await aesEncrypt(cryptoKey, contentBytes);
-  return { id, metaIv, metaCipher, contentIv, contentCipher };
+  await sealItemBlob(cryptoKey, rec, 'content', contentBytes);
+  return rec;
 }
 async function decryptMeta(rec){
-  const meta = await decryptJSON(cryptoKey, rec.metaIv, rec.metaCipher);
+  const meta = await openItemJSON(cryptoKey, rec, 'meta');
   return { id: rec.id, ...meta };
 }
 async function decryptContent(rec, type, mime){
-  const plain = await aesDecrypt(cryptoKey, rec.contentIv, rec.contentCipher);
+  const plain = await openItemBlob(cryptoKey, rec, 'content');
   if(type === 'markdown') return new TextDecoder().decode(plain);
   return new Blob([plain], { type: mime || undefined });
 }
@@ -838,10 +900,9 @@ async function putMetaOnly(id, metaUpdates){
   return serialized(async ()=>{
     const rec = await getOneRaw(id);
     if(!rec) return;
-    const meta = await decryptJSON(cryptoKey, rec.metaIv, rec.metaCipher);
+    const meta = await openItemJSON(cryptoKey, rec, 'meta');
     Object.assign(meta, metaUpdates);
-    const { iv, cipher } = await encryptJSON(cryptoKey, meta);
-    rec.metaIv = iv; rec.metaCipher = cipher;
+    await sealItemJSON(cryptoKey, rec, 'meta', meta);
     await putRaw(rec);
   });
 }
@@ -856,13 +917,12 @@ async function putContentOnly(id, type, contentValue){
     const rec = await getOneRaw(id);
     if(!rec) return;
     const bytes = type === 'markdown' ? new TextEncoder().encode(contentValue) : await contentValue.arrayBuffer();
-    const { iv, cipher } = await aesEncrypt(cryptoKey, bytes);
-    rec.contentIv = iv; rec.contentCipher = cipher;
+    await sealItemBlob(cryptoKey, rec, 'content', bytes);
     // Linked note (v1.50.0): write the file on disk FIRST; if that fails, throw
     // so the caller keeps the editor open and nothing diverges.
     let meta = null;
     if(type === 'markdown'){
-      meta = await decryptJSON(cryptoKey, rec.metaIv, rec.metaCipher);
+      meta = await openItemJSON(cryptoKey, rec, 'meta');
       if(meta.extPath){
         // v1.51.3: the file may have been edited outside Shelfmark (e.g. in
         // Obsidian) since this note was opened — writing blind here used to
@@ -880,8 +940,7 @@ async function putContentOnly(id, type, contentValue){
         meta.extMtime = mtime;
       }
       meta.updatedAt = Date.now();
-      const m = await encryptJSON(cryptoKey, meta);
-      rec.metaIv = m.iv; rec.metaCipher = m.cipher;
+      await sealItemJSON(cryptoKey, rec, 'meta', meta);
     }
     await putRaw(rec);
   });
@@ -910,22 +969,21 @@ function putDraft(id, text){
   return serialized(async ()=>{
     const rec = await getOneRaw(id);
     if(!rec) return;
-    const { iv, cipher } = await encryptJSON(cryptoKey, { text, savedAt: Date.now() });
-    rec.draftIv = iv; rec.draftCipher = cipher;
+    await sealItemJSON(cryptoKey, rec, 'draft', { text, savedAt: Date.now() });
     await putRaw(rec);
   });
 }
 async function getDraft(id){
   const rec = await getOneRaw(id);
   if(!rec || !rec.draftCipher) return null;
-  try{ return await decryptJSON(cryptoKey, rec.draftIv, rec.draftCipher); }
+  try{ return await openItemJSON(cryptoKey, rec, 'draft'); }
   catch(err){ return null; }
 }
 function clearDraft(id){
   return serialized(async ()=>{
     const rec = await getOneRaw(id);
     if(!rec || !rec.draftCipher) return;
-    delete rec.draftIv; delete rec.draftCipher;
+    delete rec.draftIv; delete rec.draftCipher; delete rec.draftBound;
     await putRaw(rec);
   });
 }
@@ -5661,8 +5719,8 @@ async function extRefreshOne(id){
 async function putContentOnlyRaw(id, text){
   return serialized(async ()=>{
     const rec = await getOneRaw(id); if(!rec) return;
-    const { iv, cipher } = await aesEncrypt(cryptoKey, new TextEncoder().encode(text));
-    rec.contentIv = iv; rec.contentCipher = cipher; await putRaw(rec);
+    await sealItemBlob(cryptoKey, rec, 'content', new TextEncoder().encode(text));
+    await putRaw(rec);
   });
 }
 // ---- Folder-sync identity (v1.51.7) -----------------------------------------

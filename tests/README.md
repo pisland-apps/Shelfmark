@@ -29,6 +29,10 @@ in this folder ships to users. Run from this folder:
 - `test_autolock.js` — idle / background auto-lock and Lock now (v1.51.11): timing rules,
   activity resets, sound and export/import holds, queued writes finish first, draft kept,
   settings panel, no-passcode mode never locks. Replaces the page reload with a stub.
+- `test_item_binding.js` — AES-GCM item-id binding (v1.51.13): a copied/swapped blob is refused,
+  old-format records still open and are upgraded a blob at a time, drafts, passcode change,
+  export/import round trip, backups and the verifier unchanged. Old-format records are built
+  with raw WebCrypto, not the app's helpers.
 - `test_inline_code.js` — inline code spans (v1.51.12): double-backtick spans, unmatched backticks,
   nothing after a bad span turning into code, tag extraction. Cases are in `inline_code_cases.js`
   so the same checks can be run in a real browser.
