@@ -22,3 +22,4 @@ in this folder ships to users. Run from this folder:
 - `test_kdf.js` — key derivation (v1.51.8): 600k for new passcodes, old records and
   backups still open, crafted iteration counts refused, minimum length still 4,
   advisory strength hint.
+- `test_import_merge.js` — import summary wording (v1.51.9): newer-on-shelf vs unreadable.

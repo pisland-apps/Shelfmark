@@ -171,6 +171,18 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.51.9** (2026-09-29) — Clearer import summary. The message used to say
+  "skipped N items that looked corrupted or outdated", which lumped two very
+  different things together and alarmed people whose shelf was simply newer
+  than the backup. Now it says:
+  - "left N items unchanged because your shelf already has a newer copy" — the
+    normal, harmless case (the v1.51.3 newer-wins rule; a linked notes-folder
+    note counts as newer every time its file changes), and
+  - "skipped N items that couldn't be read (unknown type or damaged data)" —
+    the backup item itself was unusable.
+  - Nothing about what is imported changed, only the wording and the split of
+    the counts. Tests: new `tests/test_import_merge.js` (10 checks).
+
 - **v1.51.8** (2026-09-29) — Stronger key derivation for new passcodes and
   backups, and a guard against crafted backup files. The 4-character minimum
   passcode is unchanged.

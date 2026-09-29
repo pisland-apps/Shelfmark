@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.8';
+const APP_VERSION = '1.51.9';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1089,12 +1089,15 @@ function sanitizeImportedId(rawId){
   return (typeof rawId === 'string' && SAFE_ID_RE.test(rawId)) ? rawId : null;
 }
 async function mergeImportedItems(items, info){
-  let added = 0, updated = 0, skipped = 0, stoppedOnQuota = false;
+  // v1.51.9: two kinds of skip are counted separately, because they mean very
+  // different things. keptNewer is normal and harmless (the shelf already has a
+  // newer copy); unreadable means the backup item itself could not be used.
+  let added = 0, updated = 0, keptNewer = 0, unreadable = 0, stoppedOnQuota = false;
   try{
     const existingItems = await getAll();
     const wasEmpty = existingItems.length === 0;
     for(const it of items){
-      if(!it || !KNOWN_ITEM_TYPES.has(it.type)){ skipped++; continue; }
+      if(!it || !KNOWN_ITEM_TYPES.has(it.type)){ unreadable++; continue; }
       const safeId = it.id ? sanitizeImportedId(it.id) : null;
       let existing = safeId ? existingItems.find(x=>x.id===safeId) : null;
       if(!existing){
@@ -1106,15 +1109,15 @@ async function mergeImportedItems(items, info){
       // compare as "unknown" and are allowed through, matching pre-v1.51.3
       // behavior for backups made before this field existed).
       if(existing && typeof existing.updatedAt === 'number' && typeof it.updatedAt === 'number' && it.updatedAt < existing.updatedAt){
-        skipped++; continue;
+        keptNewer++; continue;
       }
       let content = it.content;
       if(it.type !== 'markdown'){
-        if(typeof content !== 'string' || !content.startsWith('data:')){ skipped++; continue; }
+        if(typeof content !== 'string' || !content.startsWith('data:')){ unreadable++; continue; }
         try{
           const res = await fetch(content);
           content = await res.blob();
-        }catch(err){ skipped++; continue; }
+        }catch(err){ unreadable++; continue; }
       }
       const id = existing ? existing.id : (safeId || Date.now()+'-'+Math.random().toString(36).slice(2));
       const record = {
@@ -1144,7 +1147,8 @@ async function mergeImportedItems(items, info){
     const parts = [];
     if(added) parts.push(`added ${added} new item${added===1?'':'s'}`);
     if(updated) parts.push(`updated ${updated} existing item${updated===1?'':'s'}`);
-    if(skipped) parts.push(`skipped ${skipped} item${skipped===1?'':'s'} that looked corrupted or outdated`);
+    if(keptNewer) parts.push(`left ${keptNewer} item${keptNewer===1?'':'s'} unchanged because your shelf already has a newer copy`);
+    if(unreadable) parts.push(`skipped ${unreadable} item${unreadable===1?'':'s'} that couldn't be read (unknown type or damaged data)`);
     if(stoppedOnQuota){
       alert((parts.length ? parts.join(', ')+', then s' : 'S')+"topped partway through — your device's storage is full. Free up space or remove a few items, then re-import the same file to pick up the rest (already-imported items will be skipped)."+tail);
     } else {
