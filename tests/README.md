@@ -19,3 +19,6 @@ in this folder ships to users. Run from this folder:
 - `test_ext_sync.js` — folder sync (v1.51.7): rename, move, delete, restore,
   adopting an existing note, unlink → relink, and the safety cases (permission
   error, unreadable folder), using an in-memory fake folder.
+- `test_kdf.js` — key derivation (v1.51.8): 600k for new passcodes, old records and
+  backups still open, crafted iteration counts refused, minimum length still 4,
+  advisory strength hint.

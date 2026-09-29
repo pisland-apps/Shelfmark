@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.51.7';
+const APP_VERSION = '1.51.8';
 const APP_VERSION_DATE = '2026-09-29';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -26,7 +26,23 @@ const pdfjsLibPromise = import('./lib/pdf.min.mjs').then(mod => {
 });
 
 // ---- crypto / auth ---------------------------------------------------------
-const PBKDF2_ITERATIONS = 250000;
+// v1.51.8: new passcodes and new encrypted exports use 600,000 rounds. Every
+// stored record (the 'auth' record, every backup file) carries its OWN
+// iteration count, so shelves and backups made before this keep opening with
+// the count they were made with; nothing is migrated. LEGACY is what a backup
+// with no `iterations` field at all was made with. MAX stops a crafted backup
+// from freezing the tab with an absurd count (the field is read from the file).
+const PBKDF2_ITERATIONS = 600000;
+const PBKDF2_LEGACY_ITERATIONS = 250000;
+const PBKDF2_MAX_ITERATIONS = 1000000;
+// Returns a usable iteration count, or 0 if the value is not acceptable.
+// undefined/null -> the legacy default; anything present must be a whole
+// number from 1 to PBKDF2_MAX_ITERATIONS (strings, floats, NaN, 0, negatives,
+// Infinity and huge values are all refused, not "fixed").
+function safeIterations(v){
+  if(v === undefined || v === null) return PBKDF2_LEGACY_ITERATIONS;
+  return (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= PBKDF2_MAX_ITERATIONS) ? v : 0;
+}
 let cryptoKey = null; // held only in memory for this session, never persisted
 
 function randomBytes(n){ return crypto.getRandomValues(new Uint8Array(n)); }
@@ -111,7 +127,9 @@ async function verifyPasscode(passcode){
   if(!auth || auth.mode === 'device') return false;
   try{
     const salt = b642buf(auth.salt);
-    const key = await deriveKey(passcode, salt, auth.iterations);
+    const iters = safeIterations(auth.iterations);
+    if(!iters) return false;
+    const key = await deriveKey(passcode, salt, iters);
     const plain = await aesDecrypt(key, b642buf(auth.verifierIv), b642buf(auth.verifierCipher));
     if(new TextDecoder().decode(plain) !== 'shelfmark-ok') return false;
     cryptoKey = key;
@@ -316,6 +334,7 @@ function openAuthModal(mode){
   document.getElementById('authPass1').value = '';
   document.getElementById('authPass2').value = '';
   document.getElementById('authError').textContent = '';
+  clearPassHints();
   document.getElementById('authGoBtn').textContent = isSet ? 'Set passcode' : 'Remove passcode';
   document.getElementById('authOverlay').style.display = 'flex';
   setTimeout(()=>document.getElementById('authPass1').focus(), 0);
@@ -819,7 +838,22 @@ function setExportMode(m){
   document.getElementById('expNameToggleRow').style.display = m==='enc' ? 'block' : 'none';
   document.getElementById('expError').textContent = '';
 }
+// Advisory strength hint (v1.51.8). The 4-character minimum is unchanged and
+// nothing is blocked; this only tells people who chose something short that a
+// copy of their data could be guessed at quickly.
+function passHintText(pass){
+  if(pass.length < 4) return '';
+  const weak = pass.length < 8 || /^[0-9]+$/.test(pass) && pass.length < 10;
+  return weak ? 'Short or all-digit passcodes can be guessed quickly if someone copies your data. 8+ characters, or a few words, is much safer (4 still works).' : '';
+}
+function updatePassHint(el){
+  const hint = document.getElementById(el.dataset.hintId); if(!hint) return;
+  const gate = el.dataset.hintWhen && document.getElementById(el.dataset.hintWhen);
+  hint.textContent = (gate && gate.style.display === 'none') ? '' : passHintText(el.value);
+}
+function clearPassHints(){ document.querySelectorAll('.pass-hint').forEach(h=>{ h.textContent=''; }); }
 function openExportModal(){
+  clearPassHints();
   document.getElementById('exppass').value = '';
   document.getElementById('exppass2').value = '';
   document.getElementById('expError').textContent = '';
@@ -986,6 +1020,10 @@ async function onImportFile(e){
 
   if(parsed && parsed.encrypted === true){
     // Show where it came from BEFORE asking for the passphrase.
+    if(!safeIterations(parsed.iterations)){
+      alert("This backup can't be opened: its key-derivation setting is invalid ("+String(parsed.iterations).slice(0,20)+"). The file may be damaged or not made by Shelfmark.");
+      return;
+    }
     pendingImportBackup = parsed;
     pendingImportInfo = info;
     const sum = document.getElementById('impSummary');
@@ -1016,8 +1054,10 @@ async function doImportDecrypt(){
   const pass = document.getElementById('imppass').value;
   if(!pendingImportBackup) return;
   try{
+    const iters = safeIterations(pendingImportBackup.iterations);
+    if(!iters){ errEl.textContent = 'This backup has an invalid key-derivation setting.'; return; }
     const salt = b642buf(pendingImportBackup.salt);
-    const key = await deriveKey(pass, salt, pendingImportBackup.iterations || PBKDF2_ITERATIONS);
+    const key = await deriveKey(pass, salt, iters);
     const { items } = await decryptJSON(key, b642buf(pendingImportBackup.iv), b642buf(pendingImportBackup.cipher));
     const info = pendingImportInfo;
     document.getElementById('importPassOverlay').style.display = 'none';
@@ -5637,7 +5677,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  updatePassHint, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, createIndexNoteFromGuide,

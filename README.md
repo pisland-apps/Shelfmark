@@ -57,7 +57,8 @@ and stored only in your browser's IndexedDB, on your own device.
   passcode…" / "Remove passcode…"); every item is re-encrypted in one
   all-or-nothing write, so a failure leaves your current setup untouched.
 - **IndexedDB encryption.** AES-256-GCM, with a key derived from your
-  passcode via PBKDF2 (250,000 iterations, random per-device salt). The key
+  passcode via PBKDF2 (600,000 iterations for passcodes set from v1.51.8; earlier
+  shelves keep the 250,000 they were made with; random per-device salt). The key
   lives only in memory for the current session — it's never written to
   disk. Item metadata (titles, categories, bookmarks, reading progress) and
   file content (PDFs/images/audio bytes, note text) are encrypted
@@ -169,6 +170,39 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.51.8** (2026-09-29) — Stronger key derivation for new passcodes and
+  backups, and a guard against crafted backup files. The 4-character minimum
+  passcode is unchanged.
+  - **600,000 PBKDF2 iterations** (was 250,000) for every *new* passcode and
+    every *new* encrypted export. Each stored record already carries its own
+    count, so an existing shelf keeps opening with the count it was made with
+    and old backups still import; nothing is migrated. An existing shelf only
+    moves to 600,000 when you set a new passcode (Ctrl+K → remove passcode,
+    then set one again), because that re-encrypts everything with a new key.
+    Unlocking is a little slower (about 0.1–0.3 s on a desktop, possibly around
+    a second on an old phone).
+  - **Backup iteration count is validated** (`safeIterations`): it must be a
+    whole number from 1 to 1,000,000. A crafted backup asking for a billion
+    rounds is refused with a clear message when the file is chosen, before any
+    passphrase prompt, and again in `doImportDecrypt`. A tampered stored
+    passcode record is refused the same way.
+  - **Legacy fix built in:** a backup with *no* `iterations` field at all is
+    read with the old default of 250,000, not the new 600,000. Without this,
+    such an old backup would have been reported as "Incorrect passphrase".
+  - **Passcode strength hint** (advisory, blocks nothing): under the passcode
+    fields (set-passcode lock screen and dialog) and the backup passphrase, a
+    short (< 8) or all-digit (< 10) entry shows a note that it can be guessed
+    quickly if someone copies your data. 4 characters still works.
+  - Honest limit: more iterations slow down each guess but cannot save a very
+    short passcode. A 4-digit PIN has only 10,000 possibilities, so anyone who
+    gets a copy of your data or backup file can still try them all. A longer
+    passphrase is the real protection, especially for exported backups, which
+    leave your device.
+  - Tests: new `tests/test_kdf.js` (54 checks): iteration validation, 600k for
+    new passcodes, existing 250k records and backups (with and without the
+    field) still open, crafted counts refused instantly, minimum still 4, hint
+    rules. `tests/load.js` gained a `__setPendingImport` probe.
 
 - **v1.51.7** (2026-09-29) — Notes-folder sync now handles renamed, moved and
   deleted files, and no longer duplicates notes that are already on the shelf.
@@ -1066,7 +1100,8 @@ most common reason the two look out of sync.
   export button now opens a modal offering "Encrypted" (default) or "Plain
   JSON" (opt-in, with an inline warning). Encrypted backups use their own
   passphrase — independent of your app-lock passcode, chosen at export time
-  — via AES-256-GCM with a PBKDF2-derived key (250,000 iterations, random
+  — via AES-256-GCM with a PBKDF2-derived key (600,000 iterations from v1.51.8, 250,000
+  before; the count is stored in the file, random
   salt, stored alongside the ciphertext in the file). Import auto-detects
   an encrypted backup (`encrypted:true` in the file) and prompts for its
   passphrase before merging; plain/legacy export files import unchanged.
