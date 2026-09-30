@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.58.0';
+const APP_VERSION = '1.58.1';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1421,6 +1421,10 @@ async function doExportInner(){
 }
 
 let pendingImportInfo = null, pendingImportV2 = null, importRunning = false, importCancel = false;
+// v1.58.1: "Import from JSON — only new items". importOnlyNewNext is set by that palette command right
+// before the file picker opens; onImportFile moves it into importOnlyNew for the file just chosen (and
+// clears it), so the ordinary Import always behaves as before.
+let importOnlyNewNext = false, importOnlyNew = false;
 function showImportPassModal(info, shelfEmpty, differs){
   // Show where it came from BEFORE asking for the passphrase.
   pendingImportInfo = info;
@@ -1435,6 +1439,7 @@ function showImportPassModal(info, shelfEmpty, differs){
     sum.textContent = 'This backup is from '+(info.id === prefs.shelfId ? 'this shelf' : describeBackupOwner(info))+(info.id === prefs.shelfId && (info.count != null || info.date) ? ' ('+[info.count != null ? info.count+' item'+(info.count===1?'':'s') : '', info.date].filter(Boolean).join(', ')+')' : '')+'.';
     sum.style.color = 'var(--ink-soft)';
   }
+  if(importOnlyNew) sum.textContent = (sum.textContent ? sum.textContent+' ' : '')+'Only items that are not already on this shelf will be imported.';
   sum.style.display = sum.textContent ? 'block' : 'none';
   document.getElementById('imppass').value = '';
   document.getElementById('impError').textContent = '';
@@ -1455,9 +1460,12 @@ async function readBackupHeaderV2(f){
   try{ if(typeof hdr.salt !== 'string' || b642buf(hdr.salt).length !== 16) throw 0; }catch(e){ throw new BackupFormatError('header'); }
   return { hdr, hdrBytes: buf.slice(0, nl + 1) };
 }
+// Closing the file picker without choosing anything must not leave the only-new choice armed for the next Import.
+document.getElementById('importPick').addEventListener('cancel', ()=>{ importOnlyNewNext = false; });
 async function onImportFile(e){
   const f = e.target.files[0];
   e.target.value = '';
+  importOnlyNew = importOnlyNewNext; importOnlyNewNext = false;
   if(!f) return;
   let head = '';
   try{ head = new TextDecoder().decode(new Uint8Array(await f.slice(0, BACKUP_MAGIC.length).arrayBuffer())); }catch(err){}
@@ -1682,6 +1690,7 @@ async function beginImport(info){
   // different things. keptNewer is normal and harmless (the shelf already has a
   // newer copy); unreadable means the backup item itself could not be used.
   return { info, existingItems, wasEmpty: existingItems.length === 0,
+    onlyNew: importOnlyNew, alreadyHad:0,
     added:0, updated:0, keptNewer:0, unreadable:0, stoppedOnQuota:false };
 }
 // Returns false when the import must stop (storage full), true otherwise.
@@ -1693,6 +1702,9 @@ async function importOneItem(s, it){
   if(!existing){
     existing = existingItems.find(x=>x.title===it.title && x.type===it.type && x.addedAt===it.addedAt);
   }
+  // v1.58.1 only-new mode: anything the shelf already has (same id, or same title + type + addedAt)
+  // is left exactly as it is: not updated, not counted as newer.
+  if(existing && s.onlyNew){ s.alreadyHad++; return true; }
   // Newer-wins on a genuine conflict: only replace an existing record if
   // the imported copy doesn't carry an older updatedAt than what's
   // already here (older items have no updatedAt at all, so they still
@@ -1736,6 +1748,7 @@ function importSummaryParts(s){
   const parts = [];
   if(s.added) parts.push(`added ${s.added} new item${s.added===1?'':'s'}`);
   if(s.updated) parts.push(`updated ${s.updated} existing item${s.updated===1?'':'s'}`);
+  if(s.alreadyHad) parts.push(`skipped ${s.alreadyHad} item${s.alreadyHad===1?'':'s'} already on your shelf`);
   if(s.keptNewer) parts.push(`left ${s.keptNewer} item${s.keptNewer===1?'':'s'} unchanged because your shelf already has a newer copy`);
   if(s.unreadable) parts.push(`skipped ${s.unreadable} item${s.unreadable===1?'':'s'} that couldn't be read (unknown type or damaged data)`);
   return parts;
@@ -6164,7 +6177,8 @@ function buildStaticCommands(){
     { id:'new-note', icon:'&#128221;', label:'New note', hint:'', action: ()=>quickNewNote() },
     { id:'new-index', icon:'&#128450;&#65039;', label:'New index note (all categories)', hint:'', action: ()=>quickNewNote('Index', NOTE_TEMPLATES.index.content()) },
     { id:'add-item', icon:'&#10133;', label:'Add item\u2026', hint:'pdf / note / image / audio', action: ()=>openAdd() },
-    { id:'import', icon:'&#8681;', label:'Import from JSON', hint:'', action: ()=>document.getElementById('importPick').click() },
+    { id:'import', icon:'&#8681;', label:'Import from JSON', hint:'', action: ()=>{ importOnlyNewNext = false; document.getElementById('importPick').click(); } },
+    { id:'import-new', icon:'&#8681;', label:'Import from JSON \u2014 only new items', hint:'skips what is already on the shelf', action: ()=>{ importOnlyNewNext = true; document.getElementById('importPick').click(); } },
     ...(EXT_SUPPORTED ? [
       { id:'ext-open', icon:'&#128193;', label: extRootName ? 'Change notes folder\u2026' : 'Open a notes folder\u2026', hint: extRootName || 'Obsidian-style', action: ()=>extPickFolder() },
       ...(extRootName ? [{ id:'ext-sync', icon:'&#128260;', label:'Sync notes folder now', hint: extRootName, action: ()=>extSync(true) },

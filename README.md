@@ -221,6 +221,8 @@ most common reason the two look out of sync.
 - **v1.57.1** (2026-09-30) — Outline callout rows are always flush-left (no longer nested under the heading above). A callout with no title now shows its type exactly as typed (`[!CosyVoice-300M-Instruct]` was shown as `Cosyvoice-300m-instruct`).
 - **v1.58.0** (2026-09-30) — Wider reading column. The note page was fixed at 640px, leaving big empty margins on a PC. It now defaults to Wide (960px), and the ⚙ panel has a new **Page width** row: Narrow (640px, the old look) / Wide / Full. Works with "All pages / This page only" like the other options. Phones are unchanged (the screen is already narrower than the column).
   - New pref `width` (default `wide`); per-note `readerPrefs.width`. `--read-width` CSS variable drives `.mdbody`.
+- **v1.58.1** (2026-09-30) — New command **Import from JSON — only new items** (Ctrl+K). It adds what is not on the shelf yet and leaves everything already there untouched, even when the backup's copy is newer. The ordinary **Import from JSON** still updates existing items as before.
+  - "Already on the shelf" = same id, or same title + type + added date (the existing match rule). The summary says `skipped N items already on your shelf`. Works for plain JSON, encrypted JSON and the chunked `.shelfmark` file. No data-format change.
 
 - **v1.55.2** (2026-09-30) — A code block with blank lines inside it is now one block, with one Copy button for all of it.
   - Before: the reader split the note at every blank line after the code was already turned into HTML, so a
