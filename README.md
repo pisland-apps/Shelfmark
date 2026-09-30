@@ -205,6 +205,7 @@ most common reason the two look out of sync.
 ## Changelog
 
 - **v1.56.0** (2026-09-30) — Plain quote blocks are listed in the ☰ outline next to the headings.
+- **v1.56.1** (2026-09-30) — Callout type can now be any word, including Chinese (`> [!重装流程]`); before, only letters/digits/underscore worked and anything else showed as a plain italic quote with the `!`.
   - Each quote shows as an italic row with a green bar, under the heading it sits below; tap to jump. Only
     the first line is shown (80 characters at most). Callouts are not listed. Nothing is stored.
 

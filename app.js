@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.56.0';
+const APP_VERSION = '1.56.1';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -5576,11 +5576,11 @@ function renderMarkdown(src, linkTypes){
     else if(/^\s*&gt;/.test(block) && block.split('\n').every(l=>!l.trim() || /^\s*&gt;/.test(l))){
       const lines = block.split('\n').filter(l=>l.trim()).map(l=>l.replace(/^\s*&gt;\s?/,''));
       // Obsidian-style callout: a blockquote whose first line is
-      // "[!type] Optional title" renders as a colored card instead of a
+      // "[!type] Optional title" (type may be any word, incl. Chinese) renders as a colored card instead of a
       // plain quote. Reuses the same --pdf/--md/--img/--audio palette the
       // rest of the app already uses for item-type accents, so callouts
       // read as part of the same visual system rather than a new one.
-      const calloutMatch = lines[0] && lines[0].match(/^\[!(\w+)\]([+-]?)\s*(.*)$/);
+      const calloutMatch = lines[0] && lines[0].match(/^\[!([^\]\s]+)\]([+-]?)\s*(.*)$/);
       if(calloutMatch){
         const kind = calloutMatch[1].toLowerCase();
         const CALLOUT_INFO = {
