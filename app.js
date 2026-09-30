@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.56.2';
+const APP_VERSION = '1.57.0';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1782,7 +1782,7 @@ const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
 // it was typed, imported from a backup or synced from a folder. Such a link renders as a
 // plain link (see remoteMediaPlaceholder) that the person can open in a new tab. data:/blob:
 // media (pasted-in pictures, on-shelf audio links) still display in the note.
-let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, itemSortMode:'newest', collapsedCats:[], categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
+let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, itemSortMode:'newest', collapsedCats:[], tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -2535,6 +2535,7 @@ async function openReader(id){
   closeFindBar(); // a find bar left open from the previous note must not carry over
   document.getElementById('settingsBtn').style.display = 'none';
   document.getElementById('outlineBtn').style.display = 'none';
+  applyOutlineDock(); // no outline for the item that is opening yet: drop the docked column
   settingsPanelOpen = false;
   document.getElementById('settingsPanel').style.display = 'none';
   bmPanelOpen = false;
@@ -2904,6 +2905,7 @@ function startEditNote(){
   if(helpDockWanted) openHelpDock(); else syncHelpToggleBtn();
   document.getElementById('bmBtn').style.display = 'none';
   document.getElementById('outlineBtn').style.display = 'none';
+  applyOutlineDock(); // the editor has no outline column
   document.getElementById('editNoteBtn').classList.add('active');
   document.getElementById('mdEditArea').focus();
   resetUndoHistory();
@@ -4807,7 +4809,42 @@ async function toggleIndexPanel(){
 }
 
 let outlinePanelOpen = false;
+// v1.57.0: on a wide screen (PC / tablet landscape, >= 800px) the outline is not a dropdown any
+// more — it is docked as a left column beside the note, open by default, and the ☰ button just
+// shows / hides that column (remembered in prefs.tocSideHidden). On a narrow screen (phone) nothing
+// changes: ☰ still opens the dropdown. The docked look is all CSS (#reader.toc-side); this function
+// only decides when the class is on. outlinePanelOpen stays false while docked, so the dropdown's
+// outside-click / Escape logic never touches the docked column.
+function outlineIsWide(){
+  return typeof window.matchMedia === 'function' && !!window.matchMedia('(min-width: 800px)').matches;
+}
+function applyOutlineDock(){
+  const reader = document.getElementById('reader');
+  const btn = document.getElementById('outlineBtn');
+  if(!reader || !btn) return;
+  const has = btn.style.display !== 'none';   // the open note has headings / callouts
+  const wide = outlineIsWide();
+  const side = wide && has && !prefs.tocSideHidden;
+  reader.classList.toggle('toc-side', side);
+  btn.classList.toggle('active', side);
+  if(wide && has){
+    outlinePanelOpen = false;                  // a leftover dropdown from a narrower window
+    document.getElementById('outlinePanel').style.display = 'none';
+  }
+}
+if(typeof window.matchMedia === 'function'){
+  const mq = window.matchMedia('(min-width: 800px)');
+  const onDockChange = ()=>{ outlinePanelOpen = false; document.getElementById('outlinePanel').style.display = 'none'; applyOutlineDock(); };
+  if(mq && mq.addEventListener) mq.addEventListener('change', onDockChange);
+  else if(mq && mq.addListener) mq.addListener(onDockChange);
+}
 function toggleOutlinePanel(){
+  if(outlineIsWide()){
+    prefs.tocSideHidden = !prefs.tocSideHidden;
+    applyOutlineDock();
+    putPrefs(prefs).catch(()=>{});
+    return;
+  }
   closeIndexPanel();
   settingsPanelOpen = false;
   document.getElementById('settingsPanel').style.display = 'none';
@@ -4887,6 +4924,7 @@ function updateOutlineUI(outline){
     btn.style.display = 'none';
     panel.style.display = 'none';
     outlinePanelOpen = false;
+    applyOutlineDock();
     return;
   }
   btn.style.display = 'flex';
@@ -4895,6 +4933,7 @@ function updateOutlineUI(outline){
     + outline.map(o=>
     `<button type="button" class="outline-row" data-level="${o.level}"${o.callout ? ' data-kind="callout"' : ''} data-on-click="jumpOutline" data-args-click="[${Number(o.idx)}]">${escapeHtml(o.text) || (o.callout ? '(untitled callout)' : '(untitled heading)')}</button>`
   ).join('');
+  applyOutlineDock();
 }
 
 // ---- Heading fold (v1.37.0) ----

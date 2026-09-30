@@ -371,6 +371,25 @@
     flex:1;background:var(--paper2);border:1px solid var(--line);border-radius:6px;
     padding:6px 8px;font-size:12px;color:var(--ink);font-family:inherit;cursor:pointer;
   }
+  /* v1.57.0: on a wide screen (>= 800px: PC, tablet landscape) the outline is docked as a left
+     column instead of a dropdown. app.js (applyOutlineDock) only toggles the .toc-side class on
+     #reader; the layout is a two-column grid: top bar across the top, outline on the left,
+     find bar + note on the right. The position:fixed panels (settings, bookmarks, Index) are
+     out of the grid flow and behave as before. display:block !important beats the inline
+     display:none that the dropdown code writes. */
+  #reader.open.toc-side{
+    display:grid;grid-template-columns:clamp(220px,24vw,300px) minmax(0,1fr);
+    grid-template-rows:auto auto minmax(0,1fr);
+  }
+  #reader.toc-side > .rbar{grid-column:1 / -1;grid-row:1;}
+  #reader.toc-side > #findBar{grid-column:2;grid-row:2;}
+  #reader.toc-side > #rcontent{grid-column:2;grid-row:3;min-width:0;min-height:0;}
+  #reader.toc-side > #outlinePanel{
+    display:block !important;position:static;grid-column:1;grid-row:2 / 4;
+    width:auto;max-width:none;max-height:none;min-height:0;overflow:auto;
+    border:none;border-right:1px solid var(--line);border-radius:0;box-shadow:none;
+  }
+  #reader.toc-side > #outlinePanel .outline-tools{position:sticky;top:0;z-index:1;background:var(--card);}
   /* Index dropdown in the reader top bar (v1.54.0): the Index note's own content, shown
      as a panel so you can jump to another item without going back to the shelf. */
   .index-btn{font-family:inherit;font-size:13px;font-weight:600;color:var(--ink);border:1px solid var(--line);

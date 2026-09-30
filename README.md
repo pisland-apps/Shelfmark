@@ -7,6 +7,13 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Table of contents beside the note on wide screens (v1.57.0).** On a PC or a tablet held sideways
+  (window at least 800px wide) the ☰ outline is no longer a dropdown: it sits as a column on the left of the
+  note, open by default, and stays there while you read. Tap a row to jump; Collapse all / Expand all stay at
+  the top of the column. The ☰ button now shows or hides the column, and Shelfmark remembers your choice. On a
+  phone or a narrow window nothing changes: ☰ still opens the dropdown. Nothing is stored except that one
+  show/hide setting.
+
 - **Callouts in the outline (v1.56.2).** A callout card (`> [!note] Title`, any type word) appears in the ☰
   outline as a small italic row with a green bar, showing the card's title, listed under the heading above it.
   Tap it to jump there. Plain quotes (`> text`) are not listed (v1.56.0 listed them; v1.56.2 removed that).
@@ -209,6 +216,8 @@ most common reason the two look out of sync.
 - **v1.56.2** (2026-09-30) — The ☰ outline now lists callout cards (by title) instead of plain quotes.
   - Each quote shows as an italic row with a green bar, under the heading it sits below; tap to jump. Only
     the first line is shown (80 characters at most). Callouts are not listed. Nothing is stored.
+- **v1.57.0** (2026-09-30) — On wide screens the ☰ outline docks as a left column beside the note (open by default; ☰ shows/hides it, remembered). Phones keep the dropdown.
+  - New pref `tocSideHidden` (default false). The dropdown's outside-click / Escape closing is unchanged and does not touch the docked column.
 
 - **v1.55.2** (2026-09-30) — A code block with blank lines inside it is now one block, with one Copy button for all of it.
   - Before: the reader split the note at every blank line after the code was already turned into HTML, so a
