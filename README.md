@@ -7,6 +7,10 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Quotes in the outline (v1.56.0).** A plain quote block (`> text`, the green-bar quote) now also appears in
+  the ☰ outline, as a small italic row with a green bar, listed under the heading above it (first line only,
+  shortened). Tap it to jump there. Callouts (`> [!note]`) are not listed.
+
 - **Tap outside to close panels (v1.55.0).** The ⚙ / ☰ / 🔖 panels and the Index ▾ dropdown in the reader top
   bar now close when you tap anywhere outside them, or press Escape — not only by tapping the same button
   again. Tapping inside a panel keeps it open; tapping its own button still toggles it. Only one is open at a
@@ -199,6 +203,10 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.56.0** (2026-09-30) — Plain quote blocks are listed in the ☰ outline next to the headings.
+  - Each quote shows as an italic row with a green bar, under the heading it sits below; tap to jump. Only
+    the first line is shown (80 characters at most). Callouts are not listed. Nothing is stored.
 
 - **v1.55.2** (2026-09-30) — A code block with blank lines inside it is now one block, with one Copy button for all of it.
   - Before: the reader split the note at every blank line after the code was already turned into HTML, so a
