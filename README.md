@@ -7,6 +7,11 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Tap outside to close panels (v1.55.0).** The ⚙ / ☰ / 🔖 panels and the Index ▾ dropdown in the reader top
+  bar now close when you tap anywhere outside them, or press Escape — not only by tapping the same button
+  again. Tapping inside a panel keeps it open; tapping its own button still toggles it. Only one is open at a
+  time, as before.
+
 - **Index dropdown on every page (v1.54.0).** If your shelf has a note titled **Index**, every other
   item's top bar gets an **Index ▾** button. Tap it and the Index note's content drops down (the live
   ```` ```index ```` table or any links you wrote by hand); tap an item to jump straight to it, no trip back
@@ -194,6 +199,14 @@ most common reason the two look out of sync.
   use it somewhere you already trust.
 
 ## Changelog
+
+- **v1.55.0** (2026-09-30) — Top-bar panels close on an outside tap or Escape.
+  - Before: ⚙ settings, ☰ outline, 🔖 bookmarks and the Index ▾ dropdown closed only by tapping their own
+    button again. Now one capture-phase `click` listener closes whichever is open when the tap lands outside
+    every panel and every panel button (`closeTopBarPanels`), and Escape does the same unless the Ctrl+K palette
+    is open. It never calls `preventDefault`, so the tapped control still works (the tap both closes the panel
+    and does its normal job).
+  - No data-format change; nothing stored. Tests: `tests/test_panel_outside_click.js`.
 
 - **v1.54.0** (2026-09-29) — "Index ▾" button in the reader top bar.
   - Looks for a markdown note titled `Index` (case-insensitive, first match). If found, and you are not

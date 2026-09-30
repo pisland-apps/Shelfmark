@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.54.0';
-const APP_VERSION_DATE = '2026-09-29';
+const APP_VERSION = '1.55.0';
+const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -4807,6 +4807,34 @@ function toggleOutlinePanel(){
   outlinePanelOpen = !outlinePanelOpen;
   document.getElementById('outlinePanel').style.display = outlinePanelOpen ? 'block' : 'none';
 }
+
+// v1.55.0: the top-bar panels (⚙ settings, ☰ outline, 🔖 bookmarks, Index ▾) used to close only
+// when you tapped the SAME button again. Now a tap anywhere outside the open panel closes it too,
+// and so does Escape. A tap on a panel's own toggle button is left alone (that button's own
+// handler opens/closes it), and a tap inside a panel never closes it. The listener is capture-phase,
+// so it runs before the tapped element's own handler and never blocks it (no preventDefault).
+function anyTopBarPanelOpen(){
+  return !!(settingsPanelOpen || bmPanelOpen || outlinePanelOpen || indexPanelOpen);
+}
+function closeTopBarPanels(){
+  closeIndexPanel();
+  settingsPanelOpen = false; document.getElementById('settingsPanel').style.display = 'none';
+  bmPanelOpen = false; document.getElementById('bmPanel').style.display = 'none';
+  outlinePanelOpen = false; document.getElementById('outlinePanel').style.display = 'none';
+}
+document.addEventListener('click', (e)=>{
+  if(!anyTopBarPanelOpen()) return;
+  const t = e.target;
+  if(!t || !t.closest) return;
+  if(t.closest('#settingsPanel, #bmPanel, #outlinePanel, #indexPanel')) return; // inside a panel
+  if(t.closest('#settingsBtn, #bmBtn, #outlineBtn, #indexBtn')) return;         // a toggle button
+  closeTopBarPanels();
+}, true);
+document.addEventListener('keydown', (e)=>{
+  if(e.key !== 'Escape' || !anyTopBarPanelOpen()) return;
+  if(typeof cmdPaletteOpen !== 'undefined' && cmdPaletteOpen) return; // the palette owns Escape
+  closeTopBarPanels();
+});
 // container is the rendered .mdbody element — h1-h6 tags only ever
 // appear as the very first thing in whatever .mdblock they belong to (see
 // renderMarkdown's block classification), so each heading's own block

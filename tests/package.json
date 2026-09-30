@@ -6,7 +6,7 @@
   },
   "description": "Dev-only tests for Shelfmark. Not part of the deployed app (the service worker precaches an explicit file list). Run: cd tests && npm install && npm test",
   "scripts": {
-    "test": "node test_dispatcher.js && node test_dispatcher_containment.js && node test_links.js && node test_ext_wipe.js && node test_ext_sync.js && node test_kdf.js && node test_import_merge.js && node test_write_queue.js && node test_autolock.js && node test_inline_code.js && node test_item_binding.js && node test_fences.js && node test_undo_rekey.js && node test_export_stream.js && node test_commit_failure.js && node test_db_versionchange.js && node test_list_meta.js && node test_remote_media.js && node test_service_worker.js && node test_rekey_hold.js && node test_page_reading_prefs.js && node test_index_dropdown.js"
+    "test": "node test_dispatcher.js && node test_dispatcher_containment.js && node test_links.js && node test_ext_wipe.js && node test_ext_sync.js && node test_kdf.js && node test_import_merge.js && node test_write_queue.js && node test_autolock.js && node test_inline_code.js && node test_item_binding.js && node test_fences.js && node test_undo_rekey.js && node test_export_stream.js && node test_commit_failure.js && node test_db_versionchange.js && node test_list_meta.js && node test_remote_media.js && node test_service_worker.js && node test_rekey_hold.js && node test_page_reading_prefs.js && node test_index_dropdown.js && node test_panel_outside_click.js"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.0.0",
