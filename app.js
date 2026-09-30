@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.55.0';
+const APP_VERSION = '1.55.1';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3720,14 +3720,23 @@ function replaceInlineCode(text, fn){
 // ends its code as `foo()```' still closes. An opener with no closer stays
 // plain text. renderMarkdown, stripCodeForTags and noteInCodeFence all use
 // this one pattern so the reading view, the Tags page and the editor agree.
-const FENCE_SRC = '^([ \\t]*)```(\\w*)\\n?([\\s\\S]*?)```';
+// v1.55.1: a fence may be 3 OR MORE backticks, and the closer is preferred to be a line of its own with
+// at least as many backticks as the opener (CommonMark). So a block whose content itself contains ```
+// (a note about fences, a script that writes markdown) is wrapped in ```` and no longer ends early.
+// If no own-line closer exists, the old rule applies (next same-length run anywhere) so legacy notes still close.
+// Two alternatives = groups 1-4 (strict) or 5-8 (legacy); always go through replaceFences(), which hides that.
+const FENCE_SRC = '^([ \\t]*)(`{3,})(\\w*)\\n?([\\s\\S]*?)(?:^|\\n)[ \\t]*\\2`*[ \\t\\r]*$'
+                + '|^([ \\t]*)(`{3,})(\\w*)\\n?([\\s\\S]*?)\\6';
 function fenceRegex(){ return new RegExp(FENCE_SRC, 'gm'); }
+function replaceFences(str, fn){
+  return str.replace(fenceRegex(), (m, ...g)=> g[0] !== undefined ? fn(m, g[0], g[2], g[3]) : fn(m, g[4], g[6], g[7]));
+}
 // Strips fenced and inline code out of the raw text before tag-matching, so
 // a "#" typed inside a code sample (e.g. a shell flag or C# in a snippet)
 // is never picked up as a tag. Only used for extraction — never written
 // back, and never shown to the user.
 function stripCodeForTags(raw){
-  return replaceInlineCode(raw.replace(fenceRegex(), (m, indent)=>indent + ' '), ()=>' ');
+  return replaceInlineCode(replaceFences(raw, (m, indent)=>indent + ' '), ()=>' ');
 }
 // Every distinct tag in one note, de-duplicated case-insensitively (so
 // "#Idea" and "#idea" count as the same tag) — the first-seen casing is
@@ -5391,7 +5400,7 @@ function renderMarkdown(src, linkTypes){
   // `s` afterwards. `\u0000` can't appear in normal note text, so it's a
   // safe marker.
   const codeBlocks = [];
-  s = s.replace(fenceRegex(), (_, indent, lang, code)=>{
+  s = replaceFences(s, (_, indent, lang, code)=>{
     // ```index — a live category index (v1.48.0), not a code sample.
     if(lang === 'index'){
       codeBlocks.push(renderShelfIndex(unescapeHtml(code), linkTypes));

@@ -69,4 +69,12 @@ for(let i=0;i<400;i++){
 }
 ok(bad===0,'400 random fence/backtick mixes: no throw, no leaked placeholder, <pre> and <code> stay balanced ('+bad+' bad)');
 
+// 8. v1.55.1: longer fences wrap content that itself contains ```
+{
+  const T4='````';
+  let h2=R(T4+'bat\nSet-Content -Value "@echo off\n'+T+'\ninner fence line\n'+T+'\necho.\n\n:: after blank\n'+T4+'\n\nOutside text');
+  ok(blocks(h2)===1&&inCode(h2,'inner fence line')&&inCode(h2,':: after blank')&&!inCode(h2,'Outside text'),'4-backtick block keeps inner ``` lines as code and closes only at its own 4-backtick line');
+  h2=R(T+'\nline one\n\nline after blank\n'+T+'\nout');
+  ok(blocks(h2)===1&&inCode(h2,'line after blank'),'a blank line inside a block does not end it');
+}
 console.log(fails?('\n'+fails+' FAILED of '+n):('\nALL '+n+' PASSED')); process.exit(fails?1:0);
