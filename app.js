@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.55.1';
+const APP_VERSION = '1.55.2';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -5400,19 +5400,30 @@ function renderMarkdown(src, linkTypes){
   // `s` afterwards. `\u0000` can't appear in normal note text, so it's a
   // safe marker.
   const codeBlocks = [];
-  s = replaceFences(s, (_, indent, lang, code)=>{
+  // v1.55.2: blank lines INSIDE a block used to cut it in two — the `split(/\n{2,}/)` at the bottom of this
+  // function ran on the spliced-in HTML, so the Copy button only covered the part above the first blank line
+  // and the rest rendered as loose paragraphs. Each blank-line run inside the finished HTML is swapped for
+  // \u0001 (put back as a real blank line at the very end), and the reader's block numbers still count those
+  // runs, so bookmarks / paragraph edit / task checkboxes keep matching the raw source. \u0002 stands for a
+  // run that trimming removed at a block edge: it counts but prints nothing.
+  const shield = (html, whole)=>{
+    let n = (whole.match(/\n{2,}/g) || []).length;
+    const out = html.replace(/\n{2,}/g, ()=>{ n--; return '\u0001'; });
+    return out + (n > 0 ? '\u0002'.repeat(n) : '');
+  };
+  s = replaceFences(s, (whole, indent, lang, code)=>{
     // ```index — a live category index (v1.48.0), not a code sample.
     if(lang === 'index'){
-      codeBlocks.push(renderShelfIndex(unescapeHtml(code), linkTypes));
+      codeBlocks.push(shield(renderShelfIndex(unescapeHtml(code), linkTypes), whole));
       return indent + `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
     }
     const langLabel = lang ? escapeHtml(lang) : '';
-    codeBlocks.push(
+    codeBlocks.push(shield(
       `<div class="code-block">`
       + `<div class="code-bar"><span class="code-lang">${langLabel}</span>`
       + `<button class="code-copy" data-on-click="copyCodeBlock" data-args-click='["$el"]'>Copy</button></div>`
       + `<pre><code>${code.trim()}</code></pre></div>`
-    );
+    , whole));
     return indent + `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
   });
   // H1-H6 (v1.37.0; was H1-H3 only, so "#### x" used to show as literal text).
@@ -5524,7 +5535,10 @@ function renderMarkdown(src, linkTypes){
   // "$'" becomes "$&#39;") came out garbled. A single pass also never
   // re-reads inserted HTML, so nothing inside a block can pose as a placeholder.
   s = s.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (m, i)=> codeBlocks[+i] !== undefined ? codeBlocks[+i] : '').replace(/\u0000/g, '');
-  return s.split(/\n{2,}/).map((block,idx)=>{
+  let blockNo = 0; // raw-source block number: one per blank-line-separated chunk, incl. runs hidden inside code
+  return s.split(/\n{2,}/).map(block=>{
+    const idx = blockNo;
+    blockNo += 1 + (block.match(/[\u0001\u0002]/g) || []).length;
     let html;
     if(/^<h[1-6]/.test(block)){
       // A heading with text on the lines right under it (no blank line) is
@@ -5612,7 +5626,7 @@ function renderMarkdown(src, linkTypes){
       html = `<ul${isTaskList ? ' class="task-list"' : ''}>${items}</ul>`;
     } else html = `<p>${mdBrLines(block)}</p>`;
     return `<div class="mdblock" data-idx="${idx}"><button class="bm-btn" data-on-click="toggleBookmark" data-args-click="[${Number(idx)}]" title="Bookmark this spot">&#128278;</button>${html}</div>`;
-  }).join('\n');
+  }).join('\n').replace(/\u0001/g, '\n\n').replace(/\u0002/g, '');
 }
 
 // A tap on a checklist checkbox re-splits curNoteRaw the same way

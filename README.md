@@ -200,6 +200,14 @@ most common reason the two look out of sync.
 
 ## Changelog
 
+- **v1.55.2** (2026-09-30) — A code block with blank lines inside it is now one block, with one Copy button for all of it.
+  - Before: the reader split the note at every blank line after the code was already turned into HTML, so a
+    block with a blank line in it was cut in two. Copy only covered the part above the first blank line, and
+    the rest showed as loose paragraphs. Now blank lines inside a block are protected while the note is split,
+    and block numbers still match the raw text, so bookmarks, paragraph edit and task checkboxes stay aligned.
+  - Also (v1.55.1): a fence can be 4+ backticks and closes on its own line, so code that itself contains three
+    backticks can be wrapped in four.
+  - No data-format change. Tests: `tests/test_fences.js` (35 checks).
 - **v1.55.0** (2026-09-30) — Top-bar panels close on an outside tap or Escape.
   - Before: ⚙ settings, ☰ outline, 🔖 bookmarks and the Index ▾ dropdown closed only by tapping their own
     button again. Now one capture-phase `click` listener closes whichever is open when the tap lands outside
