@@ -7,9 +7,9 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
-- **Quotes in the outline (v1.56.0).** A plain quote block (`> text`, the green-bar quote) now also appears in
-  the ☰ outline, as a small italic row with a green bar, listed under the heading above it (first line only,
-  shortened). Tap it to jump there. Callouts (`> [!note]`) are not listed.
+- **Callouts in the outline (v1.56.2).** A callout card (`> [!note] Title`, any type word) appears in the ☰
+  outline as a small italic row with a green bar, showing the card's title, listed under the heading above it.
+  Tap it to jump there. Plain quotes (`> text`) are not listed (v1.56.0 listed them; v1.56.2 removed that).
 
 - **Tap outside to close panels (v1.55.0).** The ⚙ / ☰ / 🔖 panels and the Index ▾ dropdown in the reader top
   bar now close when you tap anywhere outside them, or press Escape — not only by tapping the same button
@@ -206,6 +206,7 @@ most common reason the two look out of sync.
 
 - **v1.56.0** (2026-09-30) — Plain quote blocks are listed in the ☰ outline next to the headings.
 - **v1.56.1** (2026-09-30) — Callout type can now be any word, including Chinese (`> [!重装流程]`); before, only letters/digits/underscore worked and anything else showed as a plain italic quote with the `!`.
+- **v1.56.2** (2026-09-30) — The ☰ outline now lists callout cards (by title) instead of plain quotes.
   - Each quote shows as an italic row with a green bar, under the heading it sits below; tap to jump. Only
     the first line is shown (80 characters at most). Callouts are not listed. Nothing is stored.
 

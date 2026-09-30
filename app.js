@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.56.1';
+const APP_VERSION = '1.56.2';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -4849,20 +4849,24 @@ document.addEventListener('keydown', (e)=>{
 // renderMarkdown's block classification), so each heading's own block
 // carries the data-idx that jumpBookmark's scroll-to logic already uses.
 function buildOutline(container){
-  // v1.56.0: plain quote blocks ("> text", the green-bar quote) are listed too, as a small
-  // italic row filed under the heading above them. Callouts are not blockquotes, so they
-  // are not listed. A quote's row shows its first line only, shortened.
+  // v1.56.2: callout cards (\"> [!type] Title\") are listed as a small italic row filed under the
+  // heading above them, showing the card's title. Plain quotes (\"> text\") are NOT listed
+  // (they were in v1.56.0/v1.56.1).
   const outline = [];
   let curLevel = 0;
-  container.querySelectorAll('h1, h2, h3, h4, h5, h6, blockquote').forEach(el=>{
+  container.querySelectorAll('h1, h2, h3, h4, h5, h6, .callout').forEach(el=>{
     const block = el.closest('.mdblock');
     if(!block) return;
-    if(el.tagName === 'BLOCKQUOTE'){
-      const clone = el.cloneNode(true);
-      clone.querySelectorAll('br').forEach(b=>b.replaceWith('\n'));
-      let text = (clone.textContent.split('\n').map(l=>l.trim()).find(Boolean)) || '';
+    if(el.tagName[0] !== 'H'){
+      const t = el.querySelector('.callout-title');
+      let text = '';
+      if(t){
+        const clone = t.cloneNode(true);
+        clone.querySelectorAll('.callout-icon').forEach(i=>i.remove());
+        text = clone.textContent.trim();
+      }
       if(text.length > 80) text = text.slice(0, 80).trimEnd() + '…';
-      outline.push({ idx: Number(block.dataset.idx), level: Math.min(6, curLevel + 1), text, quote: true });
+      outline.push({ idx: Number(block.dataset.idx), level: Math.min(6, curLevel + 1), text, callout: true });
       return;
     }
     curLevel = Number(el.tagName[1]);
@@ -4889,7 +4893,7 @@ function updateOutlineUI(outline){
   panel.innerHTML = `<div class="outline-tools"><button type="button" data-on-click="foldAllHeadings" data-args-click='[true]'>Collapse all</button>`
     + `<button type="button" data-on-click="foldAllHeadings" data-args-click='[false]'>Expand all</button></div>`
     + outline.map(o=>
-    `<button type="button" class="outline-row" data-level="${o.level}"${o.quote ? ' data-kind="quote"' : ''} data-on-click="jumpOutline" data-args-click="[${Number(o.idx)}]">${escapeHtml(o.text) || (o.quote ? '(empty quote)' : '(untitled heading)')}</button>`
+    `<button type="button" class="outline-row" data-level="${o.level}"${o.callout ? ' data-kind="callout"' : ''} data-on-click="jumpOutline" data-args-click="[${Number(o.idx)}]">${escapeHtml(o.text) || (o.callout ? '(untitled callout)' : '(untitled heading)')}</button>`
   ).join('');
 }
 
