@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.58.1';
+const APP_VERSION = '1.58.2';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1693,10 +1693,30 @@ async function beginImport(info){
     onlyNew: importOnlyNew, alreadyHad:0,
     added:0, updated:0, keptNewer:0, unreadable:0, stoppedOnQuota:false };
 }
+// v1.58.2: data: URI -> Blob without fetch(); base64 is decoded in slices so a large
+// audio/PDF never needs a second full-size copy as one string.
+function dataUrlToBlob(u, fallbackMime){
+  const comma = u.indexOf(',');
+  if(!u.startsWith('data:') || comma < 0) throw new Error('not a data URL');
+  const head = u.slice(5, comma);
+  const isB64 = /;base64$/i.test(head);
+  let mime = head.replace(/;base64$/i, '').split(';')[0].trim();
+  if(!mime || mime === 'application/octet-stream') mime = fallbackMime || mime || 'application/octet-stream';
+  if(!isB64) return new Blob([decodeURIComponent(u.slice(comma + 1))], { type: mime });
+  const parts = [];
+  const STEP = 4 * 65536; // multiple of 4 so every slice is valid base64 on its own
+  for(let i = comma + 1; i < u.length; i += STEP){
+    const bin = atob(u.slice(i, i + STEP).replace(/\s+/g, ''));
+    const arr = new Uint8Array(bin.length);
+    for(let k = 0; k < bin.length; k++) arr[k] = bin.charCodeAt(k);
+    parts.push(arr);
+  }
+  return new Blob(parts, { type: mime });
+}
 // Returns false when the import must stop (storage full), true otherwise.
 async function importOneItem(s, it){
   const existingItems = s.existingItems;
-  if(!it || !KNOWN_ITEM_TYPES.has(it.type)){ s.unreadable++; return true; }
+  if(!it || !KNOWN_ITEM_TYPES.has(it.type)){ s.unreadable++; (s.unreadableTitles = s.unreadableTitles || []).push((it && it.title) || 'Untitled'); return true; }
   const safeId = it.id ? sanitizeImportedId(it.id) : null;
   let existing = safeId ? existingItems.find(x=>x.id===safeId) : null;
   if(!existing){
@@ -1719,11 +1739,12 @@ async function importOneItem(s, it){
     // backup must still carry a data: URI.
     if(content instanceof Blob){ /* already decrypted bytes */ }
     else {
-      if(typeof content !== 'string' || !content.startsWith('data:')){ s.unreadable++; return true; }
-      try{
-        const res = await fetch(content);
-        content = await res.blob();
-      }catch(err){ s.unreadable++; return true; }
+      if(typeof content !== 'string' || !content.startsWith('data:')){ s.unreadable++; (s.unreadableTitles = s.unreadableTitles || []).push(it.title || 'Untitled'); return true; }
+      // v1.58.2: decode the data: URI ourselves instead of fetch(dataUri). On phones fetch()
+      // fails on big data URIs (a lossless .flac is tens of MB), which made those items
+      // "unreadable" even though the backup was fine.
+      try{ content = dataUrlToBlob(content, it.mime); }
+      catch(err){ s.unreadable++; (s.unreadableTitles = s.unreadableTitles || []).push(it.title || 'Untitled'); return true; }
     }
   }
   const id = existing ? existing.id : (safeId || Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1750,7 +1771,10 @@ function importSummaryParts(s){
   if(s.updated) parts.push(`updated ${s.updated} existing item${s.updated===1?'':'s'}`);
   if(s.alreadyHad) parts.push(`skipped ${s.alreadyHad} item${s.alreadyHad===1?'':'s'} already on your shelf`);
   if(s.keptNewer) parts.push(`left ${s.keptNewer} item${s.keptNewer===1?'':'s'} unchanged because your shelf already has a newer copy`);
-  if(s.unreadable) parts.push(`skipped ${s.unreadable} item${s.unreadable===1?'':'s'} that couldn't be read (unknown type or damaged data)`);
+  if(s.unreadable){
+    const names = (s.unreadableTitles || []).slice(0, 3).map(t=>'\u201c'+String(t).slice(0, 40)+'\u201d').join(', ');
+    parts.push(`skipped ${s.unreadable} item${s.unreadable===1?'':'s'} that couldn't be read (unknown type or damaged data)` + (names ? ': ' + names + ((s.unreadableTitles.length > 3) ? ', \u2026' : '') : ''));
+  }
   return parts;
 }
 function importCountsText(s, lead){
