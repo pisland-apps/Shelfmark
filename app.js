@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.57.1';
+const APP_VERSION = '1.58.0';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1776,13 +1776,15 @@ async function mergeImportedItems(items, info){
 
 const FONT_MAP = {serif:"Georgia,'Times New Roman',serif", sans:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", mono:"'SFMono-Regular',Consolas,Menlo,monospace", zh:"'PingFang SC','Heiti SC','Microsoft YaHei',sans-serif"};
 const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
+// v1.58.0: reading-column width. Only affects screens wider than the value; phones look the same.
+const WIDTH_MAP = {narrow:'640px', wide:'960px', full:'100%'};
 // Remote media (v1.52.4): a note's ![](https://...) image or https audio link is never
 // loaded by the app. The page's Content-Security-Policy (img-src / media-src allow only
 // 'self', data: and blob:) blocks it anyway, so nothing can reach out from a note, whether
 // it was typed, imported from a backup or synced from a folder. Such a link renders as a
 // plain link (see remoteMediaPlaceholder) that the person can open in a new tab. data:/blob:
 // media (pasted-in pictures, on-shelf audio links) still display in the note.
-let prefs = {theme:'auto', font:'serif', size:'m', loopAudio:false, itemSortMode:'newest', collapsedCats:[], tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
+let prefs = {theme:'auto', font:'serif', size:'m', width:'wide', loopAudio:false, itemSortMode:'newest', collapsedCats:[], tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -1803,7 +1805,8 @@ async function putPrefs(p){
 const READ_PREF_VALUES = {
   theme: ['auto','light','dark','sepia'],
   font:  Object.keys(FONT_MAP),
-  size:  Object.keys(SIZE_MAP)
+  size:  Object.keys(SIZE_MAP),
+  width: Object.keys(WIDTH_MAP)
 };
 let curReadOverride = null;
 let settingsScope = 'app'; // 'app' | 'page'
@@ -1823,6 +1826,7 @@ function applyPrefs(p){
   else document.documentElement.setAttribute('data-theme', e.theme);
   document.documentElement.style.setProperty('--read-font', FONT_MAP[e.font] || FONT_MAP.serif);
   document.documentElement.style.setProperty('--read-size', SIZE_MAP[e.size] || SIZE_MAP.m);
+  document.documentElement.style.setProperty('--read-width', WIDTH_MAP[e.width] || WIDTH_MAP.wide);
   const loopBtn = document.getElementById('loopBtn');
   if(loopBtn) loopBtn.classList.toggle('active', !!p.loopAudio);
 }
@@ -1874,7 +1878,8 @@ function refreshSettingsUI(){
       if(b.dataset.scope){ b.classList.toggle('active', settingsScope === b.dataset.scope); return; }
       if(!b.dataset.v) return; // the Reset button
       const key = ['auto','light','dark','sepia'].includes(b.dataset.v) ? 'theme'
-        : ['serif','sans','mono','zh'].includes(b.dataset.v) ? 'font' : 'size';
+        : ['serif','sans','mono','zh'].includes(b.dataset.v) ? 'font'
+        : ['narrow','wide','full'].includes(b.dataset.v) ? 'width' : 'size';
       b.classList.toggle('active', eff[key] === b.dataset.v);
     });
   });
