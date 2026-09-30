@@ -218,6 +218,7 @@ most common reason the two look out of sync.
     the first line is shown (80 characters at most). Callouts are not listed. Nothing is stored.
 - **v1.57.0** (2026-09-30) — On wide screens the ☰ outline docks as a left column beside the note (open by default; ☰ shows/hides it, remembered). Phones keep the dropdown.
   - New pref `tocSideHidden` (default false). The dropdown's outside-click / Escape closing is unchanged and does not touch the docked column.
+- **v1.57.1** (2026-09-30) — Outline callout rows are always flush-left (no longer nested under the heading above). A callout with no title now shows its type exactly as typed (`[!CosyVoice-300M-Instruct]` was shown as `Cosyvoice-300m-instruct`).
 
 - **v1.55.2** (2026-09-30) — A code block with blank lines inside it is now one block, with one Copy button for all of it.
   - Before: the reader split the note at every blank line after the code was already turned into HTML, so a

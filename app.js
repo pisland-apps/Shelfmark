@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.57.0';
+const APP_VERSION = '1.57.1';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -4886,8 +4886,8 @@ document.addEventListener('keydown', (e)=>{
 // renderMarkdown's block classification), so each heading's own block
 // carries the data-idx that jumpBookmark's scroll-to logic already uses.
 function buildOutline(container){
-  // v1.56.2: callout cards (\"> [!type] Title\") are listed as a small italic row filed under the
-  // heading above them, showing the card's title. Plain quotes (\"> text\") are NOT listed
+  // v1.56.2: callout cards (\"> [!type] Title\") are listed as a small italic row showing the card's
+  // title (v1.57.1: always flush-left, not nested under the heading above). Plain quotes (\"> text\") are NOT listed
   // (they were in v1.56.0/v1.56.1).
   const outline = [];
   let curLevel = 0;
@@ -4903,7 +4903,7 @@ function buildOutline(container){
         text = clone.textContent.trim();
       }
       if(text.length > 80) text = text.slice(0, 80).trimEnd() + '…';
-      outline.push({ idx: Number(block.dataset.idx), level: Math.min(6, curLevel + 1), text, callout: true });
+      outline.push({ idx: Number(block.dataset.idx), level: 1, text, callout: true }); // v1.57.1: always flush-left
       return;
     }
     curLevel = Number(el.tagName[1]);
@@ -5631,7 +5631,7 @@ function renderMarkdown(src, linkTypes){
           warning: { icon:'&#9888;&#65039;', label:'Warning' },
           idea:    { icon:'&#128161;', label:'Idea' }
         };
-        const info = CALLOUT_INFO[kind] || { icon:'&#128204;', label: kind.charAt(0).toUpperCase()+kind.slice(1) };
+        const info = CALLOUT_INFO[kind] || { icon:'&#128204;', label: calloutMatch[1] };  // v1.57.1: keep the type as typed (was lowercased + capitalised)
         const fold = calloutMatch[2];  // '' = static card, '-' = foldable starting closed, '+' = foldable starting open
         const titleText = calloutMatch[3].trim() || info.label;
         const bodyHtml = lines.slice(1).join('<br>');
