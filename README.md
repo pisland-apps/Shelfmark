@@ -7,6 +7,8 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Back button, Esc key, ↑ to top (v1.59.0 – v1.59.2).** The phone Back button and the Esc key go back one step (editor → note → Shelf; also popups and panels) instead of closing the app / doing nothing; a round ↑ button appears when you scroll a long page.
+- **Start page (v1.59.1).** Ctrl+K → "Start page…" picks what opens after unlocking: the Shelf (default), the last page you opened, one page you choose, or the Tags page.
 - **Table of contents beside the note on wide screens (v1.57.0).** On a PC or a tablet held sideways
   (window at least 800px wide) the ☰ outline is no longer a dropdown: it sits as a column on the left of the
   note, open by default, and stays there while you read. Tap a row to jump; Collapse all / Expand all stay at
@@ -223,6 +225,19 @@ most common reason the two look out of sync.
   - New pref `width` (default `wide`); per-note `readerPrefs.width`. `--read-width` CSS variable drives `.mdbody`.
 - **v1.58.1** (2026-09-30) — New command **Import from JSON — only new items** (Ctrl+K). It adds what is not on the shelf yet and leaves everything already there untouched, even when the backup's copy is newer. The ordinary **Import from JSON** still updates existing items as before.
   - "Already on the shelf" = same id, or same title + type + added date (the existing match rule). The summary says `skipped N items already on your shelf`. Works for plain JSON, encrypted JSON and the chunked `.shelfmark` file. No data-format change.
+- **v1.58.2** (2026-09-30) — Fix: restoring a JSON backup on a phone skipped some audio files ("couldn't be read") even though the backup was fine and the same file restored on a PC. Large items (a lossless .flac is tens of MB) were turned back into files with `fetch(dataUri)`, which phones refuse for very big data URIs. The import now decodes the data URI itself, in slices. Also: the "skipped N items" message now names up to 3 of them.
+  - `tests/test_import_big_audio.js` (a 3 MB item imports with `fetch` blocked; a damaged item is named in the summary). No data-format change.
+- **v1.59.0** (2026-10-01) — Phone **Back** button now goes back one step instead of closing the app, and a floating **↑** button jumps to the top of a long page.
+  - Back closes the top-most open layer: zoomed picture, command palette, popup/sheet, top-bar panel, find bar, note editor, the open note, tags page, select mode. With nothing open, Back from the Shelf leaves the app as usual. Closing a screen with its own button still works as before. Back never cancels a running export / import.
+  - How: while anything is open there is exactly one extra history entry (`NAV` in `app.js`, a MutationObserver on the elements that show/hide those layers); it is added only after the first touch because Chrome skips history entries added before any interaction. After a reload (e.g. auto-lock) with a note open, one stale entry is stepped off at start.
+  - The ↑ button (`#toTopBtn`) shows after scrolling ~400px, on the Shelf, in a note / PDF, and on the Tags page, and rides above the mini-player and the select bar.
+  - `tests/test_back_button.js` (17 checks, plain node). No data-format change.
+- **v1.59.1** (2026-10-01) — New **Start page** setting (Ctrl+K → "Start page…"): what opens after unlocking. Shelf (default, unchanged if never picked), Last page I opened, A page I choose (any note/file; picked from a list), or the Tags page.
+  - New pref `startPage` (`{mode, id}`; removed again when Shelf is picked) and `lastOpenId` (only written while "Last page" is chosen). A page that was deleted falls back to the Shelf. Applied once per app start, after unlock.
+- **v1.59.2** (2026-10-01) — The **Esc** key goes back one step, same ladder as the phone Back button: leaves the note editor, then closes the open note, a popup, a panel, the find bar, and so on. One Esc, one layer; nothing open = nothing happens.
+  - Leaving the editor with Esc asks "Discard your unsaved changes?" only when there are some (same as the Cancel button). Esc is left alone inside a table cell being edited, while the `[[` note suggestions are open, on an open drop-down, and during IME input.
+  - Changes the old "Esc, then Tab moves focus to the toolbar" habit: with unsaved changes, answer No to the question and Tab is still free. Help text updated.
+  - `tests/test_esc_key.js` (13 checks, plain node).
 
 - **v1.55.2** (2026-09-30) — A code block with blank lines inside it is now one block, with one Copy button for all of it.
   - Before: the reader split the note at every blank line after the code was already turned into HTML, so a
@@ -789,7 +804,7 @@ most common reason the two look out of sync.
   selection → all selected lines indent / outdent two spaces; list line or
   single-line selection → that line; plain line → two spaces at the caret;
   Shift+Tab outdents the line. Esc then Tab still moves focus (no keyboard
-  trap). Help text updated.
+  trap; since v1.59.2 Esc also leaves the editor, see that entry). Help text updated.
 - **v1.44.0** (2026-09-28) — Drag-and-drop pictures into the note editor.
   Dropping image files on the textarea calls `insertNoteImageFile` (same path
   as paste and the 📷 button; several files go in one after another, each its

@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.59.1';
-const APP_VERSION_DATE = '2026-09-30';
+const APP_VERSION = '1.59.2';
+const APP_VERSION_DATE = '2026-10-01';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -2706,6 +2706,7 @@ async function openReader(id){
       <textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
       <div class="ebar">
         <div class="ebar-tools">
+          <button class="tool tool-esc" id="escEditBtn" data-on-click="cancelEditNote" title="Leave edit mode (asks first only if you have unsaved changes)" aria-label="Leave edit mode">Esc</button>
           <button class="tool" id="undoBtn" data-on-click="undoEdit" title="Undo">&#8617;</button>
           <button class="tool" id="redoBtn" data-on-click="redoEdit" title="Redo">&#8618;</button>
           <button class="tool" data-on-click="toggleBoldAtSelection" title="Bold"><b>B</b></button>
@@ -6904,6 +6905,27 @@ function navOnPop(){
     mo.observe(document.body, { childList: true });                                                   // the zoomed picture is appended to <body>
   }
 })();
+
+// ---- Esc key = one step back (v1.59.2) ----
+// Same ladder as the phone Back button (navLayers): a zoomed picture, the command palette, a popup
+// or sheet, a top-bar panel, the find bar, the note editor, the open note, the tags page, select mode.
+// One Esc closes one layer; with nothing open it does nothing. Leaving the note editor asks
+// "Discard your unsaved changes?" only when there are some (it is the same as the Cancel button).
+// Left alone on purpose: Esc inside a table cell being edited (cancels that cell), while the
+// [[ note suggestions are open (closes them), while a drop-down list is open, and during IME input.
+function onEscapeKey(e){
+  if(e.key !== 'Escape' || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+  if(e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  const t = e.target;
+  if(t && (t.isContentEditable || t.tagName === 'SELECT')) return;
+  if(wikiAC.open && wikiAC.items.length) return;
+  const layers = navLayers();
+  if(!layers.length) return;
+  e.preventDefault(); e.stopPropagation();
+  if(noteEditActive()) noteTabFree = true; // keep the old "Esc, then Tab leaves the box" working if the discard question is answered No
+  try{ layers[0](); }catch(err){ console.error('[esc] close failed:', err); }
+}
+document.addEventListener('keydown', onEscapeKey, true);
 
 // ---- Floating ↑ "back to top" button ----
 // Whatever scrolls on the current screen: the page itself on the shelf, #rcontent in the reader
