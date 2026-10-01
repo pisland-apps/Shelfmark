@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.59.2';
+const APP_VERSION = '1.60.0';
 const APP_VERSION_DATE = '2026-10-01';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -4371,9 +4371,7 @@ async function renderBacklinks(id, mountEl){
 // keeping a separate raw copy anywhere — the browser has already turned any
 // escaped entities (&lt; etc.) back into their literal characters by the
 // time this runs, so it's just the original code, verbatim.
-async function copyCodeBlock(btn){
-  const codeEl = btn.closest('.code-block').querySelector('code');
-  const text = codeEl.textContent;
+async function writeClipboardText(text){
   try{
     await navigator.clipboard.writeText(text);
   } catch(err){
@@ -4386,11 +4384,26 @@ async function copyCodeBlock(btn){
     try{ document.execCommand('copy'); } catch(e2){ /* best-effort only */ }
     document.body.removeChild(ta);
   }
-  const original = btn.textContent;
+}
+function flashCopied(btn){
+  if(btn._copyTimer) clearTimeout(btn._copyTimer);
+  else btn._copyOrig = btn.textContent;
   btn.textContent = 'Copied!';
   btn.classList.add('copied');
-  clearTimeout(btn._copyTimer);
-  btn._copyTimer = setTimeout(()=>{ btn.textContent = original; btn.classList.remove('copied'); }, 1500);
+  btn._copyTimer = setTimeout(()=>{ btn.textContent = btn._copyOrig; btn.classList.remove('copied'); btn._copyTimer = null; }, 1500);
+}
+async function copyCodeBlock(btn){
+  // v1.60.0: a ```lines block has one <code> per row; the top Copy button copies every row, one per line.
+  const codes = btn.closest('.code-block').querySelectorAll('code');
+  const text = [...codes].map(c=>c.textContent).join('\n');
+  await writeClipboardText(text);
+  flashCopied(btn);
+}
+// v1.60.0: the Copy button at the end of one row of a ```lines block — copies just that row.
+async function copyCodeLine(btn){
+  const codeEl = btn.closest('.cl-row').querySelector('code');
+  await writeClipboardText(codeEl.textContent);
+  flashCopied(btn);
 }
 
 // ---- Inserting a picture into a note ----
@@ -5516,6 +5529,20 @@ function renderMarkdown(src, linkTypes){
     // ```index — a live category index (v1.48.0), not a code sample.
     if(lang === 'index'){
       codeBlocks.push(shield(renderShelfIndex(unescapeHtml(code), linkTypes), whole));
+      return indent + `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
+    }
+    // v1.60.0: ```lines — same card, but every non-empty line is its own row with its own Copy button
+    // (the top Copy still copies all of them). Meant for lists of separate things to paste one at a time.
+    if(lang === 'lines'){
+      const rows = code.trim().split('\n').map(l=>l.replace(/\r$/, '')).filter(l=>l.trim())
+        .map(l=>`<div class="cl-row"><code>${l}</code>`
+          + `<button class="code-copy cl-copy" data-on-click="copyCodeLine" data-args-click='["$el"]'>Copy</button></div>`).join('');
+      codeBlocks.push(shield(
+        `<div class="code-block code-lines">`
+        + `<div class="code-bar"><span class="code-lang">lines</span>`
+        + `<button class="code-copy" data-on-click="copyCodeBlock" data-args-click='["$el"]'>Copy all</button></div>`
+        + `<div class="cl-body">${rows}</div></div>`
+      , whole));
       return indent + `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
     }
     const langLabel = lang ? escapeHtml(lang) : '';
@@ -6728,7 +6755,7 @@ const UI_ACTIONS = Object.freeze({
   openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
-  closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, createIndexNoteFromGuide,
+  closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,

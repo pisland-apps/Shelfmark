@@ -529,6 +529,12 @@
     color:var(--ink-soft);font-size:12px;padding:3px 9px;cursor:pointer;
   }
   .code-copy.copied{color:var(--ink);border-color:var(--ink);}
+  /* ```lines block (v1.60.0): one row per line, each with its own Copy */
+  .code-lines .cl-body{background:var(--card);font-size:13px;}
+  .code-lines .cl-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:1px solid var(--line);}
+  .code-lines .cl-row:first-child{border-top:none;}
+  .code-lines .cl-row code{flex:1;min-width:0;background:none;padding:0;border-radius:0;font-size:1em;white-space:pre-wrap;overflow-wrap:anywhere;}
+  .code-lines .cl-copy{flex:none;}
   .mdbody a{color:var(--md);}
   .mdbody del{color:var(--ink-soft);text-decoration-thickness:1.5px;}
   .mdbody mark.md-mark{background:rgba(255,213,74,.34);color:inherit;border-radius:3px;padding:0 2px;}
@@ -1241,6 +1247,8 @@ columns: 分类 | 笔记
       <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">💻</span>Code blocks</div>
             <p>Fence a block with three backticks; an optional language name after the first fence is shown as a label. Every block gets a one-tap Copy button.</p>
       <div class="code-block"><div class="code-bar"><span class="code-lang">js</span><button class="code-copy" disabled>Copy</button></div><pre><code>console.log("hello");</code></pre></div>
+      <p>Want to copy the lines one at a time? Write <code>lines</code> after the first fence. It stays one card, but each line gets its own Copy button (the top button, Copy all, still copies everything):</p>
+      <div class="code-block code-lines"><div class="code-bar"><span class="code-lang">lines</span><button class="code-copy" disabled>Copy all</button></div><div class="cl-body"><div class="cl-row"><code>first thing to paste</code><button class="code-copy cl-copy" disabled>Copy</button></div><div class="cl-row"><code>second thing to paste</code><button class="code-copy cl-copy" disabled>Copy</button></div></div></div>
       </section>
       <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">▦</span>Tables</div>
             <p><code>| Col | Col |</code> then a <code>| --- | --- |</code> row, then your data rows:</p>
