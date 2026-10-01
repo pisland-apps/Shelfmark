@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.63.0';
+const APP_VERSION = '1.64.0';
 const APP_VERSION_DATE = '2026-10-01';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -5648,9 +5648,24 @@ function renderMarkdown(src, linkTypes){
     // v1.60.0: ```lines — same card, but every non-empty line is its own row with its own Copy button
     // (the top Copy still copies all of them). Meant for lists of separate things to paste one at a time.
     if(lang === 'lines'){
-      const rows = code.trim().split('\n').map(l=>l.replace(/\r$/, '')).filter(l=>l.trim())
-        .map(l=>`<div class="cl-row"><code>${l}</code>`
-          + `<button class="code-copy cl-copy" data-on-click="copyCodeLine" data-args-click='["$el"]'>Copy</button></div>`).join('');
+      // v1.64.0: a line starting with "# " is a LABEL for the line right below it: shown as small text
+      // above that line in the same row, and left out of both Copy buttons. A label with nothing
+      // below it (or two labels in a row) is shown as a small text-only row with no Copy button.
+      const src = code.trim().split('\n').map(l=>l.replace(/\r$/, '')).filter(l=>l.trim());
+      const labelOf = l=>{ const m = /^\s*#[ \t]+(\S.*?)\s*$/.exec(l); return m ? m[1] : null; };
+      const copyBtn = `<button class="code-copy cl-copy" data-on-click="copyCodeLine" data-args-click='["$el"]'>Copy</button>`;
+      let rows = '';
+      for(let i = 0; i < src.length; i++){
+        const lab = labelOf(src[i]);
+        if(lab === null){ rows += `<div class="cl-row"><code>${src[i]}</code>${copyBtn}</div>`; continue; }
+        const next = i + 1 < src.length ? src[i + 1] : null;
+        if(next !== null && labelOf(next) === null){
+          rows += `<div class="cl-row"><div class="cl-main"><span class="cl-label">${lab}</span><code>${next}</code></div>${copyBtn}</div>`;
+          i++;
+        } else {
+          rows += `<div class="cl-row cl-labelonly"><span class="cl-label">${lab}</span></div>`;
+        }
+      }
       codeBlocks.push(shield(
         `<div class="code-block code-lines">`
         + `<div class="code-bar"><span class="code-lang">lines</span>`

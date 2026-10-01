@@ -579,6 +579,10 @@
   .code-lines .cl-row:first-child{border-top:none;}
   .code-lines .cl-row code{flex:1;min-width:0;background:none;padding:0;border-radius:0;font-size:1em;white-space:pre-wrap;overflow-wrap:anywhere;}
   .code-lines .cl-copy{flex:none;}
+  .code-lines .cl-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
+  .code-lines .cl-main code{flex:none;}
+  .code-lines .cl-label{font-size:11px;line-height:1.3;color:var(--ink-soft);font-family:inherit;}
+  .code-lines .cl-labelonly{padding:4px 10px;}
   .mdbody a{color:var(--md);}
   .mdbody del{color:var(--ink-soft);text-decoration-thickness:1.5px;}
   .mdbody mark.md-mark{background:rgba(255,213,74,.34);color:inherit;border-radius:3px;padding:0 2px;}
@@ -1291,8 +1295,8 @@ columns: 分类 | 笔记
       <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">💻</span>Code blocks</div>
             <p>Fence a block with three backticks; an optional language name after the first fence is shown as a label. Every block gets a one-tap Copy button.</p>
       <div class="code-block"><div class="code-bar"><span class="code-lang">js</span><button class="code-copy" disabled>Copy</button></div><pre><code>console.log("hello");</code></pre></div>
-      <p>Want to copy the lines one at a time? Write <code>lines</code> after the first fence. It stays one card, but each line gets its own Copy button (the top button, Copy all, still copies everything):</p>
-      <div class="code-block code-lines"><div class="code-bar"><span class="code-lang">lines</span><button class="code-copy" disabled>Copy all</button></div><div class="cl-body"><div class="cl-row"><code>first thing to paste</code><button class="code-copy cl-copy" disabled>Copy</button></div><div class="cl-row"><code>second thing to paste</code><button class="code-copy cl-copy" disabled>Copy</button></div></div></div>
+      <p>Want to copy the lines one at a time? Write <code>lines</code> after the first fence. It stays one card, but each line gets its own Copy button (the top button, Copy all, still copies everything): Start a line with <code># </code> to make it a small caption for the line below it: they share one row, and the caption is not copied.</p>
+      <div class="code-block code-lines"><div class="code-bar"><span class="code-lang">lines</span><button class="code-copy" disabled>Copy all</button></div><div class="cl-body"><div class="cl-row"><code>first thing to paste</code><button class="code-copy cl-copy" disabled>Copy</button></div><div class="cl-row"><code>second thing to paste</code><button class="code-copy cl-copy" disabled>Copy</button></div><div class="cl-row"><div class="cl-main"><span class="cl-label">a caption (typed as: # a caption)</span><code>third thing, with a caption</code></div><button class="code-copy cl-copy" disabled>Copy</button></div></div></div>
       </section>
       <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">▦</span>Tables</div>
             <p><code>| Col | Col |</code> then a <code>| --- | --- |</code> row, then your data rows:</p>
