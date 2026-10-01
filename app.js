@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.58.2';
+const APP_VERSION = '1.59.0';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -6627,7 +6627,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, createIndexNoteFromGuide,
@@ -6707,6 +6707,139 @@ const UI_ACTIONS = Object.freeze({
   }
 })();
 // UI-DISPATCHER-END>>
+
+// ============================================================================
+// v1.59.0 — (1) the phone's Back button steps back ONE screen instead of closing the app;
+//           (2) a floating ↑ button jumps to the top of a long page.
+//
+// Back button: the browser only knows about history entries, and this app never made any,
+// so Back left the app. Now, whenever something is open on top of the shelf (a note, the tags
+// page, a sheet/popup, a top-bar panel, the find bar, the note editor, select mode, the
+// command palette, a zoomed picture) ONE sentinel history entry exists; pressing Back
+// closes the top-most of those and, if more are still open, the sentinel is put back. With
+// nothing open there is no sentinel, so Back from the shelf leaves the app as usual.
+// Nothing here changes how any screen opens or closes: a MutationObserver watches the
+// elements that show/hide those layers, so the on-screen buttons keep working exactly as before
+// (closing by button just quietly removes the sentinel again).
+// ============================================================================
+const NAV_OVERLAYS = [ // DOM order = stacking order (a later one sits on top of an earlier one)
+  ['overlay', closeAdd],
+  ['editOverlay', closeEdit],
+  ['exportOverlay', ()=>{ if(!exportRunning) closeExportModal(); }],   // Back never cancels a running export
+  ['guideOverlay', closeGuide],
+  ['secInfoOverlay', closeSecInfo],
+  ['authOverlay', closeAuthModal],
+  ['busyOverlay', ()=>{}],                                              // a running job: Back does nothing
+  ['importPassOverlay', ()=>{ if(!importRunning) closeImportPassModal(); }],
+  ['audioLinkOverlay', closeAudioLinkPicker],
+  ['mdHelpOverlay', closeMarkdownHelp],
+  ['moveCatOverlay', closeMoveCategory]
+];
+const NAV = { depth: 0, silent: 0, timer: null, silentTimer: null };
+function navLayers(){
+  const out = []; // top-most first; each entry is the function that closes that layer
+  const lock = document.getElementById('lockScreen');
+  if(!lock || !lock.classList.contains('hidden')) return out; // locked: nothing to step back through
+  const shown = el => !!el && getComputedStyle(el).display !== 'none';
+  if(imgZoomEl) out.push(closeImageZoom);
+  if(cmdPaletteOpen) out.push(closeCommandPalette);
+  for(let i = NAV_OVERLAYS.length - 1; i >= 0; i--){
+    if(shown(document.getElementById(NAV_OVERLAYS[i][0]))) out.push(NAV_OVERLAYS[i][1]);
+  }
+  if(anyTopBarPanelOpen()) out.push(closeTopBarPanels);
+  if(findOpen) out.push(closeFindBar);
+  const rd = document.getElementById('reader'), tg = document.getElementById('tagsPage');
+  if(tg && tg.classList.contains('open')) out.push(closeTagsPage);
+  if(rd && rd.classList.contains('open')){
+    if(noteEditActive()) out.push(cancelEditNote); // asks "Discard your unsaved changes?" only when there are some
+    out.push(closeReader);
+  }
+  if(selectMode) out.push(exitSelectMode);
+  return out;
+}
+function navSchedule(ms){ clearTimeout(NAV.timer); NAV.timer = setTimeout(navSync, ms); }
+function navSync(){
+  NAV.timer = null;
+  if(NAV.silent > 0) return;                       // our own history.go() has not landed yet
+  const want = navLayers().length ? 1 : 0;
+  if(NAV.depth < want){
+    NAV.depth = 1;
+    try{ history.pushState({ smNav: 1 }, ''); }catch(e){ NAV.depth = 0; }
+  }else if(NAV.depth > want){
+    NAV.depth = 0;
+    NAV.silent++;
+    // Safety net: if the browser never reports the move, don't stay stuck waiting for it.
+    clearTimeout(NAV.silentTimer);
+    NAV.silentTimer = setTimeout(()=>{ NAV.silent = 0; navSchedule(0); }, 800);
+    try{ history.back(); }catch(e){ NAV.silent = 0; }
+  }
+}
+function navOnPop(){
+  if(NAV.silent > 0){                              // the pop we asked for (a layer was closed by its own button)
+    NAV.silent--; clearTimeout(NAV.silentTimer); navSchedule(0); return;
+  }
+  if(NAV.depth > 0){                               // the person pressed Back
+    NAV.depth = 0;
+    const layers = navLayers();
+    if(layers.length){ try{ layers[0](); }catch(err){ console.error('[back] close failed:', err); } }
+  }
+  navSchedule(40);                                 // re-add the sentinel if something is still open
+}
+(function installBackButton(){
+  if(typeof history === 'undefined' || !history.pushState) return;
+  // A reload (e.g. the auto-lock) while something was open leaves a stale sentinel behind: step
+  // back off it once so the first Back press isn't wasted on it.
+  try{ if(history.state && history.state.smNav){ history.back(); return; } }catch(e){}
+  window.addEventListener('popstate', navOnPop);
+  if(typeof MutationObserver === 'function'){
+    const mo = new MutationObserver(()=>{ navSchedule(40); toTopSchedule(); });
+    const attrs = { attributes: true, attributeFilter: ['style', 'class'] };
+    const ids = NAV_OVERLAYS.map(o=>o[0]).concat(['reader','tagsPage','cmdPalette','settingsPanel','bmPanel','outlinePanel','indexPanel','findBar','lockScreen','selectBar']);
+    ids.forEach(id=>{ const el = document.getElementById(id); if(el) mo.observe(el, attrs); });
+    const rc = document.getElementById('rcontent');
+    if(rc) mo.observe(rc, { attributes: true, attributeFilter: ['style', 'class'], subtree: true }); // the editor appears inside it
+    mo.observe(document.body, { childList: true });                                                   // the zoomed picture is appended to <body>
+  }
+})();
+
+// ---- Floating ↑ "back to top" button ----
+// Whatever scrolls on the current screen: the page itself on the shelf, #rcontent in the reader
+// (plus the text box while editing), #tagsPageBody on the tags page.
+function scrollersNow(){
+  const g = id => document.getElementById(id);
+  const tg = g('tagsPage'), rd = g('reader');
+  if(tg && tg.classList.contains('open')) return [g('tagsPageBody')];
+  if(rd && rd.classList.contains('open')){
+    const list = [g('rcontent')];
+    if(noteEditActive()) list.unshift(g('mdEditArea'));
+    return list;
+  }
+  return [document.scrollingElement || document.documentElement];
+}
+const TOTOP_SHOW_AFTER = 400; // px scrolled before the arrow appears
+let toTopTimer = null;
+function toTopSchedule(){
+  if(toTopTimer) return;
+  toTopTimer = setTimeout(()=>{ toTopTimer = null; toTopUpdate(); }, 60);
+}
+function toTopUpdate(){
+  const b = document.getElementById('toTopBtn');
+  if(!b) return;
+  const lock = document.getElementById('lockScreen');
+  const locked = !lock || !lock.classList.contains('hidden');
+  const far = !locked && scrollersNow().some(s => s && s.scrollTop > TOTOP_SHOW_AFTER);
+  b.classList.toggle('show', far);
+}
+function scrollToTop(){
+  const reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  scrollersNow().forEach(s=>{
+    if(!s || s.scrollTop <= 0) return;
+    if(!reduce && typeof s.scrollTo === 'function') s.scrollTo({ top: 0, behavior: 'smooth' });
+    else s.scrollTop = 0;
+  });
+}
+// scroll events don't bubble, but a capture listener on the document sees every scroller
+document.addEventListener('scroll', toTopSchedule, { capture: true, passive: true });
 
 extLoad();
 window.addEventListener('focus', ()=>{ extSync(false); }); // back from Obsidian: refresh (no prompt)
