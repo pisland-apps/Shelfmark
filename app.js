@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.60.0';
+const APP_VERSION = '1.61.0';
 const APP_VERSION_DATE = '2026-10-01';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1822,7 +1822,7 @@ const WIDTH_MAP = {narrow:'640px', wide:'960px', full:'100%'};
 // it was typed, imported from a backup or synced from a folder. Such a link renders as a
 // plain link (see remoteMediaPlaceholder) that the person can open in a new tab. data:/blob:
 // media (pasted-in pictures, on-shelf audio links) still display in the note.
-let prefs = {theme:'auto', font:'serif', size:'m', width:'wide', loopAudio:false, itemSortMode:'newest', collapsedCats:[], tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
+let prefs = {theme:'auto', font:'serif', size:'m', width:'wide', sections:'plain', secLevel:'lv-auto', loopAudio:false, itemSortMode:'newest', collapsedCats:[], tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -1844,7 +1844,10 @@ const READ_PREF_VALUES = {
   theme: ['auto','light','dark','sepia'],
   font:  Object.keys(FONT_MAP),
   size:  Object.keys(SIZE_MAP),
-  width: Object.keys(WIDTH_MAP)
+  width: Object.keys(WIDTH_MAP),
+  // v1.61.0: section cards. 'plain' = as before; 'cards' = each section is drawn as a card.
+  sections: ['plain','cards'],
+  secLevel: ['lv-auto','lv1','lv2','lv3']
 };
 let curReadOverride = null;
 let settingsScope = 'app'; // 'app' | 'page'
@@ -1865,6 +1868,11 @@ function applyPrefs(p){
   document.documentElement.style.setProperty('--read-font', FONT_MAP[e.font] || FONT_MAP.serif);
   document.documentElement.style.setProperty('--read-size', SIZE_MAP[e.size] || SIZE_MAP.m);
   document.documentElement.style.setProperty('--read-width', WIDTH_MAP[e.width] || WIDTH_MAP.wide);
+  if(e.sections === 'cards') document.documentElement.setAttribute('data-sections', 'cards');
+  else document.documentElement.removeAttribute('data-sections');
+  curSecLevel = READ_PREF_VALUES.secLevel.includes(e.secLevel) ? e.secLevel : 'lv-auto';
+  const mdv = document.getElementById('mdView');
+  if(mdv && mdv.querySelector('.mdblock')) applySectionCards(mdv);
   const loopBtn = document.getElementById('loopBtn');
   if(loopBtn) loopBtn.classList.toggle('active', !!p.loopAudio);
 }
@@ -1917,6 +1925,8 @@ function refreshSettingsUI(){
       if(!b.dataset.v) return; // the Reset button
       const key = ['auto','light','dark','sepia'].includes(b.dataset.v) ? 'theme'
         : ['serif','sans','mono','zh'].includes(b.dataset.v) ? 'font'
+        : ['plain','cards'].includes(b.dataset.v) ? 'sections'
+        : ['lv-auto','lv1','lv2','lv3'].includes(b.dataset.v) ? 'secLevel'
         : ['narrow','wide','full'].includes(b.dataset.v) ? 'width' : 'size';
       b.classList.toggle('active', eff[key] === b.dataset.v);
     });
@@ -5035,6 +5045,47 @@ function applyFolds(container){
     block.classList.toggle('fold-hidden', hidden);
     if(lvl && !hidden && block.classList.contains('fold-collapsed')) hideLevel = lvl;
   });
+  applySectionCards(container);
+}
+// ---- Section cards (v1.61.0) ----
+// With Sections = Cards (⚙ panel), each section is drawn as a card: a heading plus everything under it up
+// to the next heading of the same or a higher rank. The blocks stay FLAT siblings (heading fold, bookmarks,
+// tap-to-edit, find and the outline all rely on that), so a card is only painted with classes: sec-card on
+// every block in it, sec-first / sec-last on its first and last VISIBLE block (a folded card is just its
+// heading bar). Pure view state: nothing is stored in the note.
+let curSecLevel = 'lv-auto';
+function sectionCardLevel(blocks){
+  if(curSecLevel !== 'lv-auto') return Number(curSecLevel.slice(2));
+  const count = {};
+  blocks.forEach(b=>{ const l = blockHeadingLevel(b); if(l) count[l] = (count[l] || 0) + 1; });
+  const levels = Object.keys(count).map(Number).sort((a,b)=>a-b);
+  // the highest rank that appears at least twice (a lone title above the real sections is not a card)
+  return levels.find(l=>count[l] >= 2) || levels[0] || 0;
+}
+function applySectionCards(container){
+  if(!container) return;
+  const blocks = Array.from(container.querySelectorAll('.mdblock'));
+  blocks.forEach(b=>b.classList.remove('sec-card', 'sec-first', 'sec-last'));
+  if(document.documentElement.getAttribute('data-sections') !== 'cards') return;
+  const L = sectionCardLevel(blocks);
+  if(!L) return;
+  let group = [];
+  const close = ()=>{
+    const vis = group.filter(b=>!b.classList.contains('fold-hidden'));
+    vis.forEach(b=>b.classList.add('sec-card'));
+    if(vis.length){ vis[0].classList.add('sec-first'); vis[vis.length - 1].classList.add('sec-last'); }
+    group = [];
+  };
+  blocks.forEach(b=>{
+    const lvl = blockHeadingLevel(b);
+    if(lvl && lvl <= L){
+      close();
+      if(lvl === L) group.push(b); // a heading ABOVE the card level (e.g. the note's H1 title) stays plain
+    } else if(group.length){
+      group.push(b);
+    }
+  });
+  close();
 }
 function setBlockFolded(block, folded){
   block.classList.toggle('fold-collapsed', folded);

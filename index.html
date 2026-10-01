@@ -458,6 +458,25 @@
   .mdblock.fold-collapsed > .fold-btn::before{transform:translateX(-2px) rotate(-45deg);}
   .fold-btn:hover,.fold-btn:focus-visible{opacity:1;}
   .mdblock.fold-collapsed > :is(h1,h2,h3,h4,h5,h6)::after{content:'\00a0\2026';color:var(--ink-soft);}
+  /* Section cards (v1.61.0): blocks stay flat siblings; classes from applySectionCards() paint each card.
+     flow-root keeps a block's inner margins inside its own background so a card has no gaps. */
+  html[data-sections="cards"] #mdView .mdblock.sec-card{
+    display:flow-root;background:var(--card);border-radius:0;
+    border-left:1px solid var(--line);border-right:1px solid var(--line);padding:0 16px;
+  }
+  html[data-sections="cards"] #mdView .mdblock.sec-first{
+    margin-top:22px;border-top:1px solid var(--line);border-radius:12px 12px 0 0;
+    background:var(--paper2);border-bottom:1px solid var(--line);padding-top:10px;padding-bottom:10px;
+  }
+  html[data-sections="cards"] #mdView .mdblock.sec-first > :is(h1,h2,h3,h4,h5,h6){margin:0;}
+  html[data-sections="cards"] #mdView .mdblock.sec-first > .heading-rest{margin-top:8px;}
+  html[data-sections="cards"] #mdView .mdblock.sec-last{
+    border-bottom:1px solid var(--line);border-radius:0 0 12px 12px;margin-bottom:6px;padding-bottom:12px;
+  }
+  html[data-sections="cards"] #mdView .mdblock.sec-first.sec-last{border-radius:12px;}
+  html[data-sections="cards"] #mdView .mdblock.sec-first.fold-collapsed{border-bottom:1px solid var(--line);}
+  html[data-sections="cards"] #mdView .mdblock.sec-first > .fold-btn{right:8px;}
+  html[data-sections="cards"] #mdView .mdblock.sec-card:not(.sec-first) > :first-child{margin-top:12px;}
   #mdEditWrap{display:none;flex-direction:column;height:100%;}
   .mdedit.drag-over{outline:2px dashed var(--ink-soft);outline-offset:-4px;}
   .mdedit{
@@ -1375,6 +1394,18 @@ columns: 分类 | 笔记
       <button data-v="narrow" data-on-click="setReadPref" data-args-click='["width","narrow"]'>Narrow</button>
       <button data-v="wide" data-on-click="setReadPref" data-args-click='["width","wide"]'>Wide</button>
       <button data-v="full" data-on-click="setReadPref" data-args-click='["width","full"]'>Full</button>
+    </div>
+    <div class="stitle">Sections</div>
+    <div class="seg">
+      <button data-v="plain" data-on-click="setReadPref" data-args-click='["sections","plain"]'>Plain</button>
+      <button data-v="cards" data-on-click="setReadPref" data-args-click='["sections","cards"]'>Cards</button>
+    </div>
+    <div class="stitle">Card starts at</div>
+    <div class="seg" style="padding-bottom:13px;">
+      <button data-v="lv-auto" data-on-click="setReadPref" data-args-click='["secLevel","lv-auto"]'>Auto</button>
+      <button data-v="lv1" data-on-click="setReadPref" data-args-click='["secLevel","lv1"]'>H1</button>
+      <button data-v="lv2" data-on-click="setReadPref" data-args-click='["secLevel","lv2"]'>H2</button>
+      <button data-v="lv3" data-on-click="setReadPref" data-args-click='["secLevel","lv3"]'>H3</button>
     </div>
     <div class="seg" id="readPrefsResetRow" style="display:none;padding-bottom:13px;">
       <button data-on-click="resetReadPrefs">Reset this page to the app-wide look</button>

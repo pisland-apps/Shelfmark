@@ -7,6 +7,7 @@ and stored only in your browser's IndexedDB, on your own device.
 
 ## Features in this build
 
+- **Section cards (v1.61.0).** ⚙ panel → **Sections: Plain / Cards**, and **Card starts at: Auto / H1 / H2 / H3**. With Cards, each section (a heading plus everything under it up to the next heading of the same or higher rank) is drawn as its own card with a tinted heading bar; folding a heading collapses the card to just that bar. Works app-wide or "This page only". Auto picks the highest heading level that appears at least twice, so a single note title stays plain above the cards. Display only: the note text is never changed.
 - **Copy line by line (v1.60.0).** Write ```` ```lines ```` as the opening fence of a code block and every non-empty line becomes its own row with its own Copy button, all inside the same card. The top button (*Copy all*) copies every line. Ordinary code blocks are unchanged.
 - **Back button, Esc key, ↑ to top (v1.59.0 – v1.59.2).** The phone Back button and the Esc key go back one step (editor → note → Shelf; also popups and panels) instead of closing the app / doing nothing; a round ↑ button appears when you scroll a long page.
 - **Start page (v1.59.1).** Ctrl+K → "Start page…" picks what opens after unlocking: the Shelf (default), the last page you opened, one page you choose, or the Tags page.
@@ -235,6 +236,7 @@ most common reason the two look out of sync.
   - `tests/test_back_button.js` (17 checks, plain node). No data-format change.
 - **v1.59.1** (2026-10-01) — New **Start page** setting (Ctrl+K → "Start page…"): what opens after unlocking. Shelf (default, unchanged if never picked), Last page I opened, A page I choose (any note/file; picked from a list), or the Tags page.
   - New pref `startPage` (`{mode, id}`; removed again when Shelf is picked) and `lastOpenId` (only written while "Last page" is chosen). A page that was deleted falls back to the Shelf. Applied once per app start, after unlock.
+- **v1.61.0** (2026-10-01) — Section cards: new Sections (Plain / Cards) and Card starts at (Auto / H1 / H2 / H3) rows in the ⚙ panel. `npm test` now also runs test_code_lines.js and test_section_cards.js.
 - **v1.60.0** (2026-10-01) — New ```` ```lines ```` code block: one card, one Copy button per line, plus Copy all. Other code blocks unchanged. Test: tests/test_code_lines.js.
 - **v1.59.2** (2026-10-01) — The **Esc** key goes back one step, same ladder as the phone Back button: leaves the note editor, then closes the open note, a popup, a panel, the find bar, and so on. One Esc, one layer; nothing open = nothing happens.
   - Leaving the editor with Esc asks "Discard your unsaved changes?" only when there are some (same as the Cancel button). Esc is left alone inside a table cell being edited, while the `[[` note suggestions are open, on an open drop-down, and during IME input.
