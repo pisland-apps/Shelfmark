@@ -236,6 +236,7 @@ most common reason the two look out of sync.
   - `tests/test_back_button.js` (17 checks, plain node). No data-format change.
 - **v1.59.1** (2026-10-01) — New **Start page** setting (Ctrl+K → "Start page…"): what opens after unlocking. Shelf (default, unchanged if never picked), Last page I opened, A page I choose (any note/file; picked from a list), or the Tags page.
   - New pref `startPage` (`{mode, id}`; removed again when Shelf is picked) and `lastOpenId` (only written while "Last page" is chosen). A page that was deleted falls back to the Shelf. Applied once per app start, after unlock.
+- **v1.61.1** (2026-10-01) — Fix: numbered steps pasted from a chat read wrongly in reading view (every line became its own numbered item, `- ` sub-lines showed a dash inside a number, and "3." restarted at 1). Now the typed number is kept, `- ` lines are bullets, and other lines wrap into the item above. Test: tests/test_numbered_blocks.js.
 - **v1.61.0** (2026-10-01) — Section cards: new Sections (Plain / Cards) and Card starts at (Auto / H1 / H2 / H3) rows in the ⚙ panel. `npm test` now also runs test_code_lines.js and test_section_cards.js.
 - **v1.60.0** (2026-10-01) — New ```` ```lines ```` code block: one card, one Copy button per line, plus Copy all. Other code blocks unchanged. Test: tests/test_code_lines.js.
 - **v1.59.2** (2026-10-01) — The **Esc** key goes back one step, same ladder as the phone Back button: leaves the note editor, then closes the open note, a popup, a panel, the find bar, and so on. One Esc, one layer; nothing open = nothing happens.

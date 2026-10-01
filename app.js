@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.61.0';
+const APP_VERSION = '1.61.1';
 const APP_VERSION_DATE = '2026-10-01';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -5779,9 +5779,31 @@ function renderMarkdown(src, linkTypes){
         html = `<blockquote>${lines.join('<br>')}</blockquote>`;
       }
     }
-    else if(/^\s*\d+\.\s+/.test(block)){
-      const items = block.split('\n').filter(l=>l.trim()).map(l=>`${mdLiOpen(l)}${l.replace(/^\s*\d+\.\s+/,'')}</li>`).join('');
-      html = `<ol>${items}</ol>`;
+    else if(/^\s*\d+[.)]\s+/.test(block)){
+      // v1.61.1: a numbered block is read line by line. "N. text" starts a numbered item (the typed number is
+      // kept: a list that continues in the next block no longer restarts at 1); "- text" / "* text" lines under
+      // it are bullets, in their own <ul>; any other line (a wrapped line, a pasted "•" line, a path) belongs
+      // to the item above it instead of becoming a numbered item of its own.
+      const runs = [];
+      block.split('\n').filter(l=>l.trim()).forEach(l=>{
+        const om = l.match(/^\s*(\d+)[.)]\s+(.*)$/);
+        const bm = !om && l.match(/^\s*[-*]\s+(.*)$/);
+        if(om || bm){
+          const kind = om ? 'ol' : 'ul';
+          let run = runs[runs.length - 1];
+          if(!run || run.kind !== kind){ run = { kind, start: om ? Number(om[1]) : 0, items: [] }; runs.push(run); }
+          run.items.push({ open: mdLiOpen(l), text: om ? om[2] : bm[1] });
+        } else if(runs.length){
+          const run = runs[runs.length - 1];
+          run.items[run.items.length - 1].text += '<br>' + l.trim();
+        } else {
+          runs.push({ kind:'ol', start:1, items:[{ open: mdLiOpen(l), text: l.trim() }] });
+        }
+      });
+      html = runs.map(r=>{
+        const li = r.items.map(it=>`${it.open}${it.text}</li>`).join('');
+        return r.kind === 'ol' ? `<ol${r.start > 1 ? ` start="${r.start}"` : ''}>${li}</ol>` : `<ul>${li}</ul>`;
+      }).join('');
     }
     else if(/^\s*[-*]\s+/m.test(block)){
       // A checklist ("- [ ] text" / "- [x] text") is a plain unordered list
