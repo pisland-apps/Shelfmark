@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.61.1';
+const APP_VERSION = '1.61.2';
 const APP_VERSION_DATE = '2026-10-01';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -5715,9 +5715,12 @@ function renderMarkdown(src, linkTypes){
   // re-reads inserted HTML, so nothing inside a block can pose as a placeholder.
   s = s.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (m, i)=> codeBlocks[+i] !== undefined ? codeBlocks[+i] : '').replace(/\u0000/g, '');
   let blockNo = 0; // raw-source block number: one per blank-line-separated chunk, incl. runs hidden inside code
-  return s.split(/\n{2,}/).map(block=>{
-    const idx = blockNo;
-    blockNo += 1 + (block.match(/[\u0001\u0002]/g) || []).length;
+  // v1.61.2: one block can hold several chunks. A line that LOOKS blank but holds a space, a tab, a
+  // full-width space, a non-breaking space or a stray \r (typical of text pasted from a web chat) does not end the
+  // block in the raw text, so the block numbers stay the same, but it does end a chunk here: each chunk is drawn
+  // on its own (paragraph, numbered list, bullets...) inside the same .mdblock. lineBase is the chunk's first line
+  // inside the block, so a task-list checkbox still points at the right raw line.
+  const chunkHtml = (block, idx, lineBase)=>{
     let html;
     if(/^<h[1-6]/.test(block)){
       // A heading with text on the lines right under it (no blank line) is
@@ -5820,12 +5823,27 @@ function renderMarkdown(src, linkTypes){
         if(taskMatch){
           isTaskList = true;
           const checked = /x/i.test(taskMatch[1]);
-          return `${mdLiOpen(l, 'task-item')}<label><input type="checkbox" data-block-idx="${idx}" data-line-idx="${li}"${checked ? ' checked' : ''}><span${checked ? ' class="done"' : ''}>${taskMatch[2]}</span></label></li>`;
+          return `${mdLiOpen(l, 'task-item')}<label><input type="checkbox" data-block-idx="${idx}" data-line-idx="${lineBase + li}"${checked ? ' checked' : ''}><span${checked ? ' class="done"' : ''}>${taskMatch[2]}</span></label></li>`;
         }
         return `${mdLiOpen(l)}${stripped}</li>`;
       }).join('');
       html = `<ul${isTaskList ? ' class="task-list"' : ''}>${items}</ul>`;
     } else html = `<p>${mdBrLines(block)}</p>`;
+    return html;
+  };
+  return s.split(/\n{2,}/).map(block=>{
+    const idx = blockNo;
+    blockNo += 1 + (block.match(/[\u0001\u0002]/g) || []).length;
+    let html;
+    if(!/^\s*</.test(block) && /\n[^\S\n]+\n/.test(block)){
+      const groups = []; let cur = null;
+      block.split('\n').forEach((l, i)=>{
+        if(!l.trim()){ cur = null; return; }
+        if(!cur){ cur = { start:i, lines:[] }; groups.push(cur); }
+        cur.lines.push(l);
+      });
+      html = groups.map(g=>chunkHtml(g.lines.join('\n'), idx, g.start)).join('');
+    } else html = chunkHtml(block, idx, 0);
     return `<div class="mdblock" data-idx="${idx}"><button class="bm-btn" data-on-click="toggleBookmark" data-args-click="[${Number(idx)}]" title="Bookmark this spot">&#128278;</button>${html}</div>`;
   }).join('\n').replace(/\u0001/g, '\n\n').replace(/\u0002/g, '');
 }
