@@ -242,6 +242,16 @@
   .back{background:none;border:none;color:var(--ink);font-size:15px;font-weight:500;display:flex;align-items:center;gap:4px;}
   .rtitle{flex:1;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   #rcontent{flex:1;overflow:auto;padding:24px;}
+  /* Note sub-tabs (v1.62.0) */
+  .note-tabs{display:flex;align-items:center;gap:4px;overflow-x:auto;position:sticky;top:-24px;z-index:3;margin:-24px -24px 14px;padding:8px 24px 0;background:var(--paper);border-bottom:1px solid var(--line);scrollbar-width:thin;}
+  .note-tabs .ntab{display:inline-flex;align-items:center;flex:0 0 auto;border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0;background:var(--paper2);color:var(--ink-soft);}
+  .note-tabs .ntab.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  .note-tabs button{font:inherit;font-size:13px;background:none;border:none;color:inherit;cursor:pointer;padding:7px 12px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;}
+  .note-tabs .ntab-x{padding:7px 9px 7px 0;font-size:11px;opacity:.75;}
+  .note-tabs .ntab-add{flex:0 0 auto;font-size:18px;line-height:1;color:var(--ink-soft);padding:6px 10px;}
+  .note-tabs.locked .ntab:not(.active),.note-tabs.locked .ntab-add,.note-tabs.locked .ntab-x{opacity:.4;}
+  #reader.toc-side .note-tabs{top:-24px;}
+
   #rcontent.pad0{padding:0;}
   /* ---- tags page: same full-screen-overlay pattern as #reader, reusing
      its .rbar/.back/.rtitle chrome ---- */

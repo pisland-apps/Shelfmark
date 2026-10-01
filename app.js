@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.61.2';
+const APP_VERSION = '1.62.0';
 const APP_VERSION_DATE = '2026-10-01';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -577,6 +577,46 @@ const TYPE_COLOR = {pdf:'var(--pdf)', markdown:'var(--md)', image:'var(--img)', 
 const TYPE_LABEL = {pdf:'PDF', markdown:'Note', image:'Picture', audio:'Recording'};
 let db, pendingFile = null, pendingType = null, pendingBlankNote = false;
 let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
+// v1.62.0: sub-tabs inside one note. The note is still ONE stored text; each tab after the
+// first starts with a hidden marker line `<!-- shelfmark-tab: Name -->` (invisible in Obsidian
+// and other Markdown apps). curNoteRaw is always the ACTIVE tab's text, so reading, editing,
+// find, outline, checkboxes and table edits keep working on it unchanged; curTabs holds all tabs.
+let curTabs = null, curTabIdx = 0;
+const NOTE_TAB_DEFAULT = 'Tab 1';
+function cleanTabName(n){ return String(n == null ? '' : n).replace(/-->/g, '').replace(/[\r\n]+/g, ' ').trim().slice(0, 60); }
+function parseNoteTabs(full){
+  full = String(full == null ? '' : full);
+  const re = /^<!-- ?shelfmark-tab: ?(.*?) ?-->[ \t]*(?:\r?\n|$)/gm;
+  const marks = []; let m;
+  while((m = re.exec(full)) !== null){
+    marks.push({ name: m[1], start: m.index, end: m.index + m[0].length });
+    if(m[0].length === 0) re.lastIndex++;
+  }
+  if(!marks.length) return [{ name: NOTE_TAB_DEFAULT, text: full }];
+  const tabs = [];
+  const pre = full.slice(0, marks[0].start);
+  if(pre.trim()) tabs.push({ name: NOTE_TAB_DEFAULT, text: pre.replace(/\n$/, '') });
+  marks.forEach((mk, i)=>{
+    const last = i === marks.length - 1;
+    let t = full.slice(mk.end, last ? full.length : marks[i + 1].start);
+    if(!last && t.endsWith('\n')) t = t.slice(0, -1);
+    tabs.push({ name: cleanTabName(mk.name) || ('Tab ' + (tabs.length + 1)), text: t });
+  });
+  return tabs;
+}
+function composeNoteTabs(tabs){
+  if(tabs.length === 1 && tabs[0].name === NOTE_TAB_DEFAULT) return tabs[0].text; // an ordinary one-tab note stays plain text
+  return tabs.map((t, i)=> '<!-- shelfmark-tab: ' + (cleanTabName(t.name) || ('Tab ' + (i + 1))) + ' -->\n' + t.text + (i < tabs.length - 1 ? '\n' : '')).join('');
+}
+// Write the active tab's new text (or, with no argument, just the current tab structure).
+async function putNoteSlice(text){
+  if(!curTabs){ return putContentOnly(curId, 'markdown', text); }
+  const prev = curTabs[curTabIdx].text;
+  if(text !== undefined) curTabs[curTabIdx].text = text;
+  try{ await putContentOnly(curId, 'markdown', composeNoteTabs(curTabs)); }
+  catch(err){ curTabs[curTabIdx].text = prev; throw err; }
+  if(text !== undefined) curNoteRaw = text;
+}
 // Maps this edit session's `img:N` placeholders (what actually shows in the
 // textarea) back to the real `data:image/...;base64,...` URI each one
 // stands in for. Rebuilt every time the editor opens (collapseImagesForEdit)
@@ -1062,11 +1102,11 @@ function serialized(fn){
 // metadata blob (that one is decrypted for every item on every shelf listing;
 // a draft with pictures in it can be megabytes). Never exported, dropped with
 // the note when it's deleted, and cleared by Save/Cancel.
-function putDraft(id, text){
+function putDraft(id, text, tab){
   return serialized(async ()=>{
     const rec = await getOneRaw(id);
     if(!rec) return;
-    await sealItemJSON(cryptoKey, rec, 'draft', { text, savedAt: Date.now() });
+    await sealItemJSON(cryptoKey, rec, 'draft', { text, savedAt: Date.now(), tab });
     await putRaw(rec);
   });
 }
@@ -2577,6 +2617,7 @@ async function openReader(id){
   curId = id; curType = it.type;
   rememberLastOpened(id);
   curDraft = null;
+  curTabs = null; curTabIdx = 0;
   // v1.53.0: this note's own reading look (markdown notes only), applied on top of the app-wide one
   curReadOverride = it.type === 'markdown' ? readPrefsClean(it.readerPrefs) : null;
   settingsScope = curReadOverride ? 'page' : 'app';
@@ -2688,19 +2729,27 @@ async function openReader(id){
     curBlobUrl = URL.createObjectURL(it.content);
     c.innerHTML = `<img class="full" src="${curBlobUrl}">`;
   } else if(it.type === 'markdown'){
-    curNoteRaw = it.content;
-    curDraft = await loadDraftFor(id, it.content);
+    curTabs = parseNoteTabs(it.content);
+    curTabIdx = Math.min(Math.max(0, Number(it.activeTab) || 0), curTabs.length - 1);
+    curNoteRaw = curTabs[curTabIdx].text;
+    curDraft = await loadDraftFor(id, curNoteRaw);
+    if(curDraft && curDraft.tab !== curTabIdx){ curTabIdx = curDraft.tab; curNoteRaw = curTabs[curTabIdx].text; } // a draft always reopens on its own tab
     if(it.cover){
       const coverImg = document.createElement('img');
       coverImg.className = 'reader-cover';
       coverImg.src = it.cover;
       c.appendChild(coverImg);
     }
+    const tabBar = document.createElement('div');
+    tabBar.id = 'noteTabs';
+    tabBar.className = 'note-tabs';
+    c.appendChild(tabBar);
+    renderNoteTabs();
     const div = document.createElement('div');
     div.className = 'mdbody';
     div.id = 'mdView';
     curFolds = new Set(Array.isArray(it.folds) ? it.folds : []);
-    div.innerHTML = renderMarkdown(it.content, await buildLinkTypeMap());
+    div.innerHTML = renderMarkdown(curNoteRaw, await buildLinkTypeMap());
     wireInlineAudio(div);
     wireNoteLinks(div);
     wireMissingWikiLinks(div);
@@ -2957,6 +3006,7 @@ function startEditNote(){
   }
   document.getElementById('mdView').style.display = 'none';
   document.getElementById('mdEditWrap').style.display = 'flex';
+  const ntb = document.getElementById('noteTabs'); if(ntb) ntb.classList.add('locked');
   if(helpDockWanted) openHelpDock(); else syncHelpToggleBtn();
   document.getElementById('bmBtn').style.display = 'none';
   document.getElementById('outlineBtn').style.display = 'none';
@@ -3232,7 +3282,7 @@ function flushDraftNow(){
   const ta = document.getElementById('mdEditArea');
   if(!ta || ta.value === draftLastValue) return;
   draftLastValue = ta.value;
-  putDraft(curId, expandImagesForSave(ta.value)).catch(()=>{}); // fail silently, see above
+  putDraft(curId, expandImagesForSave(ta.value), curTabIdx).catch(()=>{}); // fail silently, see above
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flushDraftNow(); });
 window.addEventListener('pagehide', flushDraftNow);
@@ -3241,7 +3291,10 @@ window.addEventListener('pagehide', flushDraftNow);
 async function loadDraftFor(id, savedText){
   const d = await getDraft(id);
   if(!d) return null;
-  if(d.text === savedText){ clearDraft(id).catch(()=>{}); return null; }
+  const t = (curTabs && Number.isInteger(d.tab) && curTabs[d.tab]) ? d.tab : curTabIdx;
+  const saved = curTabs ? curTabs[t].text : savedText;
+  if(d.text === saved){ clearDraft(id).catch(()=>{}); return null; }
+  d.tab = t;
   return d;
 }
 function fmtDraftTime(ts){
@@ -3308,6 +3361,7 @@ function leaveEditMode(){
   closeWikiAutocomplete();
   document.getElementById('mdEditWrap').style.display = 'none';
   document.getElementById('mdView').style.display = 'block';
+  const ntb = document.getElementById('noteTabs'); if(ntb) ntb.classList.remove('locked');
   document.getElementById('bmBtn').style.display = 'flex';
   document.getElementById('editNoteBtn').classList.remove('active');
   updateOutlineUI(buildOutline(document.getElementById('mdView')));
@@ -3318,7 +3372,7 @@ async function saveEditNote(){
   stopDraftTimer(); // no new draft write may start once Save has (an in-flight one finishes first — see serialized())
   const text = expandImagesForSave(document.getElementById('mdEditArea').value);
   try{
-    await putContentOnly(curId, 'markdown', text);
+    await putNoteSlice(text);
   }catch(err){
     startDraftTimer(); // save failed and the editor stays open — keep protecting the text
     alert(isQuotaError(err) ? "Your device's storage is full, so this couldn't be saved. Your edits are still in the text box — free up space and try Save again." : "Couldn't save this note — please try again.");
@@ -5867,7 +5921,7 @@ async function toggleTaskCheckbox(blockIdx, lineIdx){
   lines[lineIdx] = m[1] + (m[2].trim() === '' ? 'x' : ' ') + m[3];
   blocks[blockIdx] = lines.join('\n');
   const newText = blocks.join('\n\n');
-  try{ await putContentOnly(curId, 'markdown', newText); }
+  try{ await putNoteSlice(newText); }
   catch(err){ alert("Couldn't save that change — please try again."); return; }
   curNoteRaw = newText;
   const mdView = document.getElementById('mdView');
@@ -5980,6 +6034,91 @@ function buildTableBlock(model, matrix, sep){
     if(i === 0) out.push(tableArraysEqual(model.sep, sep) ? model.lines[1] : serializeTableRow(sep));
   });
   return out.join('\n');
+}
+// ---- Note sub-tabs UI (v1.62.0) ----
+function renderNoteTabs(){
+  const bar = document.getElementById('noteTabs');
+  if(!bar || !curTabs) return;
+  bar.innerHTML = curTabs.map((t, i)=>{
+    const act = i === curTabIdx;
+    return `<span class="ntab${act ? ' active' : ''}">`
+      + `<button type="button" class="ntab-name" data-on-click="selectNoteTab" data-arg-click="${i}" title="${act ? 'Tap again to rename' : escapeHtml(t.name)}">${escapeHtml(t.name)}</button>`
+      + (act && curTabs.length > 1 ? `<button type="button" class="ntab-x" data-on-click="closeNoteTab" title="Delete this tab" aria-label="Delete this tab">&#10005;</button>` : '')
+      + `</span>`;
+  }).join('') + `<button type="button" class="ntab-add" data-on-click="addNoteTab" title="New tab" aria-label="New tab">+</button>`;
+  const act = bar.querySelector('.ntab.active');
+  if(act && act.scrollIntoView) act.scrollIntoView({ block:'nearest', inline:'nearest' });
+}
+function tabsBusyMessage(){
+  if(noteEditActive()) return 'Save or cancel your edit first, then change tabs.';
+  if(curDraft) return 'This note has an unsaved draft in the tab "' + ((curTabs[curDraft.tab] || {}).name || '') + '". Continue editing or discard it first.';
+  return '';
+}
+async function selectNoteTab(arg){
+  if(!curTabs || curType !== 'markdown') return;
+  const i = Number(arg);
+  if(!(i >= 0 && i < curTabs.length)) return;
+  if(i === curTabIdx) return renameNoteTab();
+  const busy = tabsBusyMessage();
+  if(busy){ alert(busy); return; }
+  curTabIdx = i; curNoteRaw = curTabs[i].text;
+  renderNoteTabs();
+  const c = document.getElementById('rcontent'); if(c) c.scrollTop = 0;
+  await rerenderNoteView();
+  putMetaOnly(curId, { activeTab: i }).catch(()=>{});
+}
+async function renameNoteTab(){
+  if(!curTabs) return;
+  const old = curTabs[curTabIdx].name;
+  const n = prompt('Rename this tab:', old);
+  if(n === null) return;
+  const name = cleanTabName(n);
+  if(!name || name === old) return;
+  curTabs[curTabIdx].name = name;
+  try{ await putNoteSlice(); }
+  catch(err){ curTabs[curTabIdx].name = old; alert("Couldn't rename this tab — please try again."); }
+  renderNoteTabs();
+}
+async function addNoteTab(){
+  if(!curTabs || curType !== 'markdown') return;
+  const busy = tabsBusyMessage();
+  if(busy){ alert(busy); return; }
+  const n = prompt('Name for the new tab:', 'Tab ' + (curTabs.length + 1));
+  if(n === null) return;
+  const prevIdx = curTabIdx, prevRaw = curNoteRaw;
+  curTabs.push({ name: cleanTabName(n) || ('Tab ' + (curTabs.length + 1)), text: '' });
+  curTabIdx = curTabs.length - 1; curNoteRaw = '';
+  try{ await putNoteSlice(); }
+  catch(err){
+    curTabs.pop(); curTabIdx = prevIdx; curNoteRaw = prevRaw;
+    alert(isQuotaError(err) ? "Your device's storage is full, so the new tab couldn't be saved." : "Couldn't add the tab — please try again.");
+    return;
+  }
+  renderNoteTabs();
+  await rerenderNoteView();
+  putMetaOnly(curId, { activeTab: curTabIdx }).catch(()=>{});
+  startEditNote(); // a new empty tab: go straight to typing
+}
+async function closeNoteTab(){
+  if(!curTabs || curTabs.length < 2) return;
+  const busy = tabsBusyMessage();
+  if(busy){ alert(busy); return; }
+  const t = curTabs[curTabIdx];
+  if(!confirm('Delete the tab "' + t.name + '"' + (t.text.trim() ? ' and everything written in it' : '') + "? This can't be undone.")) return;
+  const removed = curTabs.splice(curTabIdx, 1)[0];
+  const oldIdx = curTabIdx;
+  curTabIdx = Math.min(oldIdx, curTabs.length - 1);
+  const prevRaw = curNoteRaw;
+  curNoteRaw = curTabs[curTabIdx].text;
+  try{ await putNoteSlice(); }
+  catch(err){
+    curTabs.splice(oldIdx, 0, removed); curTabIdx = oldIdx; curNoteRaw = prevRaw;
+    alert("Couldn't delete the tab — please try again.");
+    return;
+  }
+  renderNoteTabs();
+  await rerenderNoteView();
+  putMetaOnly(curId, { activeTab: curTabIdx }).catch(()=>{});
 }
 async function rerenderNoteView(){
   const mdView = document.getElementById('mdView');
@@ -6110,7 +6249,7 @@ async function applyTableEdit(edit, op){
         model.parts[edit.blockIdx * 2] = newBlock;
         const full = model.parts.join('');
         try{
-          await putContentOnly(curId, 'markdown', full);
+          await putNoteSlice(full);
           curNoteRaw = full;
           await rerenderNoteView();
         }catch(err){
@@ -6843,7 +6982,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  selectNoteTab, addNoteTab, closeNoteTab, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
