@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.62.0';
+const APP_VERSION = '1.63.0';
 const APP_VERSION_DATE = '2026-10-01';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -583,30 +583,38 @@ let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
 // find, outline, checkboxes and table edits keep working on it unchanged; curTabs holds all tabs.
 let curTabs = null, curTabIdx = 0;
 const NOTE_TAB_DEFAULT = 'Tab 1';
-function cleanTabName(n){ return String(n == null ? '' : n).replace(/-->/g, '').replace(/[\r\n]+/g, ' ').trim().slice(0, 60); }
+const NOTE_TAB_COLORS = Object.freeze({ red:'#d64545', orange:'#e07b2a', amber:'#c9a227', green:'#3f9a5b', teal:'#2a9d9d', blue:'#3b78d8', purple:'#8a5cc7', pink:'#d65a9b', gray:'#7a7a72' });
+function cleanTabName(n){ return String(n == null ? '' : n).replace(/-->/g, '').replace(/~c:/g, '').replace(/[\r\n]+/g, ' ').trim().slice(0, 60); }
+// The marker holds the colour as a suffix: `<!-- shelfmark-tab: Ideas ~c:blue -->`
+function splitTabMarkerName(raw){
+  const m = String(raw).match(/^(.*?) ?~c:([a-z]+)\s*$/);
+  if(!m) return { name: raw, color: '' };
+  return { name: m[1], color: Object.prototype.hasOwnProperty.call(NOTE_TAB_COLORS, m[2]) ? m[2] : '' };
+}
 function parseNoteTabs(full){
   full = String(full == null ? '' : full);
   const re = /^<!-- ?shelfmark-tab: ?(.*?) ?-->[ \t]*(?:\r?\n|$)/gm;
   const marks = []; let m;
   while((m = re.exec(full)) !== null){
-    marks.push({ name: m[1], start: m.index, end: m.index + m[0].length });
+    const sp = splitTabMarkerName(m[1]);
+    marks.push({ name: sp.name, color: sp.color, start: m.index, end: m.index + m[0].length });
     if(m[0].length === 0) re.lastIndex++;
   }
-  if(!marks.length) return [{ name: NOTE_TAB_DEFAULT, text: full }];
+  if(!marks.length) return [{ name: NOTE_TAB_DEFAULT, text: full, color: '' }];
   const tabs = [];
   const pre = full.slice(0, marks[0].start);
-  if(pre.trim()) tabs.push({ name: NOTE_TAB_DEFAULT, text: pre.replace(/\n$/, '') });
+  if(pre.trim()) tabs.push({ name: NOTE_TAB_DEFAULT, text: pre.replace(/\n$/, ''), color: '' });
   marks.forEach((mk, i)=>{
     const last = i === marks.length - 1;
     let t = full.slice(mk.end, last ? full.length : marks[i + 1].start);
     if(!last && t.endsWith('\n')) t = t.slice(0, -1);
-    tabs.push({ name: cleanTabName(mk.name) || ('Tab ' + (tabs.length + 1)), text: t });
+    tabs.push({ name: cleanTabName(mk.name) || ('Tab ' + (tabs.length + 1)), text: t, color: mk.color });
   });
   return tabs;
 }
 function composeNoteTabs(tabs){
-  if(tabs.length === 1 && tabs[0].name === NOTE_TAB_DEFAULT) return tabs[0].text; // an ordinary one-tab note stays plain text
-  return tabs.map((t, i)=> '<!-- shelfmark-tab: ' + (cleanTabName(t.name) || ('Tab ' + (i + 1))) + ' -->\n' + t.text + (i < tabs.length - 1 ? '\n' : '')).join('');
+  if(tabs.length === 1 && tabs[0].name === NOTE_TAB_DEFAULT && !tabs[0].color) return tabs[0].text; // an ordinary one-tab note stays plain text
+  return tabs.map((t, i)=> '<!-- shelfmark-tab: ' + (cleanTabName(t.name) || ('Tab ' + (i + 1))) + (NOTE_TAB_COLORS[t.color] ? ' ~c:' + t.color : '') + ' -->\n' + t.text + (i < tabs.length - 1 ? '\n' : '')).join('');
 }
 // Write the active tab's new text (or, with no argument, just the current tab structure).
 async function putNoteSlice(text){
@@ -2618,6 +2626,7 @@ async function openReader(id){
   rememberLastOpened(id);
   curDraft = null;
   curTabs = null; curTabIdx = 0;
+  closeNoteTabMenu();
   // v1.53.0: this note's own reading look (markdown notes only), applied on top of the app-wide one
   curReadOverride = it.type === 'markdown' ? readPrefsClean(it.readerPrefs) : null;
   settingsScope = curReadOverride ? 'page' : 'app';
@@ -6039,16 +6048,158 @@ function buildTableBlock(model, matrix, sep){
 function renderNoteTabs(){
   const bar = document.getElementById('noteTabs');
   if(!bar || !curTabs) return;
+  closeNoteTabMenu();
   bar.innerHTML = curTabs.map((t, i)=>{
     const act = i === curTabIdx;
-    return `<span class="ntab${act ? ' active' : ''}">`
-      + `<button type="button" class="ntab-name" data-on-click="selectNoteTab" data-arg-click="${i}" title="${act ? 'Tap again to rename' : escapeHtml(t.name)}">${escapeHtml(t.name)}</button>`
-      + (act && curTabs.length > 1 ? `<button type="button" class="ntab-x" data-on-click="closeNoteTab" title="Delete this tab" aria-label="Delete this tab">&#10005;</button>` : '')
+    const col = NOTE_TAB_COLORS[t.color];
+    return `<span class="ntab${act ? ' active' : ''}${col ? ' colored' : ''}"${col ? ` style="--tc:${col}"` : ''}>`
+      + `<button type="button" class="ntab-name" data-on-click="selectNoteTab" data-arg-click="${i}" title="${act ? 'Tap again to rename · hold and drag to reorder' : escapeHtml(t.name) + ' · hold and drag to reorder'}">${escapeHtml(t.name)}</button>`
+      + (act ? `<button type="button" class="ntab-more" data-on-click="openNoteTabMenu" data-args-click='["$el"]' title="Tab options: rename, colour, move, delete" aria-label="Tab options">&#8943;</button>` : '')
       + `</span>`;
   }).join('') + `<button type="button" class="ntab-add" data-on-click="addNoteTab" title="New tab" aria-label="New tab">+</button>`;
   const act = bar.querySelector('.ntab.active');
   if(act && act.scrollIntoView) act.scrollIntoView({ block:'nearest', inline:'nearest' });
 }
+// ---- Tab options menu: rename / colour / move / delete ----
+function closeNoteTabMenu(){
+  const m = document.getElementById('noteTabMenu');
+  if(m) m.remove();
+  document.removeEventListener('click', onNoteTabMenuOutside, true);
+}
+function onNoteTabMenuOutside(e){
+  const m = document.getElementById('noteTabMenu');
+  if(!m) return;
+  if(m.contains(e.target) || (e.target.closest && e.target.closest('.ntab-more'))) return;
+  closeNoteTabMenu();
+}
+function openNoteTabMenu(el){
+  if(document.getElementById('noteTabMenu')){ closeNoteTabMenu(); return; }
+  if(!curTabs || !el || !el.getBoundingClientRect) return;
+  const cur = curTabs[curTabIdx];
+  const m = document.createElement('div');
+  m.id = 'noteTabMenu';
+  m.className = 'ntab-menu';
+  m.innerHTML = `<button type="button" data-on-click="renameNoteTab">Rename…</button>`
+    + `<button type="button" data-on-click="moveNoteTab" data-arg-click="L"${curTabIdx === 0 ? ' disabled' : ''}>&larr; Move left</button>`
+    + `<button type="button" data-on-click="moveNoteTab" data-arg-click="R"${curTabIdx === curTabs.length - 1 ? ' disabled' : ''}>Move right &rarr;</button>`
+    + `<div class="ntab-colors" role="group" aria-label="Tab colour">`
+    + `<button type="button" class="ntab-sw none${cur.color ? '' : ' on'}" data-on-click="setNoteTabColor" data-arg-click="none" title="No colour" aria-label="No colour">&#8416;</button>`
+    + Object.keys(NOTE_TAB_COLORS).map(k=>`<button type="button" class="ntab-sw${cur.color === k ? ' on' : ''}" style="background:${NOTE_TAB_COLORS[k]}" data-on-click="setNoteTabColor" data-arg-click="${k}" title="${k}" aria-label="${k}"></button>`).join('')
+    + `</div>`
+    + (curTabs.length > 1 ? `<button type="button" class="danger" data-on-click="closeNoteTab">Delete tab…</button>` : '');
+  document.body.appendChild(m);
+  const r = el.getBoundingClientRect();
+  m.style.top = Math.min(r.bottom + 4, window.innerHeight - m.offsetHeight - 8) + 'px';
+  m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - m.offsetWidth - 8)) + 'px';
+  setTimeout(()=>document.addEventListener('click', onNoteTabMenuOutside, true), 0);
+}
+async function setNoteTabColor(arg){
+  closeNoteTabMenu();
+  if(!curTabs) return;
+  const col = (arg === 'none' || !NOTE_TAB_COLORS[arg]) ? '' : String(arg);
+  const old = curTabs[curTabIdx].color || '';
+  if(col === old) return;
+  curTabs[curTabIdx].color = col;
+  try{ await putNoteSlice(); }
+  catch(err){ curTabs[curTabIdx].color = old; alert("Couldn't change the colour — please try again."); }
+  renderNoteTabs();
+}
+async function moveNoteTabTo(from, to){
+  if(!curTabs || from === to || from < 0 || to < 0 || from >= curTabs.length || to >= curTabs.length) return;
+  const busy = tabsBusyMessage();
+  if(busy){ alert(busy); renderNoteTabs(); return; }
+  const prevTabs = curTabs.slice(), prevIdx = curTabIdx, activeObj = curTabs[curTabIdx];
+  const moved = curTabs.splice(from, 1)[0];
+  curTabs.splice(to, 0, moved);
+  curTabIdx = curTabs.indexOf(activeObj);
+  try{ await putNoteSlice(); }
+  catch(err){
+    curTabs = prevTabs; curTabIdx = prevIdx;
+    alert("Couldn't reorder the tabs — please try again.");
+    renderNoteTabs();
+    return;
+  }
+  renderNoteTabs();
+  putMetaOnly(curId, { activeTab: curTabIdx }).catch(()=>{});
+}
+function moveNoteTab(dir){
+  closeNoteTabMenu();
+  if(!curTabs) return;
+  moveNoteTabTo(curTabIdx, curTabIdx + (dir === 'L' ? -1 : 1));
+}
+// Hold-and-drag reordering. Mouse: drag after a few px. Touch: press and hold ~0.35 s, then drag
+// (a quick swipe still just scrolls the strip). Pointer events, so one code path for both.
+let noteTabDrag = null, noteTabDragSuppressClick = false;
+(function installNoteTabDrag(){
+  window.addEventListener('click', e=>{
+    if(noteTabDragSuppressClick){ e.stopPropagation(); e.preventDefault(); noteTabDragSuppressClick = false; }
+  }, true);
+  const bar = ()=>document.getElementById('noteTabs');
+  const clear = ()=>{
+    if(noteTabDrag){
+      clearTimeout(noteTabDrag.timer);
+      if(noteTabDrag.el){ noteTabDrag.el.classList.remove('dragging'); noteTabDrag.el.style.transform = ''; }
+    }
+    const b = bar();
+    if(b){ b.classList.remove('dragging-any'); b.querySelectorAll('.drop-l,.drop-r').forEach(x=>x.classList.remove('drop-l','drop-r')); }
+    noteTabDrag = null;
+  };
+  const begin = ()=>{
+    const st = noteTabDrag; if(!st || st.on) return;
+    st.on = true;
+    st.el.classList.add('dragging');
+    const b = bar(); if(b) b.classList.add('dragging-any');
+    try{ if(navigator.vibrate) navigator.vibrate(15); }catch(e){}
+  };
+  document.addEventListener('pointerdown', e=>{
+    if(e.button > 0 || !e.target.closest) return;
+    const nameBtn = e.target.closest('#noteTabs .ntab-name');
+    if(!nameBtn || !curTabs || curTabs.length < 2 || tabsBusyMessage()) return;
+    closeNoteTabMenu();
+    const el = nameBtn.closest('.ntab');
+    const idx = Array.prototype.indexOf.call(bar().querySelectorAll('.ntab'), el);
+    noteTabDrag = { idx, el, x0: e.clientX, x: e.clientX, on: false, touch: e.pointerType !== 'mouse', timer: null };
+    if(noteTabDrag.touch) noteTabDrag.timer = setTimeout(begin, 350);
+  });
+  document.addEventListener('pointermove', e=>{
+    const st = noteTabDrag; if(!st) return;
+    const dx = e.clientX - st.x0;
+    st.x = e.clientX;
+    if(!st.on){
+      if(st.touch){ if(Math.abs(dx) > 8){ clearTimeout(st.timer); noteTabDrag = null; } }   // the finger moved first: it's a scroll
+      else if(Math.abs(dx) > 6) begin();
+      if(!st.on) return;
+    }
+    const b = bar(); if(!b){ clear(); return; }
+    // edge auto-scroll
+    const br = b.getBoundingClientRect();
+    if(e.clientX < br.left + 28) b.scrollLeft -= 10; else if(e.clientX > br.right - 28) b.scrollLeft += 10;
+    st.el.style.transform = 'translateX(' + (e.clientX - st.x0 + (st.scroll0 || 0)) + 'px)';
+    const tabs = Array.from(b.querySelectorAll('.ntab'));
+    const mr = st.el.getBoundingClientRect(), mid = mr.left + mr.width / 2;
+    let target = 0;
+    tabs.forEach((t, i)=>{ if(i === st.idx) return; const r = t.getBoundingClientRect(); if(r.left + r.width / 2 < mid) target++; });
+    st.target = target;
+    tabs.forEach(t=>t.classList.remove('drop-l', 'drop-r'));
+    if(target > st.idx) tabs[target].classList.add('drop-r');
+    else if(target < st.idx) tabs[target].classList.add('drop-l');
+  });
+  const finish = e=>{
+    const st = noteTabDrag; if(!st) return;
+    const was = st.on, from = st.idx, to = st.target;
+    clear();
+    if(was){
+      noteTabDragSuppressClick = true;
+      setTimeout(()=>{ noteTabDragSuppressClick = false; }, 60);
+      if(e.type === 'pointerup' && to != null && to !== from) moveNoteTabTo(from, to);
+    }
+  };
+  document.addEventListener('pointerup', finish);
+  document.addEventListener('pointercancel', finish);
+  // once a touch drag is armed, stop the strip from scrolling under the finger
+  document.addEventListener('touchmove', e=>{ if(noteTabDrag && noteTabDrag.on && e.cancelable) e.preventDefault(); }, { passive:false });
+  document.addEventListener('contextmenu', e=>{ if(noteTabDrag && noteTabDrag.touch && e.target.closest && e.target.closest('#noteTabs')) e.preventDefault(); });
+})();
 function tabsBusyMessage(){
   if(noteEditActive()) return 'Save or cancel your edit first, then change tabs.';
   if(curDraft) return 'This note has an unsaved draft in the tab "' + ((curTabs[curDraft.tab] || {}).name || '') + '". Continue editing or discard it first.';
@@ -6068,6 +6219,7 @@ async function selectNoteTab(arg){
   putMetaOnly(curId, { activeTab: i }).catch(()=>{});
 }
 async function renameNoteTab(){
+  closeNoteTabMenu();
   if(!curTabs) return;
   const old = curTabs[curTabIdx].name;
   const n = prompt('Rename this tab:', old);
@@ -6086,7 +6238,7 @@ async function addNoteTab(){
   const n = prompt('Name for the new tab:', 'Tab ' + (curTabs.length + 1));
   if(n === null) return;
   const prevIdx = curTabIdx, prevRaw = curNoteRaw;
-  curTabs.push({ name: cleanTabName(n) || ('Tab ' + (curTabs.length + 1)), text: '' });
+  curTabs.push({ name: cleanTabName(n) || ('Tab ' + (curTabs.length + 1)), text: '', color: '' });
   curTabIdx = curTabs.length - 1; curNoteRaw = '';
   try{ await putNoteSlice(); }
   catch(err){
@@ -6100,6 +6252,7 @@ async function addNoteTab(){
   startEditNote(); // a new empty tab: go straight to typing
 }
 async function closeNoteTab(){
+  closeNoteTabMenu();
   if(!curTabs || curTabs.length < 2) return;
   const busy = tabsBusyMessage();
   if(busy){ alert(busy); return; }
@@ -6982,7 +7135,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  selectNoteTab, addNoteTab, closeNoteTab, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  selectNoteTab, addNoteTab, closeNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
