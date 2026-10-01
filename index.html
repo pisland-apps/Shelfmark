@@ -845,6 +845,17 @@
   #miniPlayer.show ~ #toTopBtn, #selectBar.show ~ #toTopBtn{bottom:calc(46px + 64px + env(safe-area-inset-bottom,0px));}
   @media (prefers-reduced-motion: reduce){ #toTopBtn{transition:none;} }
 
+
+  /* ---- v1.59.1: "Start page" sheet ---- */
+  .sp-opt{display:flex;align-items:flex-start;gap:12px;width:100%;text-align:left;padding:12px 14px;margin:0 0 8px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-size:14.5px;font-family:inherit;cursor:pointer;}
+  .sp-opt .sp-dot{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);flex-shrink:0;box-sizing:border-box;margin-top:1px;}
+  .sp-opt[aria-pressed="true"]{border-color:var(--ink);}
+  .sp-opt[aria-pressed="true"] .sp-dot{border-color:var(--ink);background:radial-gradient(circle,var(--ink) 0 42%,transparent 46%);}
+  .sp-opt small{display:block;color:var(--ink-soft);font-size:12px;margin-top:2px;line-height:1.4;}
+  #startPageItemRow{margin:0 0 8px 0;}
+  #startPageItemRow select{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--paper);color:var(--ink);font-size:14px;font-family:inherit;}
+  .sp-note{font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin:6px 0 0;}
+
   /* ---- multi-select ---- */
   .spine.selected{background:var(--card);}
   .sel-indicator{
@@ -1291,6 +1302,24 @@ columns: 分类 | 笔记
 </div>
 
 <input id="noteImgPick" type="file" accept="image/*" style="display:none" data-on-change="onNoteImagePick" data-args-change='["$ev"]'>
+<div id="startPageOverlay" class="overlay" style="display:none;">
+  <div class="sheet">
+    <h2>Start page</h2>
+    <p class="sp-note" style="margin:0 0 12px;">What opens when you open Shelfmark (after unlocking). If you never pick, it stays the Shelf, exactly as before.</p>
+    <button type="button" class="sp-opt" id="spOptShelf" aria-pressed="true" data-on-click="setStartPageMode" data-arg-click="shelf"><span class="sp-dot"></span><span>Shelf<small>The list of everything (default)</small></span></button>
+    <button type="button" class="sp-opt" id="spOptLast" aria-pressed="false" data-on-click="setStartPageMode" data-arg-click="last"><span class="sp-dot"></span><span>Last page I opened<small>Carries on from the last note, PDF, picture or recording you opened</small></span></button>
+    <button type="button" class="sp-opt" id="spOptItem" aria-pressed="false" data-on-click="setStartPageMode" data-arg-click="item"><span class="sp-dot"></span><span>A page I choose<small>Always the same note or file, e.g. your Index</small></span></button>
+    <div id="startPageItemRow" style="display:none;">
+      <select id="startPageItem" aria-label="Page to open at start" data-on-change="setStartPageItem" data-args-change='["$el"]'></select>
+    </div>
+    <button type="button" class="sp-opt" id="spOptTags" aria-pressed="false" data-on-click="setStartPageMode" data-arg-click="tags"><span class="sp-dot"></span><span>Tags page<small>Browse by #tag</small></span></button>
+    <p class="sp-note" id="startPageNote" style="display:none;"></p>
+    <div class="row">
+      <button class="cancel" data-on-click="closeStartPage">Close</button>
+    </div>
+  </div>
+</div>
+
 <div id="reader">
   <div class="rbar">
     <button class="back" data-on-click="closeReader">&larr; Shelf</button>

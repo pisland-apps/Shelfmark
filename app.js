@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.59.0';
+const APP_VERSION = '1.59.1';
 const APP_VERSION_DATE = '2026-09-30';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -314,6 +314,7 @@ async function unlockApp(){
   restoreShelfViewPrefs();
   await ensureShelfId();
   render();
+  applyStartPage().catch(()=>{}); // v1.59.1: open the chosen start page (default: stay on the Shelf)
   // Best-effort: ask the browser to protect this origin's storage from
   // automatic eviction under disk pressure. Silent either way — some
   // browsers auto-grant based on site engagement, some prompt, some just
@@ -2564,6 +2565,7 @@ async function openReader(id){
   const it = await getOne(id);
   if(!it) return;
   curId = id; curType = it.type;
+  rememberLastOpened(id);
   curDraft = null;
   // v1.53.0: this note's own reading look (markdown notes only), applied on top of the app-wide one
   curReadOverride = it.type === 'markdown' ? readPrefsClean(it.readerPrefs) : null;
@@ -6176,6 +6178,100 @@ document.addEventListener('click', (e)=>{
 });
 // @@IMGZOOM-END
 
+// ---- Start page (v1.59.1) ---------------------------------------------------
+// What opens after unlocking. prefs.startPage is absent until the person picks one, and absent
+// means "the Shelf", exactly as it always was. Modes: 'last' (the page opened most recently),
+// 'item' (one chosen page, prefs.startPage.id) and 'tags' (the Tags page). A page that has since
+// been deleted falls back to the Shelf silently. Applied once per app start, never on re-render.
+const START_MODES = ['shelf', 'last', 'item', 'tags'];
+let startPageApplied = false;
+function startPageMode(){
+  const sp = prefs.startPage;
+  return (sp && START_MODES.includes(sp.mode)) ? sp.mode : 'shelf';
+}
+function rememberLastOpened(id){
+  if(startPageMode() !== 'last' || prefs.lastOpenId === id) return; // nothing extra is written unless 'last' is chosen
+  prefs.lastOpenId = id;
+  putPrefs(prefs).catch(()=>{});
+}
+async function applyStartPage(){
+  if(startPageApplied) return;
+  startPageApplied = true;
+  const mode = startPageMode();
+  if(mode === 'shelf') return;
+  if(mode === 'tags'){ await openTagsPage(); return; }
+  const id = mode === 'last' ? prefs.lastOpenId : (prefs.startPage && prefs.startPage.id);
+  if(!id || typeof id !== 'string') return;
+  const it = await getMeta(id).catch(()=>null);
+  if(!it) return; // gone: stay on the Shelf
+  await openReader(id);
+}
+function startPageHint(){
+  const m = startPageMode();
+  return m === 'last' ? 'last page opened' : m === 'item' ? 'a chosen page' : m === 'tags' ? 'tags page' : 'shelf (default)';
+}
+async function openStartPage(){
+  await fillStartPageItems();
+  refreshStartPageUI();
+  document.getElementById('startPageOverlay').style.display = 'flex';
+}
+function closeStartPage(){ document.getElementById('startPageOverlay').style.display = 'none'; }
+async function fillStartPageItems(){
+  const sel = document.getElementById('startPageItem');
+  sel.textContent = '';
+  let items = [];
+  try{ items = await getAll(); }catch(e){ items = []; }
+  items.sort((a, b) => String(a.category || '').localeCompare(String(b.category || '')) || String(a.title || '').localeCompare(String(b.title || '')));
+  let cat = null, group = null;
+  for(const it of items){
+    const c = it.category || 'Uncategorized';
+    if(c !== cat){ group = document.createElement('optgroup'); group.label = c; sel.appendChild(group); cat = c; }
+    const o = document.createElement('option');
+    o.value = it.id; o.textContent = it.title || 'Untitled';
+    group.appendChild(o);
+  }
+  const want = prefs.startPage && prefs.startPage.id;
+  if(want && items.some(it => it.id === want)) sel.value = want;
+  else if(items.length) sel.selectedIndex = 0;
+  sel.disabled = !items.length;
+}
+function refreshStartPageUI(){
+  const mode = startPageMode();
+  const set = (id, on) => { const b = document.getElementById(id); if(b) b.setAttribute('aria-pressed', on ? 'true' : 'false'); };
+  set('spOptShelf', mode === 'shelf'); set('spOptLast', mode === 'last');
+  set('spOptItem', mode === 'item');   set('spOptTags', mode === 'tags');
+  document.getElementById('startPageItemRow').style.display = mode === 'item' ? 'block' : 'none';
+  const sel = document.getElementById('startPageItem');
+  const note = document.getElementById('startPageNote');
+  let msg = '';
+  if(mode === 'item' && prefs.startPage && prefs.startPage.id && ![...sel.options].some(o => o.value === prefs.startPage.id)){
+    msg = 'The page you picked is no longer on the shelf, so the Shelf opens instead. Choose another above.';
+  }else if(mode === 'last' && !prefs.lastOpenId){
+    msg = 'No page opened yet, so the Shelf opens until you open one.';
+  }
+  note.textContent = msg; note.style.display = msg ? 'block' : 'none';
+}
+function saveStartPage(sp){
+  if(!sp || sp.mode === 'shelf') delete prefs.startPage;   // back to the untouched default
+  else prefs.startPage = sp;
+  putPrefs(prefs).catch(()=>{});
+  refreshStartPageUI();
+}
+function setStartPageMode(mode){
+  if(!START_MODES.includes(mode)) return;
+  if(mode === 'item'){
+    const sel = document.getElementById('startPageItem');
+    if(!sel || !sel.value) return;                          // nothing on the shelf to pick yet
+    saveStartPage({ mode: 'item', id: sel.value });
+  }else{
+    saveStartPage({ mode });
+  }
+}
+function setStartPageItem(sel){
+  if(!sel || !sel.value) return;
+  saveStartPage({ mode: 'item', id: sel.value });
+}
+
 // ---- Command palette (Ctrl+K) ----
 // Header used to carry one icon per action (storage/sort/loop/tags/select/
 // import/export/quick-note) plus Add — enough to wrap to two rows on a
@@ -6210,6 +6306,7 @@ function buildStaticCommands(){
     ] : []),
     { id:'export', icon:'&#8679;', label:'Export shelf as JSON', hint:'', action: ()=>openExportModal() },
     { id:'shelf-name', icon:'&#127991;&#65039;', label:'Shelf name\u2026', hint: prefs.shelfName || 'not set', action: ()=>renameShelf() },
+    { id:'start-page', icon:'&#127968;', label:'Start page\u2026', hint: startPageHint(), action: ()=>openStartPage() },
     { id:'tags', icon:'#', label:'Browse tags', hint:'', action: ()=>openTagsPage() },
     { id:'select', icon: selectMode ? '&times;' : '&#9745;', label: selectMode ? 'Exit selection mode' : 'Select multiple items', hint:'', action: ()=>toggleSelectMode() },
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
@@ -6627,7 +6724,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, createIndexNoteFromGuide,
@@ -6733,7 +6830,8 @@ const NAV_OVERLAYS = [ // DOM order = stacking order (a later one sits on top of
   ['importPassOverlay', ()=>{ if(!importRunning) closeImportPassModal(); }],
   ['audioLinkOverlay', closeAudioLinkPicker],
   ['mdHelpOverlay', closeMarkdownHelp],
-  ['moveCatOverlay', closeMoveCategory]
+  ['moveCatOverlay', closeMoveCategory],
+  ['startPageOverlay', closeStartPage]
 ];
 const NAV = { depth: 0, silent: 0, timer: null, silentTimer: null };
 function navLayers(){
@@ -6763,6 +6861,11 @@ function navSync(){
   if(NAV.silent > 0) return;                       // our own history.go() has not landed yet
   const want = navLayers().length ? 1 : 0;
   if(NAV.depth < want){
+    // Chrome skips history entries added before the person has touched the page (e.g. a Start page
+    // that opens a note by itself), which would make the first Back leave the app. Wait for a touch.
+    if(typeof navigator !== 'undefined' && navigator.userActivation && navigator.userActivation.hasBeenActive === false){
+      navSchedule(400); return;
+    }
     NAV.depth = 1;
     try{ history.pushState({ smNav: 1 }, ''); }catch(e){ NAV.depth = 0; }
   }else if(NAV.depth > want){
