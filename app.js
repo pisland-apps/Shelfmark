@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.64.0';
+const APP_VERSION = '1.64.1';
 const APP_VERSION_DATE = '2026-10-01';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -615,6 +615,25 @@ function parseNoteTabs(full){
 function composeNoteTabs(tabs){
   if(tabs.length === 1 && tabs[0].name === NOTE_TAB_DEFAULT && !tabs[0].color) return tabs[0].text; // an ordinary one-tab note stays plain text
   return tabs.map((t, i)=> '<!-- shelfmark-tab: ' + (cleanTabName(t.name) || ('Tab ' + (i + 1))) + (NOTE_TAB_COLORS[t.color] ? ' ~c:' + t.color : '') + ' -->\n' + t.text + (i < tabs.length - 1 ? '\n' : '')).join('');
+}
+// Tab names are unique inside a note (bookmarks and folds find their tab by name).
+function uniqueTabName(name, exceptIdx){
+  const taken = n=>curTabs.some((t, i)=>i !== exceptIdx && t.name.toLowerCase() === n.toLowerCase());
+  if(!taken(name)) return name;
+  for(let k = 2; k < 1000; k++){ const c = name.slice(0, 55) + ' ' + k; if(!taken(c)) return c; }
+  return name;
+}
+// A bookmark made on a tab carries that tab's name. No name = made before tabs existed = the first tab.
+// Returns -1 when its tab no longer exists.
+function bmTabIdx(b){
+  if(!curTabs || b.tab == null) return 0;
+  return curTabs.findIndex(t=>t.name === b.tab);
+}
+// Heading-fold keys are per tab once a note has several (the prefix is the tab name). A note with one tab
+// keeps the old unprefixed keys, so existing fold state is untouched.
+function foldPfxFor(name){ return '\u00a7' + encodeURIComponent(name) + '\u00a7'; }
+function foldPrefix(name){
+  return (curTabs && curTabs.length > 1) ? foldPfxFor(name == null ? curTabs[curTabIdx].name : name) : '';
 }
 // Write the active tab's new text (or, with no argument, just the current tab structure).
 async function putNoteSlice(text){
@@ -4806,6 +4825,7 @@ function toggleBookmarkPanel(){
 // to the stale idx — better than nothing — if none of that finds anything.
 function bookmarkSnippet(el){ return el ? el.textContent.trim().slice(0,80) : ''; }
 function findBlockForBookmark(bookmark){
+  if(curTabs && bmTabIdx(bookmark) !== curTabIdx) return null;   // it lives on another tab
   const blocks = Array.from(document.querySelectorAll('.mdblock'));
   const byIdx = blocks.find(el=>Number(el.dataset.idx)===bookmark.idx);
   if(byIdx && bookmarkSnippet(byIdx)===bookmark.snippet) return byIdx;
@@ -4831,7 +4851,9 @@ async function toggleBookmark(idx){
     bookmarks.splice(pos,1);
   } else {
     const snippet = bookmarkSnippet(el) || ('Paragraph '+(idx+1));
-    bookmarks.push({idx, snippet, createdAt:Date.now()});
+    const bm = {idx, snippet, createdAt:Date.now()};
+    if(curTabs) bm.tab = curTabs[curTabIdx].name;
+    bookmarks.push(bm);
   }
   try{ await putMetaOnly(curId, { bookmarks }); }
   catch(err){ if(isQuotaError(err)) alert("Your device's storage is full, so this bookmark couldn't be saved."); return; }
@@ -4848,6 +4870,10 @@ async function deleteBookmark(createdAt){
 async function jumpBookmark(createdAt){
   const it = await getOne(curId);
   const bm = it && (it.bookmarks||[]).find(b=>b.createdAt===createdAt);
+  if(bm && curTabs && bmTabIdx(bm) >= 0 && bmTabIdx(bm) !== curTabIdx){
+    await selectNoteTab(String(bmTabIdx(bm)));          // refuses (with a message) while editing / a draft is open
+    if(bmTabIdx(bm) !== curTabIdx){ bmPanelOpen = false; document.getElementById('bmPanel').style.display = 'none'; return; }
+  }
   const el = bm && findBlockForBookmark(bm);
   if(el){ revealBlock(el); el.scrollIntoView({block:'center', behavior:'smooth'}); }
   else if(bm) alert("Couldn't find that spot anymore — this part of the note may have changed a lot since the bookmark was made.");
@@ -4867,9 +4893,10 @@ function updateBookmarkUI(bookmarks){
     panel.innerHTML = `<div class="bmempty">No bookmarks yet — tap the ribbon next to a paragraph to save your spot.</div>`;
     return;
   }
-  panel.innerHTML = bookmarks.slice().sort((a,b)=>a.idx-b.idx).map(b=>`
+  const tabRank = b=>{ const i = bmTabIdx(b); return i < 0 ? 9999 : i; };
+  panel.innerHTML = bookmarks.slice().sort((a,b)=>tabRank(a)-tabRank(b) || a.idx-b.idx).map(b=>`
     <div class="bmrow">
-      <div class="snip" data-on-click="jumpBookmark" data-args-click="[${Number(b.createdAt)}]">${escapeHtml(b.snippet)}</div>
+      <div class="snip" data-on-click="jumpBookmark" data-args-click="[${Number(b.createdAt)}]">${curTabs && curTabs.length > 1 && b.tab != null ? `<small class="bmtab">${escapeHtml(b.tab)} · </small>` : ''}${escapeHtml(b.snippet)}</div>
       <button class="rm" data-on-click="deleteBookmark" data-args-click="[${Number(b.createdAt)}]" data-stop-click title="Remove bookmark">&times;</button>
     </div>`).join('');
 }
@@ -4926,7 +4953,7 @@ async function toggleIndexPanel(){
   if(token !== indexPanelToken) return;
   const body = document.createElement('div');
   body.className = 'mdbody';
-  body.innerHTML = renderMarkdown(ix.content, map);
+  body.innerHTML = renderMarkdown(parseNoteTabs(ix.content).map(t=>t.text).join('\n\n'), map);
   // The reader's own bookmark / outline / find code looks up ".mdblock[data-idx]" across
   // the whole document. Strip those hooks so this copy can never be matched by them.
   body.querySelectorAll('.mdblock').forEach(b=>{
@@ -5213,7 +5240,7 @@ function wireHeadingFold(container){
     const base = lvl + '|' + h.textContent.trim().toLowerCase();
     const nth = seen.get(base) || 0;
     seen.set(base, nth + 1);
-    const key = base + '|' + nth;
+    const key = foldPrefix() + base + '|' + nth;
     block.dataset.foldKey = key;
     live.add(key);
     block.classList.add('foldable');
@@ -5225,7 +5252,9 @@ function wireHeadingFold(container){
     setBlockFolded(block, curFolds.has(key));
   });
   let pruned = false;
-  Array.from(curFolds).forEach(k=>{ if(!live.has(k)){ curFolds.delete(k); pruned = true; } });
+  const fpfx = foldPrefix();
+  const ownFold = k=>fpfx ? k.startsWith(fpfx) : !k.startsWith('\u00a7');   // only forget keys of THIS tab
+  Array.from(curFolds).forEach(k=>{ if(ownFold(k) && !live.has(k)){ curFolds.delete(k); pruned = true; } });
   if(pruned) saveFoldState();
   applyFolds(container);
 }
@@ -6239,11 +6268,22 @@ async function renameNoteTab(){
   const old = curTabs[curTabIdx].name;
   const n = prompt('Rename this tab:', old);
   if(n === null) return;
-  const name = cleanTabName(n);
-  if(!name || name === old) return;
+  const typed = cleanTabName(n);
+  if(!typed || typed === old) return;
+  const name = uniqueTabName(typed, curTabIdx);
+  if(name === old) return;
+  const oldPfx = foldPrefix(old);
   curTabs[curTabIdx].name = name;
   try{ await putNoteSlice(); }
-  catch(err){ curTabs[curTabIdx].name = old; alert("Couldn't rename this tab — please try again."); }
+  catch(err){ curTabs[curTabIdx].name = old; alert("Couldn't rename this tab — please try again."); renderNoteTabs(); return; }
+  // bookmarks and fold state follow the tab to its new name
+  try{
+    const it = await getOne(curId);
+    const bms = ((it && it.bookmarks) || []).map(b=> b.tab === old ? Object.assign({}, b, { tab: name }) : b);
+    if(bms.some((b, i)=>b !== it.bookmarks[i])){ await putMetaOnly(curId, { bookmarks: bms }); updateBookmarkUI(bms); }
+    const newPfx = foldPrefix(name);
+    if(oldPfx && oldPfx !== newPfx){ curFolds = new Set(Array.from(curFolds).map(k=>k.startsWith(oldPfx) ? newPfx + k.slice(oldPfx.length) : k)); saveFoldState(); }
+  }catch(err){ /* view state only */ }
   renderNoteTabs();
 }
 async function addNoteTab(){
@@ -6252,14 +6292,22 @@ async function addNoteTab(){
   if(busy){ alert(busy); return; }
   const n = prompt('Name for the new tab:', 'Tab ' + (curTabs.length + 1));
   if(n === null) return;
-  const prevIdx = curTabIdx, prevRaw = curNoteRaw;
-  curTabs.push({ name: cleanTabName(n) || ('Tab ' + (curTabs.length + 1)), text: '', color: '' });
+  const prevIdx = curTabIdx, prevRaw = curNoteRaw, wasSingle = curTabs.length === 1;
+  const firstName = curTabs[0].name;
+  curTabs.push({ name: uniqueTabName(cleanTabName(n) || ('Tab ' + (curTabs.length + 1)), -1), text: '', color: '' });
   curTabIdx = curTabs.length - 1; curNoteRaw = '';
   try{ await putNoteSlice(); }
   catch(err){
     curTabs.pop(); curTabIdx = prevIdx; curNoteRaw = prevRaw;
     alert(isQuotaError(err) ? "Your device's storage is full, so the new tab couldn't be saved." : "Couldn't add the tab — please try again.");
     return;
+  }
+  if(wasSingle){   // bookmarks made before tabs existed belong to the original (first) tab: say so by name
+    try{
+      const it = await getOne(curId);
+      const bms = ((it && it.bookmarks) || []).map(b=> b.tab == null ? Object.assign({}, b, { tab: firstName }) : b);
+      if(bms.some((b, i)=>b !== it.bookmarks[i])) await putMetaOnly(curId, { bookmarks: bms });
+    }catch(err){ /* view state only */ }
   }
   renderNoteTabs();
   await rerenderNoteView();
@@ -6284,9 +6332,19 @@ async function closeNoteTab(){
     alert("Couldn't delete the tab — please try again.");
     return;
   }
+  // its bookmarks and fold state go with it
+  try{
+    const it = await getOne(curId);
+    const bms = ((it && it.bookmarks) || []).filter(b=> b.tab !== removed.name);
+    if(it && bms.length !== (it.bookmarks || []).length) await putMetaOnly(curId, { bookmarks: bms });
+    const rp = foldPfxFor(removed.name);   // always prefixed, even if only one tab is left now
+    Array.from(curFolds).forEach(k=>{ if(k.startsWith(rp)) curFolds.delete(k); });
+    saveFoldState();
+  }catch(err){ /* view state only */ }
   renderNoteTabs();
   await rerenderNoteView();
   putMetaOnly(curId, { activeTab: curTabIdx }).catch(()=>{});
+  updateBookmarkUI(((await getOne(curId)) || {}).bookmarks || []);
 }
 async function rerenderNoteView(){
   const mdView = document.getElementById('mdView');
