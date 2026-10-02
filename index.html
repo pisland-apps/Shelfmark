@@ -685,7 +685,11 @@
   .shelf-index table{border-collapse:collapse;width:100%;font-size:0.95em;}
   .mdbody .shelf-index table th,.mdbody .shelf-index table td{border:none;background:transparent;padding:8px 10px 8px 0;text-align:left;vertical-align:top;}
   .mdbody .shelf-index table th{border-bottom:2px solid var(--ink);font-size:1.05em;font-weight:700;}
-  .shelf-index .si-cat{white-space:nowrap;padding-right:22px;color:var(--ink);}
+  /* v1.64.2: a long category name used to be 'nowrap', which widened the first column until the Items column was
+     pushed out of sight (worst in the narrow Index dropdown). Names now wrap; the column is at least 12em, and
+     width:1% keeps it from growing beyond what it needs, so the Items column always gets the rest. */
+  .shelf-index .si-cat{white-space:normal;overflow-wrap:anywhere;width:1%;min-width:12em;padding-right:22px;color:var(--ink);}
+  .shelf-index td:nth-child(2){overflow-wrap:anywhere;}
   .shelf-index .si-count{font-size:0.8em;font-weight:400;color:var(--ink-soft);}
   .shelf-index ul{margin:0;padding-left:1.2em;}
   .shelf-index li{margin:2px 0;}
