@@ -8,7 +8,7 @@
 // the badge (and your GitHub repo) shows a newer number. See APP_VERSION's
 // comment in app.js, and the deploy checklist in README.md.
 // ============================================================================
-const CACHE_VERSION = 'shelfmark-v1.64.3';
+const CACHE_VERSION = 'shelfmark-v1.64.4';
 
 const PRECACHE_URLS = [
   './',
@@ -28,6 +28,15 @@ const PRECACHE_URLS = [
 // entry with a redirect response instead of the real page. Precaching only
 // './' and resolving all navigations through it (below) avoids that.
 
+// v1.64.4: a Response with redirected:true must never be stored for a navigation — Chrome refuses to let a
+// service worker answer a navigation with one (net::ERR_FAILED, the installed app then fails to open).
+// Cloudflare Pages redirects /index.html -> / . If any fetched file arrives redirected, rebuild it as a
+// plain Response (same body, status and headers; redirected is false on a Response we construct).
+function plainResponse(res){
+  if(!res || !res.redirected) return Promise.resolve(res);
+  return res.blob().then(body => new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers }));
+}
+
 self.addEventListener('install', (event)=>{
   // cache:'reload' skips the browser's HTTP cache. cache.addAll() goes through it, and static
   // hosts (GitHub Pages: about 10 minutes) can hand back the PREVIOUS app.js, which would then be
@@ -38,7 +47,7 @@ self.addEventListener('install', (event)=>{
       .then(cache => Promise.all(PRECACHE_URLS.map(url =>
         fetch(new Request(url, { cache: 'reload' })).then(res => {
           if(!res.ok) throw new Error('Precache failed: ' + url + ' (' + res.status + ')');
-          return cache.put(url, res);
+          return plainResponse(res).then(clean => cache.put(url, clean));
         })
       )))
       .then(()=>self.skipWaiting())
@@ -74,8 +83,7 @@ self.addEventListener('fetch', (event)=>{
       if(cached) return cached;
       return fetch(req).then(res => {
         if(res && res.ok){
-          const copy = res.clone();
-          caches.open(CACHE_VERSION).then(cache => cache.put(req, copy));
+          plainResponse(res.clone()).then(copy => caches.open(CACHE_VERSION).then(cache => cache.put(req, copy)));
         }
         return res;
       });
