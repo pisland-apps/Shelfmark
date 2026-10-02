@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.64.2';
-const APP_VERSION_DATE = '2026-10-01';
+const APP_VERSION = '1.64.3';
+const APP_VERSION_DATE = '2026-10-02';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -1007,6 +1007,11 @@ async function encryptItemRecord(item){
 }
 async function decryptMeta(rec){
   const meta = await openItemJSON(cryptoKey, rec, 'meta');
+  // v1.64.3: second layer. An item stored by an earlier version from a damaged or crafted backup can hold a
+  // title / category that is not text; the list code calls string methods on them. Shown as the defaults;
+  // text is never touched.
+  if(typeof meta.title !== 'string') meta.title = 'Untitled';
+  if(meta.category != null && typeof meta.category !== 'string') meta.category = 'Uncategorized';
   return { id: rec.id, ...meta };
 }
 async function decryptContent(rec, type, mime){
@@ -1745,6 +1750,50 @@ async function doImportV2(){
 //     trusting whatever string the file contains.
 const SAFE_ID_RE = /^[\w.-]{1,64}$/;
 const KNOWN_ITEM_TYPES = new Set(['markdown','pdf','image','audio']);
+// v1.64.3: what an imported item's descriptive fields may hold. A backup (plain JSON in particular, which has
+// no authentication) is untrusted input: a title that is a number or an object used to be stored as is and then
+// stopped the shelf from drawing. Only clearly unusable values are replaced; ordinary text, Chinese, emoji and
+// symbols pass through untouched. The limits are generous so a real title or category is never cut.
+const IMPORT_TITLE_MAX = 500, IMPORT_CATEGORY_MAX = 200, IMPORT_SNIPPET_MAX = 1000, IMPORT_TAB_MAX = 200;
+function cleanImportText(v, max, fallback){
+  if(typeof v !== 'string' || !v) return fallback;
+  if(v.length <= max) return v;
+  let t = v.slice(0, max);
+  const last = t.charCodeAt(t.length - 1);
+  if(last >= 0xD800 && last <= 0xDBFF) t = t.slice(0, -1);   // do not leave half an emoji
+  return t;
+}
+const isPlainObj = o => !!o && typeof o === 'object' && !Array.isArray(o);
+// Bookmarks are {idx, snippet, createdAt, tab?} (notes). Older builds saved a PDF bookmark as just {page}, and
+// those are kept as they were. Entries that are not usable at all are dropped; good ones keep their values.
+function cleanImportBookmarks(b){
+  if(!Array.isArray(b)) return [];
+  const out = [];
+  for(const x of b){
+    if(!isPlainObj(x)) continue;
+    if(Number.isFinite(x.createdAt)){
+      const bm = {
+        idx: (Number.isInteger(x.idx) && x.idx >= 0) ? x.idx : 0,
+        snippet: cleanImportText(x.snippet, IMPORT_SNIPPET_MAX, ''),
+        createdAt: x.createdAt
+      };
+      if(Number.isFinite(x.page)) bm.page = x.page;
+      if(typeof x.tab === 'string') bm.tab = cleanImportText(x.tab, IMPORT_TAB_MAX, '');
+      out.push(bm);
+    } else if(Number.isFinite(x.page)){
+      out.push({ page: x.page });          // older builds: PDF bookmark
+    }
+  }
+  return out;
+}
+// Progress is {time} (audio), {page} (PDF) or {scroll} (note). Only keys holding real numbers are kept (so a value
+// from an older build is not lost); anything else becomes null.
+function cleanImportProgress(p){
+  if(!isPlainObj(p)) return null;
+  const out = {};
+  for(const k of Object.keys(p)){ if(k !== '__proto__' && Number.isFinite(p[k])) out[k] = p[k]; }
+  return Object.keys(out).length ? out : null;
+}
 function sanitizeImportedId(rawId){
   return (typeof rawId === 'string' && SAFE_ID_RE.test(rawId)) ? rawId : null;
 }
@@ -1786,9 +1835,11 @@ async function importOneItem(s, it){
   const existingItems = s.existingItems;
   if(!it || !KNOWN_ITEM_TYPES.has(it.type)){ s.unreadable++; (s.unreadableTitles = s.unreadableTitles || []).push((it && it.title) || 'Untitled'); return true; }
   const safeId = it.id ? sanitizeImportedId(it.id) : null;
+  const cleanTitle = cleanImportText(it.title, IMPORT_TITLE_MAX, 'Untitled');          // v1.64.3
+  const cleanCategory = cleanImportText(it.category, IMPORT_CATEGORY_MAX, 'Uncategorized');
   let existing = safeId ? existingItems.find(x=>x.id===safeId) : null;
   if(!existing){
-    existing = existingItems.find(x=>x.title===it.title && x.type===it.type && x.addedAt===it.addedAt);
+    existing = existingItems.find(x=>(x.title===it.title || x.title===cleanTitle) && x.type===it.type && x.addedAt===it.addedAt);
   }
   // v1.58.1 only-new mode: anything the shelf already has (same id, or same title + type + addedAt)
   // is left exactly as it is: not updated, not counted as newer.
@@ -1817,11 +1868,11 @@ async function importOneItem(s, it){
   }
   const id = existing ? existing.id : (safeId || Date.now()+'-'+Math.random().toString(36).slice(2));
   const record = {
-    id, title: it.title || 'Untitled', category: it.category || 'Uncategorized',
-    type: it.type, content, mime: it.mime,
-    addedAt: it.addedAt || Date.now(), updatedAt: typeof it.updatedAt === 'number' ? it.updatedAt : Date.now(),
-    progress: it.progress || null,
-    bookmarks: it.bookmarks || [], cover: isValidCoverDataUrl(it.cover) ? it.cover : null,
+    id, title: cleanTitle, category: cleanCategory,
+    type: it.type, content, mime: typeof it.mime === 'string' ? it.mime : undefined,
+    addedAt: Number.isFinite(it.addedAt) && it.addedAt ? it.addedAt : Date.now(), updatedAt: Number.isFinite(it.updatedAt) ? it.updatedAt : Date.now(),
+    progress: cleanImportProgress(it.progress),
+    bookmarks: cleanImportBookmarks(it.bookmarks), cover: isValidCoverDataUrl(it.cover) ? it.cover : null,
     readerPrefs: readPrefsClean(it.readerPrefs)
   };
   try{
@@ -2459,7 +2510,9 @@ async function render(){
   if(shelfPlayingId) refreshShelfAudioRowUI();
   if(selectMode) updateSelectBar();
 }
-function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// v1.64.3: coerces first. A title/category that was not text (a crafted or damaged backup) used to throw
+// "s.replace is not a function" here and stop the whole shelf from drawing. null/undefined print as nothing.
+function escapeHtml(s){ s = (s === null || s === undefined) ? '' : String(s); return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 // Inverse of escapeHtml — needed wherever text that renderMarkdown already
 // escaped (e.g. a [[Wiki link]]'s title, kept escaped so it matches
 // buildLinkTypeMap's __byTitle keys) has to go back to plain text to be
