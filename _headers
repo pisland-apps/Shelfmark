@@ -1,0 +1,29 @@
+# ============================================================================
+# Shelfmark — _headers (Cloudflare Pages)
+#
+# Put this file in the ROOT of the folder you deploy, next to index.html.
+# It is served by Cloudflare Pages only; GitHub Pages ignores it.
+#
+# Keep the CSP below in step with the <meta http-equiv="Content-Security-Policy">
+# in index.html (same rules, plus frame-ancestors, which a <meta> tag cannot set).
+# If you ever change one, change the other.
+# ============================================================================
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; worker-src 'self' blob:; frame-ancestors 'none'
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=(), serial=(), hid=()
+  X-Robots-Tag: noindex, nofollow
+
+# The service worker must always be re-checked, so a new version is noticed
+# promptly (the same file is also cache-busted inside the worker with
+# cache:'reload'; this covers the browser's own update check).
+/service-worker.js
+  Cache-Control: no-cache
+
+/manifest.json
+  Cache-Control: no-cache
