@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.65.0';
+const APP_VERSION = '1.65.1';
 const APP_VERSION_DATE = '2026-10-03';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2876,6 +2876,7 @@ async function openReader(id){
     c.appendChild(div);
     c.appendChild(editWrap);
     renderDraftBanner();
+    guardEditorScroll(document.getElementById('mdEditArea'));
     document.getElementById('mdEditArea').addEventListener('paste', onNoteEditPaste);
     ['dragenter','dragover'].forEach(t=>document.getElementById('mdEditArea').addEventListener(t, onNoteEditDragOver));
     ['dragleave','dragend'].forEach(t=>document.getElementById('mdEditArea').addEventListener(t, onNoteEditDragLeave));
@@ -4349,6 +4350,25 @@ function onNoteEditInput(){ updateWikiAutocomplete(); noteTypingForUndo(); }
 //   number, 5 quote marker. (Not "+" bullets or "1)" — the renderer doesn't
 //   treat those as lists, so continuing them would just add stray text.)
 const NOTE_LIST_RE = /^(\s*)(?:([-*])\s+(\[[ xX]\]\s+)?|(\d+)\.\s+|(>)[ \t]?)/;
+// v1.65.1: a toolbar change used to throw the editor to the BOTTOM of the note, so the owner had to scroll back
+// to find what he had just changed. Cause: every toolbar action does `ta.value = …` (the caret goes to the end
+// of the text) and then `ta.focus()`, and the browser scrolls the caret into view when a textarea gains focus,
+// before the selection is put back. Fixed once for all of them (bold, strike, highlight, the Aa menu, heading,
+// divider, date, links, table, undo/redo...) on the textarea itself: setting `value` keeps the scroll position,
+// and `focus()` never scrolls. Typing, Enter and arrow keys are not affected: they do not go through these.
+function guardEditorScroll(ta){
+  if(!ta || ta.__scrollGuard) return;
+  ta.__scrollGuard = true;
+  const proto = Object.getPrototypeOf(ta);
+  const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+  Object.defineProperty(ta, 'value', {
+    configurable: true,
+    get(){ return desc.get.call(this); },
+    set(v){ const top = this.scrollTop, left = this.scrollLeft; desc.set.call(this, v); this.scrollTop = top; this.scrollLeft = left; }
+  });
+  const nativeFocus = proto.focus;
+  ta.focus = function(opts){ return nativeFocus.call(this, Object.assign({}, opts, { preventScroll:true })); };
+}
 let noteShiftEnter = false;  // set by keydown when Shift+Enter is pressed; read once by beforeinput
 let noteEnterBusy = false;   // guards against our own edit re-triggering beforeinput
 let noteTabFree = false;     // Esc pressed → the next Tab in a list moves focus normally
