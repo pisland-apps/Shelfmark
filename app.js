@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.64.4';
-const APP_VERSION_DATE = '2026-10-02';
+const APP_VERSION = '1.65.0';
+const APP_VERSION_DATE = '2026-10-03';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -2845,6 +2845,11 @@ async function openReader(id){
     editWrap.innerHTML = `<div id="draftNotice" class="draft-notice" style="display:none;"><span id="draftNoticeText"></span><button type="button" data-on-click="revertToSaved">Revert to saved</button></div>
       <textarea class="mdedit" id="mdEditArea" spellcheck="false"></textarea>
       <div class="ebar">
+        <div class="style-menu" id="styleMenu" style="display:none;" role="group" aria-label="Text style">
+          <div class="sm-row"><span class="sm-label">Text</span>${STYLE_TEXT.map(k=>`<button type="button" class="sm-sw sw-${k}" data-on-click="applyTextStyle" data-arg-click="${k}" title="${k} text" aria-label="${k} text"></button>`).join('')}<label class="sm-custom" title="Any text colour"><input type="color" id="styleCustomText" value="#d6453d" data-on-change="applyCustomStyle" data-arg-change="text" aria-label="Custom text colour"></label></div>
+          <div class="sm-row"><span class="sm-label">Highlight</span>${STYLE_BG.map(k=>`<button type="button" class="sm-sw sw-bg-${k}" data-on-click="applyTextStyle" data-arg-click="bg-${k}" title="${k} highlight" aria-label="${k} highlight"></button>`).join('')}<label class="sm-custom" title="Any highlight colour"><input type="color" id="styleCustomBg" value="#ffe08a" data-on-change="applyCustomStyle" data-arg-change="bg" aria-label="Custom highlight colour"></label></div>
+          <div class="sm-row"><button type="button" class="sm-btn" data-on-click="applyTextStyle" data-arg-click="small"><small>Small text</small></button><button type="button" class="sm-btn" data-on-click="applyTextStyle" data-arg-click="clear">Remove style</button></div>
+        </div>
         <div class="ebar-tools">
           <button class="tool tool-esc" id="escEditBtn" data-on-click="cancelEditNote" title="Leave edit mode (asks first only if you have unsaved changes)" aria-label="Leave edit mode">Esc</button>
           <button class="tool" id="undoBtn" data-on-click="undoEdit" title="Undo">&#8617;</button>
@@ -2852,6 +2857,7 @@ async function openReader(id){
           <button class="tool" data-on-click="toggleBoldAtSelection" title="Bold"><b>B</b></button>
           <button class="tool" data-on-click="toggleStrikeAtSelection" title="Strikethrough"><s>S</s></button>
           <button class="tool" data-on-click="toggleHighlightAtSelection" title="Highlight"><span class="tool-hl">A</span></button>
+          <button class="tool" id="styleMenuBtn" data-on-click="toggleStyleMenu" title="Small text, text colour, highlight colour for the selected text" aria-expanded="false"><span class="tool-ts"><span class="tool-ts-a">A</span><small>a</small></span></button>
           <button class="tool" data-on-click="toggleHeadingAtLine" title="Heading">H</button>
           <button class="tool" data-on-click="insertDivider" title="Insert divider">&#8213;</button>
           <button class="tool" data-on-click="insertTimestamp" title="Insert date/time">&#128197;</button>
@@ -4343,6 +4349,7 @@ function onNoteEditInput(){ updateWikiAutocomplete(); noteTypingForUndo(); }
 //   number, 5 quote marker. (Not "+" bullets or "1)" — the renderer doesn't
 //   treat those as lists, so continuing them would just add stray text.)
 const NOTE_LIST_RE = /^(\s*)(?:([-*])\s+(\[[ xX]\]\s+)?|(\d+)\.\s+|(>)[ \t]?)/;
+let noteShiftEnter = false;  // set by keydown when Shift+Enter is pressed; read once by beforeinput
 let noteEnterBusy = false;   // guards against our own edit re-triggering beforeinput
 let noteTabFree = false;     // Esc pressed → the next Tab in a list moves focus normally
 function noteLineBounds(v, pos){
@@ -4394,7 +4401,14 @@ function onNoteEditBeforeInput(e){
   const m = line.match(NOTE_LIST_RE);
   if(!m || pos - ls < m[0].length) return;        // not a list line, or caret is inside the marker
   if(noteInCodeFence(v, ls)) return;
+  const shiftEnter = noteShiftEnter; noteShiftEnter = false;
   e.preventDefault();
+  // v1.65.0: Shift+Enter on a bullet / numbered item starts a SECOND ROW of the same item: new line, indented
+  // under the text, no dot or number. Reading view shows it under the item without a marker.
+  if(shiftEnter && !m[5]){
+    noteReplaceRange(ta, pos, pos, '\n' + m[1] + (m[4] ? '   ' : '  '));
+    return;
+  }
   // Enter on an empty item ends the list: clear the line instead of adding another.
   if(!line.slice(m[0].length).trim() && pos === le){
     noteReplaceRange(ta, ls, le, '');
@@ -4456,6 +4470,7 @@ function noteTabInList(e){
   return true;
 }
 function onNoteEditKeydown(e){
+  if(e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey){ noteShiftEnter = true; setTimeout(()=>{ noteShiftEnter = false; }, 0); }
   const isUndoKey = (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z';
   const isRedoKey = (e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'));
   if(isUndoKey && !(wikiAC.open && wikiAC.items.length)){ e.preventDefault(); undoEdit(); return; }
@@ -4783,6 +4798,104 @@ function toggleWrapAtSelection(d, placeholder){
 }
 function toggleStrikeAtSelection(){ toggleWrapAtSelection('~~', 'strikethrough'); }
 function toggleHighlightAtSelection(){ toggleWrapAtSelection('==', 'highlight'); }
+// ---- Text style menu (v1.65.0): small text, text colour, highlight colour ----
+// Writes {small:text} / {red:text} / {bg-yellow:text} / {ff8800:text} around the selection (see
+// applyStyleSpans). Same on/off behaviour as the other toolbar buttons: the same style on the same text takes it
+// off, another colour of the same kind swaps it. Text colour, highlight colour and small text stack, so
+// {red:{small:text}} is small AND red. Several selected lines are styled line by line.
+function braceBalanced(str){
+  let d = 0;
+  for(const ch of str){ if(ch === '{') d++; else if(ch === '}'){ d--; if(d < 0) return false; } }
+  return d === 0;
+}
+// {k:body} wrapped exactly around [is, ie) — either just outside the selection or including the braces.
+function styleWrapAround(v, is, ie){
+  const head = v.slice(Math.max(0, is - 20), is).match(/\{([^{}:\s]+):$/);
+  if(head && STYLE_KEY_RE.test(head[1]) && v[ie] === '}' && braceBalanced(v.slice(is, ie)))
+    return { k: head[1], a: is - head[0].length, b: is, c: ie, d: ie + 1 };
+  const m = v.slice(is, ie).match(/^\{([^{}:\s]+):([\s\S]*)\}$/);
+  if(m && STYLE_KEY_RE.test(m[1]) && braceBalanced(m[2]))
+    return { k: m[1], a: is, b: is + m[1].length + 2, c: ie - 1, d: ie };
+  return null;
+}
+function styleTextOnce(inner, key){
+  const m = inner.match(/^\{([^{}:\s]+):([\s\S]*)\}$/);
+  const w = m && STYLE_KEY_RE.test(m[1]) && braceBalanced(m[2]) ? m : null;
+  const group = key === 'clear' ? null : styleGroup(key);
+  if(w && (key === 'clear' || styleGroup(w[1]) === group)) return w[1] === key || key === 'clear' ? w[2] : `{${key}:${w[2]}}`;
+  return key === 'clear' ? inner : `{${key}:${inner}}`;
+}
+function applyTextStyle(key){
+  closeStyleMenu();
+  const ta = document.getElementById('mdEditArea');
+  if(!ta || !(key === 'clear' || STYLE_KEY_RE.test(key))) return;
+  pushUndoBeforeEdit();
+  const v = ta.value, start = ta.selectionStart, end = ta.selectionEnd;
+  const sel = v.slice(start, end);
+  if(sel.includes('\n')){
+    const ls = start ? v.lastIndexOf('\n', start - 1) + 1 : 0;
+    let le = v.indexOf('\n', end); if(le === -1) le = v.length;
+    const out = v.slice(ls, le).split('\n').map(l=>{
+      const x = markSplitLine(l);
+      return x.inner ? x.prefix + x.lead + styleTextOnce(x.inner, key) + x.trail : l;
+    }).join('\n');
+    ta.value = v.slice(0, ls) + out + v.slice(le);
+    ta.focus(); ta.setSelectionRange(ls, ls + out.length);
+    noteStyleChanged(ta);
+    return;
+  }
+  const m = sel.match(/^(\s*)([\s\S]*?)(\s*)$/);
+  const inner = m[2];
+  if(!inner){
+    if(key === 'clear') return;
+    const ph = key === 'small' ? 'small text' : 'text';
+    ta.value = v.slice(0, end) + `{${key}:${ph}}` + v.slice(end);
+    ta.focus(); ta.setSelectionRange(end + key.length + 2, end + key.length + 2 + ph.length);
+    noteStyleChanged(ta);
+    return;
+  }
+  const is = start + m[1].length, ie = is + inner.length;
+  const w = styleWrapAround(v, is, ie);
+  const group = key === 'clear' ? null : styleGroup(key);
+  if(w && (key === 'clear' || styleGroup(w.k) === group)){
+    const swap = key !== 'clear' && w.k !== key;
+    const open = swap ? `{${key}:` : '', close = swap ? '}' : '';
+    const body = v.slice(w.b, w.c);
+    ta.value = v.slice(0, w.a) + open + body + close + v.slice(w.d);
+    ta.focus(); ta.setSelectionRange(w.a + open.length, w.a + open.length + body.length);
+  } else if(key === 'clear'){
+    return;
+  } else {
+    ta.value = v.slice(0, is) + `{${key}:` + inner + '}' + v.slice(ie);
+    ta.focus(); ta.setSelectionRange(is + key.length + 2, is + key.length + 2 + inner.length);
+  }
+  noteStyleChanged(ta);
+}
+function noteStyleChanged(ta){ ta.dispatchEvent(new Event('input', { bubbles:true })); }
+// <input type=color> gives "#rrggbb"; the note stores the six digits without the "#".
+function applyCustomStyle(kind){
+  const el = document.getElementById(kind === 'bg' ? 'styleCustomBg' : 'styleCustomText');
+  const hex = el && /^#[0-9a-fA-F]{6}$/.test(el.value) ? el.value.slice(1).toLowerCase() : '';
+  if(hex) applyTextStyle(kind === 'bg' ? 'bg-' + hex : hex);
+}
+function closeStyleMenu(){
+  const menu = document.getElementById('styleMenu'), btn = document.getElementById('styleMenuBtn');
+  if(menu) menu.style.display = 'none';
+  if(btn) btn.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('pointerdown', styleMenuOutside, true);
+}
+function styleMenuOutside(e){
+  const menu = document.getElementById('styleMenu'), btn = document.getElementById('styleMenuBtn');
+  if(menu && !menu.contains(e.target) && !(btn && btn.contains(e.target))) closeStyleMenu();
+}
+function toggleStyleMenu(){
+  const menu = document.getElementById('styleMenu'), btn = document.getElementById('styleMenuBtn');
+  if(!menu) return;
+  if(menu.style.display !== 'none'){ closeStyleMenu(); return; }
+  menu.style.display = 'flex';
+  if(btn) btn.setAttribute('aria-expanded', 'true');
+  document.addEventListener('pointerdown', styleMenuOutside, true);
+}
 // Toggles a leading "## " on the current line — tapping again on an already-
 // headed line removes it rather than stacking another #, so the button
 // behaves like an on/off switch rather than only ever adding more.
@@ -5601,6 +5714,36 @@ function shelfLinkIcon(type){
 // let a mark wrap other formatting, e.g. ==**bold**==. The content must not
 // start or end with whitespace or the delimiter character, so "a == b" and a
 // bare "======" line are left alone.
+// v1.65.0: {small:text}, {red:text}, {bg-yellow:text}, {ff8800:text}, {bg-ffe08a:text}. Words are palette
+// names (STYLE_TEXT / STYLE_BG); six hex digits (no #, which would read as a #tag) are any colour. They nest
+// ({red:{small:text}}), stay on one line, and anything unrecognised ({foo:bar} in plain text) is left alone.
+const STYLE_TEXT = ['red','orange','green','blue','purple','pink','gray'];
+const STYLE_BG = ['yellow','green','blue','pink','orange','purple','gray'];
+const STYLE_KEY_RE = /^(small|(?:bg-)?(?:[a-z]+|[0-9a-f]{6}))$/;
+function styleKeyKind(k){
+  if(k === 'small') return 'small';
+  const bg = k.startsWith('bg-'), name = bg ? k.slice(3) : k;
+  if(/^[0-9a-f]{6}$/.test(name)) return bg ? 'bg-hex' : 'text-hex';
+  if(bg) return STYLE_BG.includes(name) ? 'bg' : null;
+  return STYLE_TEXT.includes(name) ? 'text' : null;
+}
+function styleGroup(k){ return k === 'small' ? 'small' : k.startsWith('bg-') ? 'bg' : 'text'; }
+function applyStyleSpans(html){
+  const re = /\{(small|(?:bg-)?(?:[a-z]+|[0-9a-f]{6})):([^{}\n]*)\}/g;
+  for(let i = 0; i < 4; i++){
+    const next = html.replace(re, (whole, k, body)=>{
+      const kind = styleKeyKind(k);
+      if(!kind || !body.trim()) return whole;
+      if(kind === 'small') return `<span class="ts-small">${body}</span>`;
+      if(kind === 'text-hex') return `<span style="color:#${k}">${body}</span>`;
+      if(kind === 'bg-hex') return `<span class="ts-bgx" style="background:#${k.slice(3)}">${body}</span>`;
+      return `<span class="ts-${k}">${body}</span>`;
+    });
+    if(next === html) break;
+    html = next;
+  }
+  return html;
+}
 function applyInlineMarks(html){
   const held = [];
   let s = html.replace(/<code>[\s\S]*?<\/code>|<[^>]+>/g, m=>{
@@ -5609,6 +5752,7 @@ function applyInlineMarks(html){
   });
   s = s.replace(/~~([^\s~](?:.*?[^\s~])?)~~/g,'<del>$1</del>');
   s = s.replace(/==([^\s=](?:.*?[^\s=])?)==/g,'<mark class="md-mark">$1</mark>');
+  s = applyStyleSpans(s);
   return s.replace(/\u0000T(\d+)\u0000/g, (_, i)=>held[+i] !== undefined ? held[+i] : '');
 }
 // Indentation in reading view (v1.45.1). Leading spaces/tabs used to vanish
@@ -5976,17 +6120,22 @@ function renderMarkdown(src, linkTypes){
       // with curNoteRaw.split(/\n{2,}/)[blockIdx].split('\n')[lineIdx].
       const lines = block.split('\n');
       let isTaskList = false;
-      const items = lines.map((l,li)=>{
-        if(!l.trim()) return '';
+      // v1.65.0: an INDENTED line that is not itself a bullet, right under a bullet, is a second row of that
+      // item: same item, line break, no dot. (Before, every such line got a dot of its own.) Raw line numbers
+      // still come from the unfiltered split, so checkboxes keep pointing at the right line.
+      const built = [];
+      lines.forEach((l,li)=>{
+        if(!l.trim()) return;
+        if(built.length && /^[ \t]/.test(l) && !/^\s*[-*]\s+/.test(l)){ built[built.length - 1].rows.push(l.trim()); return; }
         const stripped = l.replace(/^\s*[-*]\s+/,'');
         const taskMatch = stripped.match(/^\[( |x|X)\]\s*(.*)$/);
         if(taskMatch){
           isTaskList = true;
           const checked = /x/i.test(taskMatch[1]);
-          return `${mdLiOpen(l, 'task-item')}<label><input type="checkbox" data-block-idx="${idx}" data-line-idx="${lineBase + li}"${checked ? ' checked' : ''}><span${checked ? ' class="done"' : ''}>${taskMatch[2]}</span></label></li>`;
-        }
-        return `${mdLiOpen(l)}${stripped}</li>`;
-      }).join('');
+          built.push({ open: mdLiOpen(l, 'task-item'), inner: `<label><input type="checkbox" data-block-idx="${idx}" data-line-idx="${lineBase + li}"${checked ? ' checked' : ''}><span${checked ? ' class="done"' : ''}>${taskMatch[2]}</span></label>`, rows: [] });
+        } else built.push({ open: mdLiOpen(l), inner: stripped, rows: [] });
+      });
+      const items = built.map(b=>`${b.open}${b.inner}${b.rows.map(r=>`<br><span class="li-row">${r}</span>`).join('')}</li>`).join('');
       html = `<ul${isTaskList ? ' class="task-list"' : ''}>${items}</ul>`;
     } else html = `<p>${mdBrLines(block)}</p>`;
     return html;
@@ -7277,7 +7426,7 @@ const UI_ACTIONS = Object.freeze({
   saveEditNote, saveItem, selectAllToggle, setExportMode, setPref, showStorageDetail, skip,
   startEditFromFind, startEditNote, toggleBoldAtSelection, toggleBookmark, toggleBookmarkPanel,
   toggleDeepSearch, toggleFindBar, toggleFindCase, toggleHeadingAtLine,
-  toggleHighlightAtSelection, toggleIndexPanel, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
+  toggleHighlightAtSelection, toggleStyleMenu, applyTextStyle, applyCustomStyle, toggleIndexPanel, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
   toggleSelectMode, toggleSettingsPanel, toggleShelfPlay, toggleSortMode,
   toggleStrikeAtSelection, undoDelete, undoEdit
 });

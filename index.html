@@ -552,6 +552,49 @@
   }
   .ebar-tools .tool-esc{font-size:12px;font-weight:600;letter-spacing:.2px;}
   .ebar-tools .tool-hl{background:rgba(255,213,74,.5);border-radius:3px;padding:0 4px;}
+  /* v1.65.0: small text, text colour, highlight colour ({small:..} {red:..} {bg-yellow:..}) and the second row under a bullet */
+  .mdbody .ts-small{font-size:.8em;}
+  .mdbody .li-row{display:inline-block;}
+  .mdbody .ts-bgx{border-radius:3px;padding:0 2px;color:#2a2822;}
+  .mdbody .ts-red{color:#d6453d;}
+  .mdbody .ts-orange{color:#d9822b;}
+  .mdbody .ts-green{color:#3f9b5b;}
+  .mdbody .ts-blue{color:#3b7dd8;}
+  .mdbody .ts-purple{color:#8e62d0;}
+  .mdbody .ts-pink{color:#d1568f;}
+  .mdbody .ts-gray{color:#8a8578;}
+  .mdbody .ts-bg-yellow{background:rgba(255,213,74,.38);border-radius:3px;padding:0 2px;}
+  .mdbody .ts-bg-green{background:rgba(76,175,80,.32);border-radius:3px;padding:0 2px;}
+  .mdbody .ts-bg-blue{background:rgba(66,133,244,.30);border-radius:3px;padding:0 2px;}
+  .mdbody .ts-bg-pink{background:rgba(233,98,160,.30);border-radius:3px;padding:0 2px;}
+  .mdbody .ts-bg-orange{background:rgba(255,152,0,.32);border-radius:3px;padding:0 2px;}
+  .mdbody .ts-bg-purple{background:rgba(156,102,224,.30);border-radius:3px;padding:0 2px;}
+  .mdbody .ts-bg-gray{background:rgba(128,128,128,.30);border-radius:3px;padding:0 2px;}
+  .ebar{position:relative;}
+  .style-menu{position:absolute;left:24px;bottom:100%;margin-bottom:6px;z-index:30;flex-direction:column;gap:8px;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.22);max-width:calc(100vw - 32px);}
+  .style-menu .sm-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .style-menu .sm-label{width:68px;font-size:12px;color:var(--ink-soft);}
+  .style-menu .sm-sw{width:26px;height:26px;border-radius:50%;border:1px solid var(--line);padding:0;cursor:pointer;}
+  .style-menu .sm-custom{display:inline-flex;width:26px;height:26px;}
+  .style-menu .sm-custom input{width:26px;height:26px;padding:0;border:1px solid var(--line);border-radius:50%;background:none;cursor:pointer;}
+  .style-menu .sm-btn{padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink);font-size:13px;font-family:inherit;cursor:pointer;}
+  .ebar-tools .tool-ts{font-weight:700;white-space:nowrap;}
+  .ebar-tools .tool-ts-a{color:#d6453d;}
+  .ebar-tools .tool-ts small{font-size:.7em;font-weight:600;}
+  .style-menu .sw-red{background:#d6453d;}
+  .style-menu .sw-orange{background:#d9822b;}
+  .style-menu .sw-green{background:#3f9b5b;}
+  .style-menu .sw-blue{background:#3b7dd8;}
+  .style-menu .sw-purple{background:#8e62d0;}
+  .style-menu .sw-pink{background:#d1568f;}
+  .style-menu .sw-gray{background:#8a8578;}
+  .style-menu .sw-bg-yellow{background:rgba(255,213,74,.78);}
+  .style-menu .sw-bg-green{background:rgba(76,175,80,.72);}
+  .style-menu .sw-bg-blue{background:rgba(66,133,244,.70);}
+  .style-menu .sw-bg-pink{background:rgba(233,98,160,.70);}
+  .style-menu .sw-bg-orange{background:rgba(255,152,0,.72);}
+  .style-menu .sw-bg-purple{background:rgba(156,102,224,.70);}
+  .style-menu .sw-bg-gray{background:rgba(128,128,128,.70);}
   .ebar-actions{display:flex;gap:10px;}
   .ebar-actions button{flex:1;padding:10px;border-radius:8px;border:none;font-size:14px;font-weight:500;}
   .ebar-actions .cancel{background:transparent;border:1px solid var(--line) !important;color:var(--ink);}
@@ -1276,8 +1319,14 @@ columns: 分类 | 笔记
       <p>Or select some text in the editor and tap the <del>S</del> or <mark class="md-mark">A</mark> toolbar button — tap it again on the same text to take the marks off.</p>
       <details class="hc-more"><summary>More details</summary><p>Select several lines and tap once to mark each line separately; list, checkbox and quote markers stay in front, so <code>- [ ] buy milk</code> becomes <code>- [ ] ~~buy milk~~</code> and is still a tappable checklist item.</p><p>They combine with other formatting (<code>==**bold**==</code>) and work inside tables and callout titles. Keep the text snug against the marks — <code>== word ==</code> with spaces inside stays as typed — and nothing is marked inside code.</p></details>
       </section>
+      <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">🎨</span>Small text &amp; colours</div>
+            <p><span class="ts-small">{small:small text}</span> · <span class="ts-red">{red:red text}</span> · <span class="ts-bg-yellow">{bg-yellow:highlight colour}</span></p>
+      <p>Select text and tap the <b>A<small>a</small></b> toolbar button: pick a text colour, a highlight colour, or small text. Tap the same one again to take it off. They can be combined: <code>{red:{small:text}}</code>.</p>
+      <details class="hc-more"><summary>More details</summary><p>Colour names: red, orange, green, blue, purple, pink, gray (text) and yellow, green, blue, pink, orange, purple, gray (highlight, written <code>bg-yellow</code> …). The round colour wheels in the menu pick any colour; the note then holds six hex digits, e.g. <code>{ff8800:text}</code> (no <code>#</code>, which would make a tag). A style stays on one line.</p></details>
+      </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">📋</span>Lists</div>
             <p><code>- item</code> for a bullet list, <code>1. item</code> for a numbered list.</p>
+      <p>A <b>second row without a dot</b>: press <b>Shift+Enter</b> at the end of an item, or start the next line with two spaces. It sits under the item, no dot or number.</p>
       
       
       <p>Tappable checklist — tap in the reader to check it off, no need to open the editor:</p>
