@@ -157,8 +157,9 @@ service-worker.js    — offline cache (has its own version constant)
 manifest.json        — Web App Manifest
 icons/               — favicon.svg, icon-192.png, icon-512.png,
                         icon-maskable-512.png, apple-touch-icon.png
-lib/                  — vendored pdf.js (pdf.min.mjs, pdf.worker.min.mjs),
-                        used by the PDF reader; no CDN dependency
+lib/                  — vendored pdf.js 6.4.299 (pdf.min.mjs, pdf.worker.min.mjs)
+                        and lib/wasm/ (jbig2, openjpeg, qcms decoders), used by the
+                        PDF reader; no CDN dependency
 ```
 
 ## Deploying (GitHub Pages)
@@ -178,6 +179,9 @@ lib/                  — vendored pdf.js (pdf.min.mjs, pdf.worker.min.mjs),
       the other as a reminder.)
 - [ ] If you added/renamed/removed any static file, update `PRECACHE_URLS`
       in `service-worker.js` to match.
+- [ ] Updating pdf.js: replace `lib/pdf.min.mjs`, `lib/pdf.worker.min.mjs` **and** the whole
+      `lib/wasm/` folder from the same `pdfjs-dist` release (`build/` + `wasm/`). A mismatched
+      or missing `wasm/` makes scanner PDFs open as blank pages.
 - [ ] Commit and push both files together, never just one.
 
 **Why this matters:** the version badge only tells you what code shipped in
@@ -240,6 +244,11 @@ most common reason the two look out of sync.
   - `tests/test_back_button.js` (17 checks, plain node). No data-format change.
 - **v1.59.1** (2026-10-01) — New **Start page** setting (Ctrl+K → "Start page…"): what opens after unlocking. Shelf (default, unchanged if never picked), Last page I opened, A page I choose (any note/file; picked from a list), or the Tags page.
   - New pref `startPage` (`{mode, id}`; removed again when Shelf is picked) and `lastOpenId` (only written while "Last page" is chosen). A page that was deleted falls back to the Shelf. Applied once per app start, after unlock.
+- **v1.65.2** (2026-10-04) — Vendored pdf.js updated **6.2.108 → 6.4.299** (latest `pdfjs-dist`), and PDFs saved by a flat-bed scanner no longer open as blank pages.
+  - Update: `lib/pdf.min.mjs` + `lib/pdf.worker.min.mjs` replaced with the official 6.4.299 `build/` files (same names, same API; the reader's `getPage` / `getViewport` / `render` calls did not change).
+  - Blank scans: since pdf.js 5 the decoders for 1-bit scanner pages (CCITT / JBIG2), JPEG2000 and ICC colour are WebAssembly files that must be given to `getDocument()` as `wasmUrl`; the app never did, so such a page drew nothing. New folder `lib/wasm/` (`jbig2.wasm`, `openjpeg.wasm`, `qcms_bg.wasm` + licence files, from the same 6.4.299 package); `app.js` passes `wasmUrl`; the three `.wasm` files are in the service worker's `PRECACHE_URLS` so they work offline.
+  - CSP `script-src` is now `'self' 'wasm-unsafe-eval'` (compiling WebAssembly only; still no `'unsafe-inline'`, no `'unsafe-eval'`).
+  - Tests: new `tests/test_pdf_wasm.js` (12 checks); the CSP check in `tests/test_dispatcher.js` now allows exactly that one extra keyword. No data-format change.
 - **v1.65.1** (2026-10-03) — Fix: tapping a toolbar button in the note editor (Bold, Strike, Highlight, the new Aa menu, Heading, divider, date, links, table, Undo / Redo) threw the editor to the **bottom** of the note, so you had to scroll back up to find the change. Cause: each of them sets the text again (the caret goes to the end) and then focuses the box, and the browser scrolls the caret into view on focus. Now the editor box keeps its scroll position when its text is set and its `focus()` never scrolls (`guardEditorScroll`, once for every button). Typing, Enter and arrow keys are unchanged. Reproduced and checked in Chromium (before: scroll 2412 → 4137; after: stays 2412). Test: tests/test_editor_scroll_guard.js (7 checks).
 - **v1.65.0** (2026-10-03) — (1) A **second row under a bullet with no dot**: put a line indented by two spaces under a `- ` item (or press **Shift+Enter** at the end of the item in the editor) and reading view shows it under that item, same item, no dot or number. Before, every such line got a dot of its own. Works for checklist items and numbered items too. (2) A new **Aa** toolbar button (next to the highlight **A**) opens a small menu for the selected text: text colour, highlight colour, **small text**, and *Remove style*; the round colour wheels pick any colour. The note stores plain text: `{small:text}`, `{red:text}`, `{bg-yellow:text}`, `{ff8800:text}` (six hex digits, no `#`). They nest (`{red:{small:text}}`), stay on one line, are ignored inside code, and tapping the same style again removes it. The Markdown help has a new card. Test: tests/test_text_style.js (31 checks). Note: tests/test_panel_outside_click.js already failed 6 checks in v1.64.4 (not caused by this change).
 - **v1.64.4** (2026-10-02) — Fix for hosting on Cloudflare Pages: it redirects `/index.html` to `/`, and a redirected response stored by the service worker makes Chrome fail the page load (`net::ERR_FAILED`), so the installed app would not reopen. The manifest already starts at `./` and `index.html` is not precached on its own (v1.64.3); now the service worker also rebuilds any redirected response as a plain one before storing it (`plainResponse` in service-worker.js). The icon set is included in the pack again: `icons/icon-192.png`, `icon-512.png`, `icon-maskable-512.png`, `apple-touch-icon.png` (drawn from `favicon.svg`; the service worker precaches them and one missing file fails the install). After deploying, close and reopen the installed app once. Test: tests/test_service_worker.js (7 checks).

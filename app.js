@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.65.1';
-const APP_VERSION_DATE = '2026-10-03';
+const APP_VERSION = '1.65.2';
+const APP_VERSION_DATE = '2026-10-04';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -19,7 +19,8 @@ document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · '
 // than a <script> tag. Awaiting this promise at the point of use
 // (renderPdfPage()) means it doesn't matter whether this script or the
 // module finishes loading first. Worker vendored at lib/pdf.worker.min.mjs —
-// must stay in lockstep with lib/pdf.min.mjs's package/version.
+// must stay in lockstep with lib/pdf.min.mjs's package/version, and so must lib/wasm/
+// (image decoders; see wasmUrl at getDocument below).
 const pdfjsLibPromise = import('./lib/pdf.min.mjs').then(mod => {
   mod.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.mjs';
   return mod;
@@ -2785,7 +2786,11 @@ async function openReader(id){
       // new Function() for any internal optimization, so a malicious PDF
       // can't get script execution out of the parser. Harmless for
       // rendering — eval is only ever used there as a speed optimization.
-      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false }).promise;
+      // v1.65.2: wasmUrl is required since pdf.js 5. Scanner PDFs (1-bit CCITT / JBIG2 pages) and
+      // JPEG2000 images are decoded by the .wasm files in lib/wasm/; without it those pages come out
+      // blank ("JBig2 failed to initialize"). The folder must come from the SAME pdfjs-dist version.
+      const wasmUrl = new URL('lib/wasm/', document.baseURI).href;
+      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, wasmUrl }).promise;
       if(openToken !== curPdfRenderToken){
         // The reader was closed or moved on to a different item while this
         // document was parsing. Destroy this orphaned doc immediately rather
