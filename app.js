@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.65.2';
-const APP_VERSION_DATE = '2026-10-04';
+const APP_VERSION = '1.65.3';
+const APP_VERSION_DATE = '2026-10-05';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -2786,9 +2786,12 @@ async function openReader(id){
       // new Function() for any internal optimization, so a malicious PDF
       // can't get script execution out of the parser. Harmless for
       // rendering — eval is only ever used there as a speed optimization.
-      // v1.65.2: wasmUrl is required since pdf.js 5. Scanner PDFs (1-bit CCITT / JBIG2 pages) and
-      // JPEG2000 images are decoded by the .wasm files in lib/wasm/; without it those pages come out
-      // blank ("JBig2 failed to initialize"). The folder must come from the SAME pdfjs-dist version.
+      // v1.65.2/v1.65.3: wasmUrl is required since pdf.js 5. Scanner PDFs (1-bit CCITT / JBIG2 pages) and
+      // JPEG2000 images are decoded by the files in lib/wasm/; without it those pages come out blank
+      // ("JBig2 failed to initialize"). Two ways in, same result: the .wasm module, or - when the page's CSP
+      // does not allow compiling WebAssembly (script-src 'self' only, as here and in the host's _headers) -
+      // the plain-JavaScript *_nowasm_fallback.js next to it, which pdf.js loads by itself. The folder must
+      // come from the SAME pdfjs-dist version.
       const wasmUrl = new URL('lib/wasm/', document.baseURI).href;
       const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, wasmUrl }).promise;
       if(openToken !== curPdfRenderToken){

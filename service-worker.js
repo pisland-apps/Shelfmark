@@ -8,7 +8,7 @@
 // the badge (and your GitHub repo) shows a newer number. See APP_VERSION's
 // comment in app.js, and the deploy checklist in README.md.
 // ============================================================================
-const CACHE_VERSION = 'shelfmark-v1.65.2';
+const CACHE_VERSION = 'shelfmark-v1.65.3';
 
 const PRECACHE_URLS = [
   './',
@@ -23,7 +23,9 @@ const PRECACHE_URLS = [
   'lib/pdf.worker.min.mjs',
   'lib/wasm/jbig2.wasm',
   'lib/wasm/openjpeg.wasm',
-  'lib/wasm/qcms_bg.wasm'
+  'lib/wasm/qcms_bg.wasm',
+  'lib/wasm/jbig2_nowasm_fallback.js',
+  'lib/wasm/openjpeg_nowasm_fallback.js'
 ];
 // Deliberately NOT precaching './index.html' directly as its own cache key —
 // only './'. On some static hosts (GitHub/Cloudflare Pages), a direct
