@@ -673,7 +673,10 @@
   .img-zoom img{margin:auto;max-width:96vw;max-height:92vh;border-radius:6px;cursor:zoom-in;}
   .img-zoom.actual img{max-width:none;max-height:none;cursor:zoom-out;}
   .img-zoom-x{position:fixed;top:calc(10px + env(safe-area-inset-top,0px));right:12px;width:40px;height:40px;border-radius:50%;border:none;background:rgba(255,255,255,.2);color:#fff;font-size:26px;line-height:1;cursor:pointer;}
-  .md-table-wrap{overflow-x:auto;margin:14px 0;}
+  /* Frozen header row (v1.66.0): the wrapper scrolls (both ways) and the header cells stick to its top.
+     Short tables never reach the max-height, so they look exactly as before. */
+  .md-table-wrap{overflow:auto;max-height:min(72vh,680px);margin:14px 0;}
+  .mdbody .md-table-wrap table thead th{position:sticky;top:0;z-index:2;box-shadow:0 1px 0 var(--line);}
   /* Editing table cells in reading view (v1.38.0) */
   .mdbody td.tcell,.mdbody th.tcell{cursor:text;}
   @media (hover:hover) and (pointer:fine){ .mdbody .tcell:not(.editing):hover{background:var(--paper2);} }
@@ -896,19 +899,19 @@
   }
 
   /* ---- undo-delete toast ---- */
-  #undoToast{
+  #undoToast,#tableUndoToast{
     position:fixed; left:50%; transform:translateX(-50%);
     bottom:calc(20px + env(safe-area-inset-bottom,0px)); z-index:200;
     background:var(--ink); color:var(--paper); border-radius:10px;
     padding:12px 10px 12px 18px; display:none; align-items:center; gap:16px;
     font-size:14px; box-shadow:0 6px 20px rgba(0,0,0,.25); max-width:calc(100vw - 32px);
   }
-  #undoToast.show{display:flex;}
-  #undoToast button{
+  #undoToast.show,#tableUndoToast.show{display:flex;}
+  #undoToast button,#tableUndoToast button{
     background:none; border:none; color:var(--paper); font-weight:600;
     font-size:14px; padding:6px 10px; border-radius:6px; flex-shrink:0;
   }
-  #undoToast button:active{background:rgba(255,255,255,.15);}
+  #undoToast button:active,#tableUndoToast button:active{background:rgba(255,255,255,.15);}
 
   /* ---- persistent mini-player: fixed bottom bar for whatever's playing,
      visible from the shelf list AND from inside the reader (PDF/note/image)
@@ -994,6 +997,11 @@
 <div id="undoToast">
   <span id="undoToastText">Removed from your shelf</span>
   <button data-on-click="undoDelete">Undo</button>
+</div>
+
+<div id="tableUndoToast">
+  <span id="tableUndoText">Table changed</span>
+  <button data-on-click="undoTableChange">Undo</button>
 </div>
 
 <div id="miniPlayer">

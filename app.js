@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.65.3';
+const APP_VERSION = '1.66.0';
 const APP_VERSION_DATE = '2026-10-05';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -5455,6 +5455,7 @@ function wireHeadingFold(container){
 
 
 function closeReader(){
+  dropTableUndo();
   flushDraftNow(); // leaving mid-edit keeps the draft (offered back next time this note is opened)
   stopDraftTimer();
   closeWikiAutocomplete();
@@ -6486,6 +6487,7 @@ async function selectNoteTab(arg){
   if(i === curTabIdx) return renameNoteTab();
   const busy = tabsBusyMessage();
   if(busy){ alert(busy); return; }
+  dropTableUndo();
   curTabIdx = i; curNoteRaw = curTabs[i].text;
   renderNoteTabs();
   const c = document.getElementById('rcontent'); if(c) c.scrollTop = 0;
@@ -6633,6 +6635,7 @@ async function applyTableEdit(edit, op){
       const curText = tableCellText(edit.td);
       if(curText !== edit.loaded) matrix[edit.m][edit.c] = curText.split('\n').join('<br>');
       let cancelled = false;
+      let undoLabel = null;   // set when this write deletes/merges/unmerges, so the user gets an Undo (v1.66.0)
       if(op.type === 'rowAfter'){
         // A merged cell that continues into the row below keeps continuing
         // through the new row ("^^" / "<<" are copied down), so inserting a
@@ -6667,6 +6670,7 @@ async function applyTableEdit(edit, op){
             if(rawIsU(n[cc]) && !rawIsU(o[cc])) n[cc] = rawIsL(o[cc]) ? MERGE_L : (o[cc] == null ? '' : o[cc]);
           }
           matrix.splice(edit.m, 1); target = { m: Math.min(edit.m, matrix.length - 1), c: edit.c };
+          undoLabel = 'Row deleted';
         }
       } else if(op.type === 'colDel'){
         const has = matrix.some(r=>rawHasText(r[edit.c]));
@@ -6680,16 +6684,17 @@ async function applyTableEdit(edit, op){
           });
           pad(sep, ncols); sep.splice(edit.c, 1);
           target = { m: edit.m, c: Math.min(edit.c, ncols - 2) };
+          undoLabel = 'Column deleted';
         }
       } else if(op.type === 'mergeR' || op.type === 'mergeD' || op.type === 'split'){
         const nw = Math.max(ncols, ...matrix.map(r=>r.length));
         matrix.forEach(r=>pad(r, nw));
-        if(op.type === 'split') tableSplit(matrix, edit.m, edit.c);
+        if(op.type === 'split'){ tableSplit(matrix, edit.m, edit.c); undoLabel = 'Cells unmerged'; }
         else {
           const dir = op.type === 'mergeR' ? 'R' : 'D';
           const dry = tableMerge(matrix, edit.m, edit.c, dir, true);
           if(!dry.ok) alert("These cells can't be merged: the neighbour has to line up exactly with this cell (same rows / columns), and the header row can't merge downwards.");
-          else if(!dry.lost || confirm("Merging keeps only this cell's text and discards the other cell's text. Continue?")) tableMerge(matrix, edit.m, edit.c, dir, false);
+          else if(!dry.lost || confirm("Merging keeps only this cell's text and discards the other cell's text. Continue?")){ tableMerge(matrix, edit.m, edit.c, dir, false); undoLabel = 'Cells merged'; }
         }
         target = { m: edit.m, c: edit.c };
       } else if(op.type === 'move'){
@@ -6708,6 +6713,7 @@ async function applyTableEdit(edit, op){
           await putNoteSlice(full);
           curNoteRaw = full;
           await rerenderNoteView();
+          if(undoLabel) offerTableUndo(undoLabel, edit.blockIdx, model.block, newBlock);
         }catch(err){
           failed = true;
           alert(isQuotaError(err) ? "Your device's storage is full, so this table change couldn't be saved." : "Couldn't save this table change — please try again.");
@@ -6727,6 +6733,49 @@ async function applyTableEdit(edit, op){
   pendingTableEdit = null;
   if(next) openTableCellAt(next);
 }
+// ---- Undo for table delete / merge / unmerge (v1.66.0) ----
+// One slot, like the shelf-item undo. It stores the table block's text from
+// before and after the change; Undo only goes ahead if that block still reads
+// exactly as it did right after the change, so it can never overwrite later
+// edits. The slot is dropped when the note closes or another tab is opened.
+let tableUndo = null;   // {noteId, tabIdx, blockIdx, before, after, timeoutId}
+function hideTableUndoToast(){ const t = document.getElementById('tableUndoToast'); if(t) t.classList.remove('show'); }
+function dropTableUndo(){
+  if(tableUndo){ clearTimeout(tableUndo.timeoutId); tableUndo = null; }
+  hideTableUndoToast();
+}
+function offerTableUndo(label, blockIdx, before, after){
+  dropTableUndo();
+  const timeoutId = setTimeout(dropTableUndo, 10000);
+  tableUndo = { noteId: curId, tabIdx: curTabs ? curTabIdx : 0, blockIdx, before, after, timeoutId };
+  document.getElementById('tableUndoText').textContent = label;
+  document.getElementById('tableUndoToast').classList.add('show');
+}
+async function undoTableChange(){
+  const u = tableUndo;
+  if(!u) return;
+  dropTableUndo();
+  if(tableBusy) return;
+  if(tableEdit) cancelTableEdit(tableEdit);   // a cell was open: its unsaved typing is dropped
+  const cantUndo = ()=>alert("Couldn't undo: the note has changed since. Use Undo in the note editor instead.");
+  if(curId !== u.noteId || curType !== 'markdown' || (curTabs ? curTabIdx : 0) !== u.tabIdx || curNoteRaw == null){ cantUndo(); return; }
+  const parts = curNoteRaw.split(/(\n{2,})/);
+  if(parts[u.blockIdx * 2] !== u.after){ cantUndo(); return; }
+  parts[u.blockIdx * 2] = u.before;
+  const full = parts.join('');
+  try{
+    await putNoteSlice(full);
+    curNoteRaw = full;
+    await rerenderNoteView();
+  }catch(err){
+    alert(isQuotaError(err) ? "Your device's storage is full, so this couldn't be undone." : "Couldn't undo — please try again.");
+  }
+}
+(function wireTableUndoToast(){
+  const t = document.getElementById('tableUndoToast');
+  // keep focus where it is, so pressing Undo doesn't first blur-save an open cell
+  if(t) t.addEventListener('pointerdown', e=>e.preventDefault());
+})();
 function openTableCellAt(pos){
   const block = document.querySelector(`.mdblock[data-idx="${pos.blockIdx}"]`);
   const table = block && block.querySelector('table');
@@ -7456,7 +7505,7 @@ const UI_ACTIONS = Object.freeze({
   toggleDeepSearch, toggleFindBar, toggleFindCase, toggleHeadingAtLine,
   toggleHighlightAtSelection, toggleStyleMenu, applyTextStyle, applyCustomStyle, toggleIndexPanel, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
   toggleSelectMode, toggleSettingsPanel, toggleShelfPlay, toggleSortMode,
-  toggleStrikeAtSelection, undoDelete, undoEdit
+  toggleStrikeAtSelection, undoDelete, undoEdit, undoTableChange
 });
 (function installUiDispatcher(){
   const SELECTORS = {
