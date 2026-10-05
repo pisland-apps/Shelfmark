@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.66.0';
+const APP_VERSION = '1.67.0';
 const APP_VERSION_DATE = '2026-10-05';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -293,6 +293,25 @@ document.addEventListener('keydown', e=>{
 // Erase from inside the app (v1.48.2). In no-passcode mode there is no lock
 // screen, so the lock screen's "Forgot passcode? Erase" link is never shown —
 // this is the way to start over from the command palette / Passcode panel.
+// ---- Shelf key info for the one-tap backup (v1.67.0) ----
+// The shelf key is PBKDF2(passcode, salt, iterations). The salt and iteration count are not secret (they sit
+// in the 'auth' record). A backup that carries them in its header and is sealed with the shelf key itself is
+// an ordinary v2 .shelfmark file whose passphrase is the shelf passcode, so the existing import opens it
+// unchanged. We only trust the record after it decrypts its own verifier with the key in memory, so a stale
+// or mismatched record can never produce a backup nobody can open.
+let shelfKdf = null;   // { salt: base64, iterations } or null (no passcode / not confirmed)
+async function refreshShelfKdf(){
+  shelfKdf = null;
+  try{
+    const a = await getAuth();
+    if(!a || a.mode === 'device' || !a.salt || !cryptoKey) return;
+    const it = safeIterations(a.iterations);
+    if(!it || b642buf(a.salt).length !== 16) return;
+    const plain = await aesDecrypt(cryptoKey, b642buf(a.verifierIv), b642buf(a.verifierCipher));
+    if(new TextDecoder().decode(plain) !== 'shelfmark-ok') return;
+    shelfKdf = { salt: a.salt, iterations: it };
+  }catch(e){ shelfKdf = null; }
+}
 // Two steps (confirm + typing ERASE) because, unlike the lock-screen link, it
 // is reachable while the shelf is open and there is no undo.
 function eraseShelfFromApp(){
@@ -309,6 +328,7 @@ function onResetRequest(){
 }
 async function unlockApp(){
   document.getElementById('lockScreen').classList.add('hidden');
+  refreshShelfKdf().catch(()=>{});   // v1.67.0: lets the 💾 button back up with the shelf passcode, no typing
   const saved = await getPrefsDecrypted();
   if(saved) prefs = { ...prefs, ...saved };
   applyPrefs(prefs);
@@ -486,6 +506,7 @@ async function reencryptEverything(newKey, newAuthRec, onProgress){
     cryptoKey = newKey;
     keyEpoch++;
     dropUndoSlot();
+    refreshShelfKdf().catch(()=>{});   // the passcode changed: the shelf salt did too
   }));
 }
 
@@ -1169,14 +1190,20 @@ let pendingImportBackup = null;
 
 function setExportMode(m){
   exportMode = m;
+  const quick = m === 'shelf';   // v1.67.0: 💾 one-tap backup sealed with the shelf passcode
   document.getElementById('expModeEnc').classList.toggle('active', m==='enc');
   document.getElementById('expModePlain').classList.toggle('active', m==='plain');
+  document.getElementById('expModeSeg').style.display = quick ? 'none' : '';
+  document.getElementById('expShelfNote').style.display = quick ? 'block' : 'none';
+  document.getElementById('expShelfNameRow').style.display = quick ? 'none' : '';
   document.getElementById('expPassFields').style.display = m==='enc' ? 'block' : 'none';
   document.getElementById('expPlainWarning').style.display = m==='plain' ? 'block' : 'none';
+  document.getElementById('expNoPassWarning').style.display = (m==='plain' && authMode !== 'passcode') ? 'block' : 'none';
   // The "put my name in the file" choice only matters for encrypted files:
   // a plain file is readable anyway, so its header always carries the name.
-  document.getElementById('expNameToggleRow').style.display = m==='enc' ? 'block' : 'none';
+  document.getElementById('expNameToggleRow').style.display = (m==='enc' || m==='shelf') && !quick ? 'block' : 'none';
   document.getElementById('expError').textContent = '';
+  const go = document.getElementById('expGoBtn'); if(go) go.style.display = quick ? 'none' : '';
 }
 // Advisory strength hint (v1.51.8). The 4-character minimum is unchanged and
 // nothing is blocked; this only tells people who chose something short that a
@@ -1438,9 +1465,14 @@ async function doExportInner(){
   const errEl = document.getElementById('expError');
   errEl.textContent = '';
   const plain = exportMode === 'plain';
+  const viaShelf = exportMode === 'shelf';   // v1.67.0: sealed with the shelf key already in memory
   // Everything up to openBackupSink is synchronous on purpose (see above).
   let pass = '';
-  if(!plain){
+  if(viaShelf && !(shelfKdf && cryptoKey)){
+    errEl.textContent = "Couldn't use the shelf passcode for this backup. Close this and use Export shelf from the command palette instead.";
+    return;
+  }
+  if(!plain && !viaShelf){
     pass = document.getElementById('exppass').value;
     if(pass.length < 4){ errEl.textContent = 'Use at least 4 characters.'; return; }
     if(pass !== document.getElementById('exppass2').value){ errEl.textContent = "Passphrases don't match."; return; }
@@ -1448,7 +1480,7 @@ async function doExportInner(){
   if(shelfCountHint === 0){ errEl.textContent = 'Your shelf is empty — nothing to export yet.'; return; }
   // Save the name/choice typed in the modal so it sticks for next time.
   prefs.shelfName = cleanShelfName(document.getElementById('expShelfName').value);
-  if(!plain) prefs.exportShelfName = document.getElementById('expNameInFile').checked;
+  if(!plain && !viaShelf) prefs.exportShelfName = document.getElementById('expNameInFile').checked;
   const includeName = plain ? true : prefs.exportShelfName !== false;
   const ext = plain ? '.json' : '.shelfmark';
   const mime = plain ? 'application/json' : 'application/octet-stream';
@@ -1472,6 +1504,12 @@ async function doExportInner(){
     const hdr = backupHeader(metas.length, includeName);
     if(plain){
       await writePlainBackup(sink, metas, hdr, progress, cancelled);
+    } else if(viaShelf){
+      // No PBKDF2 here: the shelf key is already derived. The header carries the shelf's own salt and
+      // iteration count, so the normal import re-derives the same key from the shelf passcode.
+      await writeEncryptedBackup(sink, metas, cryptoKey,
+        { ...hdr, encrypted:true, format:2, kdf:'PBKDF2', iterations: shelfKdf.iterations, salt: shelfKdf.salt, chunkSize: BACKUP_CHUNK },
+        progress, cancelled);
     } else {
       document.getElementById('expProgress').textContent = 'Preparing the key…';
       const salt = randomBytes(16);
@@ -1590,6 +1628,21 @@ function closeImportPassModal(){
   if(importRunning) importCancel = true;
   document.getElementById('importPassOverlay').style.display = 'none';
   pendingImportBackup = null; pendingImportInfo = null; pendingImportV2 = null;
+}
+// 💾 in the top bar (v1.67.0). Shelf with a passcode: one tap, the file picker / share sheet opens at once and
+// the backup is sealed with the shelf passcode (nothing to type). Shelf without a passcode: there is nothing
+// to follow, so the Export dialog opens on Plain JSON with a clear warning (and the Encrypted tab one tap away).
+// openExportModal + doExport run in the same tap, so the file picker still gets its user gesture.
+function quickBackup(){
+  if(exportRunning){ document.getElementById('exportOverlay').style.display = 'flex'; return; }
+  openExportModal();
+  if(authMode === 'passcode' && cryptoKey && shelfKdf){
+    setExportMode('shelf');
+    doExport();
+  } else if(authMode !== 'passcode'){
+    setExportMode('plain');
+  }
+  // passcode shelf whose key info could not be confirmed: the normal Encrypted dialog stays open
 }
 function closeExportModal(){
   if(exportRunning) exportCancel = true;
@@ -3085,7 +3138,44 @@ async function saveProgress(p){
   catch(err){ /* autosave — fail silently */ }
 }
 
+// Reading position around an edit (v1.67.0). The reading view is hidden while the editor is open, which
+// throws its scroll position away, so Save used to land at the top. startEditNote remembers where the
+// reading view was; Save returns to the paragraph the person was working on (the caret if it is on
+// screen in the editor, otherwise the middle of what the editor shows); Cancel / no change returns to
+// where the reading view was. Paragraph numbers are the same blank-line blocks the reader draws.
+let editEnterScroll = 0;
+function editReturnSpot(){
+  const ta = document.getElementById('mdEditArea');
+  if(!ta) return { scrollTop: editEnterScroll };
+  if(editBaselineValue !== null && ta.value === editBaselineValue) return { scrollTop: editEnterScroll };
+  const ranges = blockOffsets(ta.value);
+  let pos = ta.selectionStart;
+  try{
+    const c = caretPixelPosition(ta, pos);
+    const visible = c.top >= ta.scrollTop - c.lineHeight && c.top <= ta.scrollTop + ta.clientHeight;
+    if(!visible) pos = Math.round(((ta.scrollTop + ta.clientHeight / 2) / Math.max(ta.scrollHeight, 1)) * ta.value.length);
+  }catch(e){}
+  let idx = ranges.findIndex(r => pos <= r[1]);
+  if(idx < 0) idx = ranges.length - 1;
+  return { idx };
+}
+function restoreReadingSpot(spot){
+  const rc = document.getElementById('rcontent');
+  if(!rc || !spot) return;
+  if(spot.idx != null){
+    const mdv = document.getElementById('mdView');
+    let el = mdv.querySelector('.mdblock[data-idx="' + spot.idx + '"]');
+    if(!el){ const all = mdv.querySelectorAll('.mdblock'); el = all[all.length - 1] || null; }   // the note got shorter
+    if(el && typeof el.scrollIntoView === 'function'){
+      try{ revealBlock(el); }catch(e){}
+      el.scrollIntoView({ block: el.offsetHeight > rc.clientHeight ? 'start' : 'center' });
+      return;
+    }
+  }
+  rc.scrollTop = spot.scrollTop || 0;
+}
 function startEditNote(){
+  { const rc = document.getElementById('rcontent'); editEnterScroll = rc ? rc.scrollTop : 0; }
   // If an unsaved draft exists for this note, editing RESUMES it rather than
   // starting over from the saved text — otherwise the first autosave tick
   // would overwrite the draft the user never got back.
@@ -3449,6 +3539,7 @@ function cancelEditNote(){
   renderDraftBanner();
   if(id) clearDraft(id).catch(()=>{});
   leaveEditMode();
+  restoreReadingSpot({ scrollTop: editEnterScroll });
 }
 function leaveEditMode(){
   stopDraftTimer();
@@ -3467,6 +3558,7 @@ async function saveEditNote(){
   if(!curId) return;
   stopDraftTimer(); // no new draft write may start once Save has (an in-flight one finishes first — see serialized())
   const text = expandImagesForSave(document.getElementById('mdEditArea').value);
+  const spot = editReturnSpot();   // before anything is re-rendered
   try{
     await putNoteSlice(text);
   }catch(err){
@@ -3494,6 +3586,7 @@ async function saveEditNote(){
   renderDraftBanner();
   clearDraft(savedId).catch(()=>{}); // queued after the content write, so it can't resurrect stale text
   leaveEditMode();
+  restoreReadingSpot(spot);
 }
 
 // ---- Find / replace inside a note (v1.29.0) ----
@@ -7067,6 +7160,7 @@ function buildStaticCommands(){
       ...(extRootName ? [{ id:'ext-sync', icon:'&#128260;', label:'Sync notes folder now', hint: extRootName, action: ()=>extSync(true) },
                          { id:'ext-unlink', icon:'&#128279;', label:'Unlink notes folder', hint:'keeps files on disk', action: ()=>extUnlink() }] : [])
     ] : []),
+    { id:'quick-backup', icon:'&#128190;', label:'Save backup now', hint: authMode === 'passcode' ? 'uses your shelf passcode' : 'no passcode: plain file', action: ()=>quickBackup() },
     { id:'export', icon:'&#8679;', label:'Export shelf as JSON', hint:'', action: ()=>openExportModal() },
     { id:'shelf-name', icon:'&#127991;&#65039;', label:'Shelf name\u2026', hint: prefs.shelfName || 'not set', action: ()=>renameShelf() },
     { id:'start-page', icon:'&#127968;', label:'Start page\u2026', hint: startPageHint(), action: ()=>openStartPage() },
@@ -7505,7 +7599,7 @@ const UI_ACTIONS = Object.freeze({
   toggleDeepSearch, toggleFindBar, toggleFindCase, toggleHeadingAtLine,
   toggleHighlightAtSelection, toggleStyleMenu, applyTextStyle, applyCustomStyle, toggleIndexPanel, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
   toggleSelectMode, toggleSettingsPanel, toggleShelfPlay, toggleSortMode,
-  toggleStrikeAtSelection, undoDelete, undoEdit, undoTableChange
+  toggleStrikeAtSelection, undoDelete, undoEdit, undoTableChange, quickBackup
 });
 (function installUiDispatcher(){
   const SELECTORS = {

@@ -1044,6 +1044,7 @@
   <div class="bar">
     <div class="brand">Shelfmark<span>your own shelf, added by hand</span></div>
     <div style="display:flex;gap:8px;align-items:center;">
+      <button class="icon-btn" data-on-click="quickBackup" id="quickBackupBtn" title="Save a backup of the whole shelf (uses your shelf passcode)" aria-label="Save backup">&#128190;</button>
       <button class="icon-btn" data-on-click="openCommandPalette" title="Command palette (Ctrl+K)">&#128269;</button>
       <!-- These used to be individual header icons — with the command palette now
            covering all of them (plus theme switching and jump-to-tag), they're kept
@@ -1151,7 +1152,7 @@
 <div id="exportOverlay" class="overlay" style="display:none;">
   <div class="sheet">
     <h2>Export shelf</h2>
-    <div class="seg" style="margin-bottom:6px;">
+    <div class="seg" id="expModeSeg" style="margin-bottom:6px;">
       <button id="expModeEnc" data-on-click="setExportMode" data-args-click='["enc"]'>Encrypted</button>
       <button id="expModePlain" data-on-click="setExportMode" data-args-click='["plain"]'>Plain JSON</button>
     </div>
@@ -1162,13 +1163,21 @@
       <label for="exppass2">Confirm passphrase</label>
       <input id="exppass2" type="password" autocomplete="off" placeholder="Confirm passphrase">
     </div>
+    <div id="expShelfNote" style="display:none;font-size:13px;color:var(--ink-soft);line-height:1.55;margin:4px 0 6px;">
+      Sealed with your <strong>shelf passcode</strong> &mdash; nothing to type. To open this backup later (after a reinstall, or on another device) Import will ask for the shelf passcode you have <em>today</em>; if you change the passcode afterwards, this file still needs the old one.
+    </div>
+    <div id="expShelfNameRow">
     <label for="expShelfName">Shelf name (optional)</label>
     <input id="expShelfName" type="text" autocomplete="off" maxlength="60" placeholder="e.g. Ah Meng's shelf">
+    </div>
     <div id="expNameToggleRow" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;">
       <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
         <input id="expNameInFile" type="checkbox" checked style="width:auto;margin-top:3px;">
         <span>Show the name in the file name and in the file&rsquo;s header, so the backup can be identified without the passphrase. Untick to keep the name private &mdash; only a random shelf ID is then visible.</span>
       </label>
+    </div>
+    <div id="expNoPassWarning" style="display:none;font-size:13px;color:#b23b3b;margin-top:14px;line-height:1.5;">
+      &#9888; This shelf has no passcode, so there is nothing to protect the backup with automatically. It will be saved as a <strong>plain, unencrypted</strong> file. To encrypt it instead, switch to <strong>Encrypted</strong> above and choose a passphrase.
     </div>
     <div id="expPlainWarning" style="display:none;font-size:12.5px;color:var(--ink-soft);margin-top:14px;line-height:1.5;">
       This file will be fully readable by anyone who opens it — only choose this if you're storing it somewhere you already trust.
