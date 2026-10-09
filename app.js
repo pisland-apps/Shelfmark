@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.68.1';
+const APP_VERSION = '1.69.0';
 const APP_VERSION_DATE = '2026-10-09';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3009,6 +3009,7 @@ async function openReader(id){
         <div class="style-menu" id="styleMenu" style="display:none;" role="group" aria-label="Text style">
           <div class="sm-row"><span class="sm-label">Text</span>${STYLE_TEXT.map(k=>`<button type="button" class="sm-sw sw-${k}" data-on-click="applyTextStyle" data-arg-click="${k}" title="${k} text" aria-label="${k} text"></button>`).join('')}<label class="sm-custom" title="Any text colour"><input type="color" id="styleCustomText" value="#d6453d" data-on-change="applyCustomStyle" data-arg-change="text" aria-label="Custom text colour"></label></div>
           <div class="sm-row"><span class="sm-label">Highlight</span>${STYLE_BG.map(k=>`<button type="button" class="sm-sw sw-bg-${k}" data-on-click="applyTextStyle" data-arg-click="bg-${k}" title="${k} highlight" aria-label="${k} highlight"></button>`).join('')}<label class="sm-custom" title="Any highlight colour"><input type="color" id="styleCustomBg" value="#ffe08a" data-on-change="applyCustomStyle" data-arg-change="bg" aria-label="Custom highlight colour"></label></div>
+          <div class="sm-row"><span class="sm-label">Line</span>${STYLE_TEXT.map(k=>`<button type="button" class="sm-sw sw-${k}" data-on-click="applyLineColor" data-arg-click="${k}" title="${k} line" aria-label="${k} line"></button>`).join('')}<label class="sm-custom" title="Any line colour"><input type="color" id="styleCustomLine" value="#d6453d" data-on-change="applyCustomStyle" data-arg-change="line" aria-label="Custom line colour"></label><button type="button" class="sm-btn" data-on-click="applyLineColor" data-arg-click="plain" title="Plain divider line">Plain</button></div>
           <div class="sm-row"><button type="button" class="sm-btn" data-on-click="applyTextStyle" data-arg-click="small"><small>Small text</small></button><button type="button" class="sm-btn" data-on-click="applyTextStyle" data-arg-click="clear">Remove style</button></div>
         </div>
         <div class="ebar-tools">
@@ -5095,9 +5096,36 @@ function applyTextStyle(key){
 function noteStyleChanged(ta){ ta.dispatchEvent(new Event('input', { bubbles:true })); }
 // <input type=color> gives "#rrggbb"; the note stores the six digits without the "#".
 function applyCustomStyle(kind){
-  const el = document.getElementById(kind === 'bg' ? 'styleCustomBg' : 'styleCustomText');
+  const el = document.getElementById(kind === 'bg' ? 'styleCustomBg' : kind === 'line' ? 'styleCustomLine' : 'styleCustomText');
   const hex = el && /^#[0-9a-fA-F]{6}$/.test(el.value) ? el.value.slice(1).toLowerCase() : '';
-  if(hex) applyTextStyle(kind === 'bg' ? 'bg-' + hex : hex);
+  if(!hex) return;
+  if(kind === 'line') applyLineColor(hex);
+  else applyTextStyle(kind === 'bg' ? 'bg-' + hex : hex);
+}
+// v1.69.0: colour for a divider. If the cursor is on a divider line (---, *** or ___, with or without a
+// colour) that line is recoloured ('plain' takes the colour off); otherwise a new coloured divider is inserted
+// after the cursor / selection (the selected text is kept). (---, ___ and *** are the markdown divider spellings,
+// but *** has always been drawn as emphasis, not as a line, so only --- and ___ count here.)
+function applyLineColor(key){
+  closeStyleMenu();
+  const ta = document.getElementById('mdEditArea');
+  if(!ta || !(key === 'plain' || hrKeyOk(key))) return;
+  pushUndoBeforeEdit();
+  const v = ta.value, pos = ta.selectionStart;
+  const suffix = key === 'plain' ? '' : '{' + key + '}';
+  const ls = pos ? v.lastIndexOf('\n', pos - 1) + 1 : 0;
+  let le = v.indexOf('\n', pos); if(le === -1) le = v.length;
+  const m = v.slice(ls, le).match(/^(\s*)(-{3,}|_{3,})\s*(?:\{[^{}\n]*\})?\s*$/);   // *** is not drawn as a divider (it reads as emphasis), so it is not recoloured
+  if(m){
+    const nl = m[1] + m[2] + suffix;
+    ta.value = v.slice(0, ls) + nl + v.slice(le);
+    ta.focus(); ta.setSelectionRange(ls + nl.length, ls + nl.length);
+    return;
+  }
+  const end = ta.selectionEnd;
+  const block = (end > 0 && v[end - 1] !== '\n' ? '\n\n' : '') + '---' + suffix + '\n\n';
+  ta.value = v.slice(0, end) + block + v.slice(end);
+  ta.focus(); ta.setSelectionRange(end + block.length, end + block.length);
 }
 function closeStyleMenu(){
   const menu = document.getElementById('styleMenu'), btn = document.getElementById('styleMenuBtn');
@@ -5940,6 +5968,19 @@ function shelfLinkIcon(type){
 // names (STYLE_TEXT / STYLE_BG); six hex digits (no #, which would read as a #tag) are any colour. They nest
 // ({red:{small:text}}), stay on one line, and anything unrecognised ({foo:bar} in plain text) is left alone.
 const STYLE_TEXT = ['red','orange','green','blue','purple','pink','gray'];
+// v1.69.0: a divider may carry a colour: ---{red} (a text-colour name) or ---{d6453d} (six hex digits, no #),
+// the same names as {red:text}. A plain --- is unchanged. A name that is not a colour is not a divider at all
+// (the line stays ordinary text), so a typo never silently disappears.
+const HR_BLOCK_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*(?:\{([a-z]+|[0-9a-f]{6})\})?\s*$/;
+function hrKeyOk(k){ return STYLE_TEXT.includes(k) || /^[0-9a-f]{6}$/.test(k); }
+function hrBlockHtml(block){
+  const m = HR_BLOCK_RE.exec(block);
+  if(!m) return null;
+  const k = m[1];
+  if(!k) return '<hr>';
+  if(!hrKeyOk(k)) return null;
+  return /^[0-9a-f]{6}$/.test(k) ? `<hr class="hr-c" style="border-top-color:#${k}">` : `<hr class="hr-c hr-${k}">`;
+}
 const STYLE_BG = ['yellow','green','blue','pink','orange','purple','gray'];
 const STYLE_KEY_RE = /^(small|(?:bg-)?(?:[a-z]+|[0-9a-f]{6}))$/;
 function styleKeyKind(k){
@@ -6267,7 +6308,7 @@ function renderMarkdown(src, linkTypes){
     else if(/^<div class="shelf-index"/.test(block)) html = block;
     else if(/^<img class="md-img"/.test(block)) html = block;
     else if(looksLikeTable(block)) html = tableToHtml(block);
-    else if(/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(block)) html = '<hr>';
+    else if(hrBlockHtml(block) !== null) html = hrBlockHtml(block);
     else if(/^\s*&gt;/.test(block) && block.split('\n').every(l=>!l.trim() || /^\s*&gt;/.test(l))){
       const lines = block.split('\n').filter(l=>l.trim()).map(l=>l.replace(/^\s*&gt;\s?/,''));
       // Obsidian-style callout: a blockquote whose first line is
@@ -7699,7 +7740,7 @@ const UI_ACTIONS = Object.freeze({
   saveEditNote, saveItem, selectAllToggle, setExportMode, setPref, showStorageDetail, skip,
   startEditFromFind, startEditNote, toggleBoldAtSelection, toggleBookmark, toggleBookmarkPanel,
   toggleDeepSearch, toggleFindBar, toggleFindCase, toggleHeadingAtLine,
-  toggleHighlightAtSelection, toggleStyleMenu, applyTextStyle, applyCustomStyle, toggleIndexPanel, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
+  toggleHighlightAtSelection, toggleStyleMenu, applyTextStyle, applyCustomStyle, applyLineColor, toggleIndexPanel, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
   toggleSelectMode, toggleSettingsPanel, toggleShelfPlay, toggleShelfView, toggleAllCats, toggleSortMode,
   toggleStrikeAtSelection, undoDelete, undoEdit, undoTableChange, quickBackup
 });

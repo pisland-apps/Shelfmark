@@ -689,6 +689,14 @@
   .mdbody .callout-fold > .callout-body{margin-top:0;padding:0 14px 12px;}
   .mdbody ol{padding-left:1.4em;}
   .mdbody hr{border:none;border-top:1px solid var(--line);margin:20px 0;}
+  .mdbody hr.hr-c{border-top-width:2px;}
+  .mdbody hr.hr-red{border-top-color:#d6453d;}
+  .mdbody hr.hr-orange{border-top-color:#d9822b;}
+  .mdbody hr.hr-green{border-top-color:#3f9b5b;}
+  .mdbody hr.hr-blue{border-top-color:#3b7dd8;}
+  .mdbody hr.hr-purple{border-top-color:#8e62d0;}
+  .mdbody hr.hr-pink{border-top-color:#d1568f;}
+  .mdbody hr.hr-gray{border-top-color:#8a8578;}
   /* Thumbnail in reading view; tap to enlarge (v1.39.0, see openImageZoom) */
   .mdbody img.md-img{max-width:min(100%,280px);max-height:200px;width:auto;height:auto;object-fit:contain;border-radius:8px;display:block;margin:10px 0;cursor:zoom-in;}
   .img-zoom{position:fixed;top:0;left:0;right:0;bottom:0;z-index:1000;background:rgba(0,0,0,.88);display:flex;overflow:auto;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);}
@@ -1367,7 +1375,7 @@ columns: 分类 | 笔记
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">🎨</span>Small text &amp; colours</div>
             <p><span class="ts-small">{small:small text}</span> · <span class="ts-red">{red:red text}</span> · <span class="ts-bg-yellow">{bg-yellow:highlight colour}</span></p>
-      <p>Select text and tap the <b>A<small>a</small></b> toolbar button: pick a text colour, a highlight colour, or small text. Tap the same one again to take it off. They can be combined: <code>{red:{small:text}}</code>.</p>
+      <p>Select text and tap the <b>A<small>a</small></b> toolbar button: pick a text colour, a highlight colour, or small text. Tap the same one again to take it off. They can be combined: <code>{red:{small:text}}</code>. The <b>Line</b> row in the same menu colours a divider: put the cursor on a <code>---</code> line (or anywhere, to add a new one) and pick a colour; written <code>---{red}</code>.</p>
       <details class="hc-more"><summary>More details</summary><p>Colour names: red, orange, green, blue, purple, pink, gray (text) and yellow, green, blue, pink, orange, purple, gray (highlight, written <code>bg-yellow</code> …). The round colour wheels in the menu pick any colour; the note then holds six hex digits, e.g. <code>{ff8800:text}</code> (no <code>#</code>, which would make a tag). A style stays on one line.</p></details>
       </section>
       <section class="hcard hc-w"><div class="hc-title"><span class="hc-ic">📋</span>Lists</div>
