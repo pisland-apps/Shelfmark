@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.67.0';
-const APP_VERSION_DATE = '2026-10-05';
+const APP_VERSION = '1.68.0';
+const APP_VERSION_DATE = '2026-10-09';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -748,8 +748,80 @@ function toggleSortMode(){
   putPrefs(prefs).catch(()=>{});
   render();
 }
+// ---- Big-shelf helpers (v1.68.0) ----------------------------------------------------------------
+// A shelf with 100+ items is one very long scroll. Three display-only aids, none of which touches the
+// items themselves (all state lives in the encrypted prefs record):
+//   * Compact view  - prefs.shelfView 'cards' (as before) | 'compact' (one slim line per item).
+//   * Folded start  - the first time the shelf reaches BIG_SHELF items and nothing has been folded yet,
+//                     every category is folded once (prefs.bigShelfFolded stops it ever repeating).
+//   * Recent strip  - the last items opened (prefs.recentIds, newest first) as chips above the shelf.
+// Search always shows its matches open: a folded category must not hide a result.
+const BIG_SHELF = 40;        // shelf size at which categories are folded once
+const SHELF_BAR_MIN = 15;    // below this the Compact / Collapse-all / Recent row stays hidden
+const RECENT_KEEP = 12;      // ids remembered (some may be deleted later)
+const RECENT_SHOW = 8;       // chips drawn
+let lastRenderedCats = [];   // categories drawn by the last render() (for Collapse all / Expand all)
+function shelfViewMode(){ return prefs.shelfView === 'compact' ? 'compact' : 'cards'; }
+function toggleShelfView(){
+  prefs.shelfView = shelfViewMode() === 'compact' ? 'cards' : 'compact';
+  putPrefs(prefs).catch(()=>{});
+  render();
+}
+function allCatsFolded(){
+  return lastRenderedCats.length > 0 && lastRenderedCats.every(c => collapsedCats.has(c));
+}
+function updateFoldBtn(){
+  const fb = document.getElementById('foldAllBtn');
+  if(fb) fb.textContent = allCatsFolded() ? 'Expand all' : 'Collapse all';
+}
+function toggleAllCats(){
+  if(searchQuery) return; // search shows everything open; nothing to fold
+  if(allCatsFolded()) for(const c of lastRenderedCats) collapsedCats.delete(c);
+  else for(const c of lastRenderedCats) collapsedCats.add(c);
+  prefs.collapsedCats = [...collapsedCats];
+  putPrefs(prefs).catch(()=>{});
+  render();
+}
+function rememberRecent(id){
+  if(typeof id !== 'string' || !id) return;
+  const cur = Array.isArray(prefs.recentIds) ? prefs.recentIds : [];
+  if(cur[0] === id) return;
+  prefs.recentIds = [id, ...cur.filter(x => x !== id)].slice(0, RECENT_KEEP);
+  putPrefs(prefs).catch(()=>{});
+}
+function renderShelfBar(allItems, cats){
+  const bar = document.getElementById('shelfBar');
+  if(!bar) return;
+  const show = allItems.length >= SHELF_BAR_MIN && !selectMode;
+  bar.style.display = show ? '' : 'none';
+  if(!show) return;
+  const searching = !!searchQuery;
+  document.getElementById('viewToggleBtn').textContent = shelfViewMode() === 'compact' ? 'Cards view' : 'Compact view';
+  document.getElementById('foldAllBtn').style.display = (searching || cats.length < 2) ? 'none' : '';
+  updateFoldBtn();
+  const strip = document.getElementById('recentStrip');
+  strip.innerHTML = '';
+  const byId = new Map(allItems.map(it => [it.id, it]));
+  const recent = (Array.isArray(prefs.recentIds) ? prefs.recentIds : []).map(id => byId.get(id)).filter(Boolean).slice(0, RECENT_SHOW);
+  if(searching || !recent.length){ strip.style.display = 'none'; return; }
+  strip.style.display = '';
+  const lab = document.createElement('span');
+  lab.className = 'rlabel'; lab.textContent = 'Recent';
+  strip.appendChild(lab);
+  for(const it of recent){
+    const chip = document.createElement('button');
+    chip.type = 'button'; chip.className = 'recentchip';
+    chip.style.setProperty('--t', TYPE_COLOR[it.type]);
+    chip.textContent = it.title; chip.title = it.title;
+    chip.onclick = () => openReader(it.id);
+    strip.appendChild(chip);
+  }
+}
+
 // Called once at unlock, after the saved prefs are merged in.
 function restoreShelfViewPrefs(){
+  prefs.shelfView = prefs.shelfView === 'compact' ? 'compact' : 'cards';
+  prefs.recentIds = Array.isArray(prefs.recentIds) ? prefs.recentIds.filter(x => typeof x === 'string').slice(0, RECENT_KEEP) : [];
   itemSortMode = prefs.itemSortMode === 'title' ? 'title' : 'newest';
   collapsedCats.clear();
   if(Array.isArray(prefs.collapsedCats)){
@@ -1994,7 +2066,7 @@ const WIDTH_MAP = {narrow:'640px', wide:'960px', full:'100%'};
 // it was typed, imported from a backup or synced from a folder. Such a link renders as a
 // plain link (see remoteMediaPlaceholder) that the person can open in a new tab. data:/blob:
 // media (pasted-in pictures, on-shelf audio links) still display in the note.
-let prefs = {theme:'auto', font:'serif', size:'m', width:'wide', sections:'plain', secLevel:'lv-auto', loopAudio:false, itemSortMode:'newest', collapsedCats:[], tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
+let prefs = {theme:'auto', font:'serif', size:'m', width:'wide', sections:'plain', secLevel:'lv-auto', loopAudio:false, itemSortMode:'newest', collapsedCats:[], shelfView:'cards', recentIds:[], bigShelfFolded:false, tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -2434,6 +2506,7 @@ async function render(){
   }
   const shelf = document.getElementById('shelf');
   shelf.innerHTML = '';
+  shelf.setAttribute('data-view', shelfViewMode());
   updateStorageBadge();
   lastRenderedIds = items.map(it=>it.id);
 
@@ -2460,6 +2533,19 @@ async function render(){
     putPrefs(prefs).catch(()=>{});
   }
   const cats = hasUncat ? [...order, 'Uncategorized'] : order;
+  lastRenderedCats = cats;
+  const searching = !!searchQuery;
+  // v1.68.0: the first time the shelf is big and nothing has been folded yet, fold every category once.
+  // Someone who already folded some categories keeps their choice; one category alone is never folded.
+  if(!searching && !prefs.bigShelfFolded && allItems.length >= BIG_SHELF){
+    prefs.bigShelfFolded = true;
+    if(cats.length >= 2 && collapsedCats.size === 0){
+      for(const c of cats) collapsedCats.add(c);
+      prefs.collapsedCats = [...collapsedCats];
+    }
+    putPrefs(prefs).catch(()=>{});
+  }
+  renderShelfBar(allItems, cats);
   if(itemSortMode === 'title'){
     // numeric:true so "2" sorts before "10" (plain localeCompare would put
     // "10" first) — matters for titles like the recordings in the
@@ -2473,7 +2559,8 @@ async function render(){
     const count = groups.get(cat).length;
     const head = document.createElement('div');
     head.className = 'cathead';
-    if(collapsedCats.has(cat)) head.classList.add('collapsed');
+    const folded = !searching && collapsedCats.has(cat);   // v1.68.0: search results are always shown open
+    if(folded) head.classList.add('collapsed');
     // 'Uncategorized' is pinned last and excluded from manual ordering (see
     // above), so it gets no drag handle — nothing to drag it in front of.
     const draggable = cat !== 'Uncategorized';
@@ -2503,14 +2590,16 @@ async function render(){
 
     const body = document.createElement('div');
     body.className = 'catbody';
-    if(collapsedCats.has(cat)) body.classList.add('collapsed');
+    if(folded) body.classList.add('collapsed');
 
     head.onclick = () => {
       const nowCollapsed = body.classList.toggle('collapsed');
       head.classList.toggle('collapsed', nowCollapsed);
+      if(searching) return;   // while searching a tap is only a temporary fold, never saved
       if(nowCollapsed) collapsedCats.add(cat); else collapsedCats.delete(cat);
       prefs.collapsedCats = [...collapsedCats];
       putPrefs(prefs).catch(()=>{});
+      updateFoldBtn();
     };
 
     for(const it of groups.get(cat)){
@@ -2750,6 +2839,7 @@ async function openReader(id){
   if(!it) return;
   curId = id; curType = it.type;
   rememberLastOpened(id);
+  rememberRecent(id);   // v1.68.0: feeds the Recent strip on the shelf
   curDraft = null;
   curTabs = null; curTabIdx = 0;
   closeNoteTabMenu();
@@ -7167,6 +7257,8 @@ function buildStaticCommands(){
     { id:'tags', icon:'#', label:'Browse tags', hint:'', action: ()=>openTagsPage() },
     { id:'select', icon: selectMode ? '&times;' : '&#9745;', label: selectMode ? 'Exit selection mode' : 'Select multiple items', hint:'', action: ()=>toggleSelectMode() },
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
+    { id:'shelf-view', icon:'&#9776;', label:'Shelf view: switch to '+(shelfViewMode() === 'compact' ? 'Cards' : 'Compact'), hint:'now '+(shelfViewMode() === 'compact' ? 'Compact' : 'Cards'), action: ()=>toggleShelfView() },
+    { id:'fold-all', icon:'&#8661;', label:'Categories: collapse all / expand all', hint:'', action: ()=>toggleAllCats() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
     ...(authMode === 'passcode' ? [ { id:'lock-now', icon:'&#128274;', label:'Lock now', hint:'', action: ()=>lockNow() } ] : []),
     authMode === 'device'
@@ -7598,7 +7690,7 @@ const UI_ACTIONS = Object.freeze({
   startEditFromFind, startEditNote, toggleBoldAtSelection, toggleBookmark, toggleBookmarkPanel,
   toggleDeepSearch, toggleFindBar, toggleFindCase, toggleHeadingAtLine,
   toggleHighlightAtSelection, toggleStyleMenu, applyTextStyle, applyCustomStyle, toggleIndexPanel, toggleLoopAudio, toggleMarkdownHelp, toggleOutlinePanel,
-  toggleSelectMode, toggleSettingsPanel, toggleShelfPlay, toggleSortMode,
+  toggleSelectMode, toggleSettingsPanel, toggleShelfPlay, toggleShelfView, toggleAllCats, toggleSortMode,
   toggleStrikeAtSelection, undoDelete, undoEdit, undoTableChange, quickBackup
 });
 (function installUiDispatcher(){
