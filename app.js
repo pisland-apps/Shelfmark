@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.68.0';
+const APP_VERSION = '1.68.1';
 const APP_VERSION_DATE = '2026-10-09';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2044,15 +2044,25 @@ async function finishImport(s){
     alert((parts.length ? parts.join(', ')+'.' : "That file didn't contain any recognizable items.")+tail);
   }
 }
+// v1.68.1: any internal error used to be reported as "Couldn't read that file", even when the file was
+// fine (storage error, database error), and the items already imported were not mentioned. Now the
+// message says what went wrong and what had been imported before it stopped.
 async function mergeImportedItems(items, info){
+  let s = null;
   try{
-    const s = await beginImport(info);
+    s = await beginImport(info);
     for(const it of items){
       if(!(await importOneItem(s, it))) break;
     }
     await finishImport(s);
   }catch(err){
-    alert("Couldn't read that file — make sure it's a Shelfmark export.");
+    console.error('[import]', err);
+    const why = (err && err.message) ? String(err.message).slice(0, 160) : 'unknown error';
+    if(!s){ alert("Couldn't start the import: " + why); return; }
+    try{ render(); }catch(e){}
+    const parts = importSummaryParts(s);
+    alert((parts.length ? 'Stopped partway through because of an error (' + why + '). So far: ' + parts.join(', ') + '. Re-importing the same file picks up the rest.'
+                        : 'The import stopped because of an error (' + why + '); nothing was imported.'));
   }
 }
 

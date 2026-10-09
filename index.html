@@ -1087,7 +1087,7 @@
     </div>
   </div>
   <div class="searchRow">
-    <input type="search" id="searchInput" placeholder="Search your shelf&hellip;" data-on-input="onSearchInput">
+    <input spellcheck="false" type="search" id="searchInput" placeholder="Search your shelf&hellip;" data-on-input="onSearchInput">
     <button class="icon-btn" id="deepSearchBtn" data-on-click="toggleDeepSearch" title="Also search inside note text (slower — decrypts every note)" aria-pressed="false">&#128462;</button>
   </div>
 </header>
@@ -1138,9 +1138,9 @@
       <button type="button" class="tpl-btn" data-tpl="index" data-on-click="chooseNoteTemplate" data-args-click='["index"]'>&#128450;&#65039; Index of categories</button>
     </div>
     <label for="ttitle">Title</label>
-    <input id="ttitle" type="text" placeholder="Untitled">
+    <input spellcheck="false" id="ttitle" type="text" placeholder="Untitled">
     <label for="tcat">Category</label>
-    <input id="tcat" type="text" list="catlist" placeholder="e.g. Recipes, Work (optional)">
+    <input spellcheck="false" id="tcat" type="text" list="catlist" placeholder="e.g. Recipes, Work (optional)">
     <datalist id="catlist"></datalist>
     <div id="coverField" style="display:none;">
       <label for="coverpick">Cover image (optional)</label>
@@ -1160,9 +1160,9 @@
   <div class="sheet">
     <h2>Edit details</h2>
     <label for="etitle">Title</label>
-    <input id="etitle" type="text" placeholder="Untitled">
+    <input spellcheck="false" id="etitle" type="text" placeholder="Untitled">
     <label for="ecat">Category</label>
-    <input id="ecat" type="text" list="catlist2" placeholder="e.g. Recipes, Work (optional)">
+    <input spellcheck="false" id="ecat" type="text" list="catlist2" placeholder="e.g. Recipes, Work (optional)">
     <datalist id="catlist2"></datalist>
     <div id="coverFieldEdit" style="display:none;">
       <label for="coverpickEdit">Cover image (optional)</label>
@@ -1197,7 +1197,7 @@
     </div>
     <div id="expShelfNameRow">
     <label for="expShelfName">Shelf name (optional)</label>
-    <input id="expShelfName" type="text" autocomplete="off" maxlength="60" placeholder="e.g. Ah Meng's shelf">
+    <input spellcheck="false" id="expShelfName" type="text" autocomplete="off" maxlength="60" placeholder="e.g. Ah Meng's shelf">
     </div>
     <div id="expNameToggleRow" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;">
       <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
@@ -1351,7 +1351,7 @@ columns: 分类 | 笔记
   <div class="sheet help-sheet">
     <h2>Markdown formatting help</h2>
     <div class="help-body mdbody">
-      <div class="help-search"><input type="search" placeholder="Search help… (e.g. table, bold, tab)" aria-label="Search Markdown help" autocomplete="off" data-on-input="filterHelp" data-args-input='["$el"]'></div>
+      <div class="help-search"><input spellcheck="false" type="search" placeholder="Search help… (e.g. table, bold, tab)" aria-label="Search Markdown help" autocomplete="off" data-on-input="filterHelp" data-args-input='["$el"]'></div>
       <section class="hcard hc-n"><div class="hc-title"><span class="hc-ic">⚡</span>Quick reference</div>
       <div class="hq-grid"><div class="hq-item"><code>**bold**</code>Bold</div><div class="hq-item"><code>*italic*</code>Italic</div><div class="hq-item"><code>~~text~~</code>Strikethrough</div><div class="hq-item"><code>==text==</code>Highlight</div><div class="hq-item"><code>## Title</code>Heading</div><div class="hq-item"><code>- item</code>Bullet list</div><div class="hq-item"><code>1. item</code>Numbered list</div><div class="hq-item"><code>- [ ] task</code>Checklist</div><div class="hq-item"><code>&gt; quote</code>Quote</div><div class="hq-item"><code>&gt; [!note]</code>Callout card</div><div class="hq-item"><code>`code`</code>Inline code</div><div class="hq-item"><code>```</code>Code block</div><div class="hq-item"><code>| a | b |</code>Table</div><div class="hq-item"><code>&lt;&lt; &nbsp;^^</code>Merged cell</div><div class="hq-item"><code>[[Title]]</code>Wiki link</div><div class="hq-item"><code>#tag</code>Tag</div><div class="hq-item"><code>---</code>Divider</div></div>
       </section>
@@ -1450,7 +1450,7 @@ columns: 分类 | 笔记
   <div class="sheet">
     <h2>Move to category</h2>
     <label for="moveCatInput">Category</label>
-    <input id="moveCatInput" type="text" list="catlist3" placeholder="e.g. Recipes, Work">
+    <input spellcheck="false" id="moveCatInput" type="text" list="catlist3" placeholder="e.g. Recipes, Work">
     <datalist id="catlist3"></datalist>
     <div class="row">
       <button class="cancel" data-on-click="closeMoveCategory">Cancel</button>
@@ -1545,7 +1545,7 @@ columns: 分类 | 笔记
   <div id="indexPanel" class="bmpanel indexpanel" style="display:none;"></div>
   <div id="findBar" style="display:none;">
     <div class="find-row">
-      <input type="search" id="findInput" placeholder="Find in note&hellip;" autocomplete="off" data-on-input="onFindInput" data-on-keydown="onFindKeydown" data-args-keydown='["$ev"]'>
+      <input spellcheck="false" type="search" id="findInput" placeholder="Find in note&hellip;" autocomplete="off" data-on-input="onFindInput" data-on-keydown="onFindKeydown" data-args-keydown='["$ev"]'>
       <span id="findCount" class="find-count"></span>
       <button class="find-btn" id="findCaseBtn" data-on-click="toggleFindCase" title="Match case" aria-pressed="false">Aa</button>
       <button class="find-btn" data-on-click="findStep" data-args-click='[-1]' title="Previous match (Shift+Enter)">&#8593;</button>
@@ -1553,7 +1553,7 @@ columns: 分类 | 笔记
       <button class="find-btn" data-on-click="closeFindBar" title="Close">&#10005;</button>
     </div>
     <div class="find-row" id="replaceRow" style="display:none;">
-      <input type="text" id="replaceInput" placeholder="Replace with&hellip;" autocomplete="off" data-on-keydown="onReplaceKeydown" data-args-keydown='["$ev"]'>
+      <input spellcheck="false" type="text" id="replaceInput" placeholder="Replace with&hellip;" autocomplete="off" data-on-keydown="onReplaceKeydown" data-args-keydown='["$ev"]'>
       <button class="find-btn wide" data-on-click="replaceCurrent" title="Replace this match and jump to the next">Replace</button>
       <button class="find-btn wide" data-on-click="replaceAll" title="Replace every match (Undo reverses it in one step)">All</button>
     </div>
