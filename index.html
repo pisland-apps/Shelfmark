@@ -274,6 +274,7 @@
   .note-tabs .ntab-more{padding:7px 10px 7px 0;font-size:15px;line-height:1;opacity:.85;}
   .note-tabs .ntab-add{flex:0 0 auto;font-size:18px;line-height:1;color:var(--ink-soft);padding:6px 10px;}
   .note-tabs.locked .ntab:not(.active),.note-tabs.locked .ntab-add{opacity:.4;}
+  .note-tabs .ntab.editing .ntab-name::before{content:'\270E\00a0';opacity:.75;}   /* v1.70.2: this tab is in edit mode */
   .note-tabs .ntab.dirty .ntab-name::after{content:'';display:inline-block;width:7px;height:7px;margin-left:6px;border-radius:50%;background:currentColor;vertical-align:middle;}   /* v1.70.0: this tab has unsaved changes */
   .note-tabs .ntab.dragging{z-index:5;opacity:.9;box-shadow:0 4px 14px rgba(0,0,0,.3);cursor:grabbing;transition:none;}
   .note-tabs.dragging-any .ntab-name{cursor:grabbing;}

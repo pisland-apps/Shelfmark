@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.70.1';
+const APP_VERSION = '1.70.2';
 const APP_VERSION_DATE = '2026-10-13';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3600,15 +3600,17 @@ let editBaselineValue = null; // textarea value at edit start when NOT resuming;
 // image data}. The tab shown in the editor is NOT in here (its text is the textarea). Tabs can't be added,
 // moved, renamed or deleted while any of this exists, so the indexes stay valid.
 let tabEdits = new Map();
-// v1.70.1: the editor belongs to ONE tab (editorTabIdx). Other tabs are shown in reading view while the edit
-// session stays open (editSession); coming back to the editor's tab shows the editor again, text intact.
+// v1.70.1: the editor shows ONE tab at a time (editorTabIdx); tabs that are not being edited are shown in reading
+// view while the edit session stays open (editSession). v1.70.2: SEVERAL tabs can be in edit mode at once: the one
+// in the textarea is editorTabIdx, the others wait in `tabEdits` (even with no changes yet). Clicking a tab that
+// is in edit mode shows its editor; clicking one that is not shows reading view; the pencil puts it in edit mode.
 let editSession = false, editorTabIdx = 0;
 let tabEditsRev = 0, tabEditsSavedRev = 0;   // bumped on every change, so the draft is rewritten even if the textarea itself didn't change
 let tabBackFromSwitch = false;               // the notice should say "edits are back" (came from a tab switch), not quote the saved draft's time
 let mdViewStale = false;                     // the reading view still shows a different tab than the one now active
 function resetTabEdits(){ tabEdits = new Map(); tabEditsRev++; mdViewStale = false; }
-function tabEditsObject(){
-  const o = {}; tabEdits.forEach((t, i)=>{ o[i] = t; }); return o;
+function tabEditsObject(){   // only the tabs whose text really differs from what is saved
+  const o = {}; tabEdits.forEach((t, i)=>{ if(curTabs && curTabs[i] && t !== curTabs[i].text) o[i] = t; }); return o;
 }
 function noteEditActive(){
   const w = document.getElementById('mdEditWrap');
@@ -3725,8 +3727,8 @@ function revertToSaved(){
 // closeReader — that's the accidental-back case this whole feature is for.)
 function cancelEditNote(){
   const ta = document.getElementById('mdEditArea');
-  const dirty = editResumedDraft || tabEdits.size > 0 || (ta && editBaselineValue !== null && ta.value !== editBaselineValue);
-  const nTabs = tabEdits.size + (editResumedDraft || (ta && editBaselineValue !== null && ta.value !== editBaselineValue) ? 1 : 0);
+  const nTabs = dirtyTabSet().size;
+  const dirty = nTabs > 0 || editResumedDraft || (ta && editBaselineValue !== null && ta.value !== editBaselineValue);
   if(dirty && !confirm(nTabs > 1 ? 'Discard your unsaved changes in ' + nTabs + ' tabs of this note?' : 'Discard your unsaved changes to this note?')) return;
   stopDraftTimer();
   const id = curId;
@@ -6848,25 +6850,26 @@ async function switchTabWhileEditing(i){
     putMetaOnly(curId, { activeTab: i }).catch(()=>{});
     return;
   }
+  if(tabEdits.has(i)){ moveEditorTo(i); return; }   // v1.70.2: this tab is in edit mode too: show its editor
   exitEditorUI();
   renderNoteTabs();
   const c = document.getElementById('rcontent'); if(c) c.scrollTop = 0;
   await rerenderNoteView();
   putMetaOnly(curId, { activeTab: i }).catch(()=>{});
 }
-// Start editing the tab that is showing in reading view while another tab's edit session is open (pencil or a
-// paragraph tap): the old tab's text goes into `tabEdits` (if it differs from what is saved), this tab opens
-// with its own unsaved text if it has any, else its saved text.
+// Show the editor on tab i: either a tab that is in edit mode (its text waits in `tabEdits`, changed or not), or a
+// tab being read that the pencil just put into edit mode. The tab leaving the textarea stays in edit mode: its
+// text goes into `tabEdits` as it is (v1.70.2: several tabs can be edited at the same time).
 function moveEditorTo(i){
   const ta = document.getElementById('mdEditArea');
   if(!ta || i === editorTabIdx || !curTabs || !curTabs[i]) return;
   const leaving = editorTabIdx;
   const leavingText = expandImagesForSave(ta.value);   // before the image placeholders are rebuilt for the next tab
-  if(leavingText !== curTabs[leaving].text) tabEdits.set(leaving, leavingText); else tabEdits.delete(leaving);
-  const back = tabEdits.has(i);
-  const incoming = back ? tabEdits.get(i) : curTabs[i].text;
+  tabEdits.set(leaving, leavingText);
+  const incoming = tabEdits.has(i) ? tabEdits.get(i) : curTabs[i].text;
   tabEdits.delete(i);
-  tabEditsRev++;
+  const back = incoming !== curTabs[i].text;            // it has unsaved changes
+  if(back || leavingText !== curTabs[leaving].text) tabEditsRev++;
   editorTabIdx = i; curTabIdx = i; curNoteRaw = curTabs[i].text;
   mdViewStale = true;
   ta.value = collapseImagesForEdit(incoming);
@@ -6886,7 +6889,8 @@ function moveEditorTo(i){
 // Which tabs have unsaved changes (a Set of indexes): other tabs from `tabEdits`, the open one from the editor,
 // and, in reading view, the tabs a restored draft touches.
 function dirtyTabSet(){
-  const out = new Set(tabEdits.keys());
+  const out = new Set();
+  if(curTabs) tabEdits.forEach((t, i)=>{ if(curTabs[i] && t !== curTabs[i].text) out.add(i); });
   if(editSession){
     const ta = document.getElementById('mdEditArea');
     if(editResumedDraft || (ta && editBaselineValue !== null && ta.value !== editBaselineValue)) out.add(editorTabIdx);
@@ -6900,8 +6904,11 @@ function refreshTabDots(){
   const bar = document.getElementById('noteTabs');
   if(!bar || !curTabs) return;
   const dirty = dirtyTabSet();
+  const editing = new Set(tabEdits.keys());
+  if(editSession) editing.add(editorTabIdx);
   bar.querySelectorAll('.ntab').forEach((el, i)=>{
     el.classList.toggle('dirty', dirty.has(i));
+    el.classList.toggle('editing', editing.has(i));
     const nm = el.querySelector('.ntab-name');
     if(nm && curTabs[i]){
       const base = nm.getAttribute('title').replace(/ · unsaved changes$/, '');
