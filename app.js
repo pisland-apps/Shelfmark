@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.69.0';
-const APP_VERSION_DATE = '2026-10-09';
+const APP_VERSION = '1.70.0';
+const APP_VERSION_DATE = '2026-10-13';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -658,12 +658,15 @@ function foldPrefix(name){
   return (curTabs && curTabs.length > 1) ? foldPfxFor(name == null ? curTabs[curTabIdx].name : name) : '';
 }
 // Write the active tab's new text (or, with no argument, just the current tab structure).
-async function putNoteSlice(text){
+// v1.70.0: `others` ({tabIndex: text}) writes the other tabs' unsaved edits in the same single write
+// (Save while several tabs have changes). All or nothing: a failed write puts every tab's text back.
+async function putNoteSlice(text, others){
   if(!curTabs){ return putContentOnly(curId, 'markdown', text); }
-  const prev = curTabs[curTabIdx].text;
+  const prevTexts = curTabs.map(t=>t.text);
   if(text !== undefined) curTabs[curTabIdx].text = text;
+  if(others) Object.keys(others).forEach(k=>{ const i = Number(k); if(i !== curTabIdx && curTabs[i]) curTabs[i].text = others[k]; });
   try{ await putContentOnly(curId, 'markdown', composeNoteTabs(curTabs)); }
-  catch(err){ curTabs[curTabIdx].text = prev; throw err; }
+  catch(err){ curTabs.forEach((t, i)=>{ t.text = prevTexts[i]; }); throw err; }
   if(text !== undefined) curNoteRaw = text;
 }
 // Maps this edit session's `img:N` placeholders (what actually shows in the
@@ -1228,11 +1231,16 @@ function serialized(fn){
 // metadata blob (that one is decrypted for every item on every shelf listing;
 // a draft with pictures in it can be megabytes). Never exported, dropped with
 // the note when it's deleted, and cleared by Save/Cancel.
-function putDraft(id, text, tab){
+// v1.70.0: `edits` ({tabIndex: text}) carries the unsaved text of the OTHER tabs of the note (the ones you
+// switched away from mid-edit); `text` / `tab` stay the tab that was open in the editor, so older drafts
+// (no `edits`) read exactly as before.
+function putDraft(id, text, tab, edits){
   return serialized(async ()=>{
     const rec = await getOneRaw(id);
     if(!rec) return;
-    await sealItemJSON(cryptoKey, rec, 'draft', { text, savedAt: Date.now(), tab });
+    const payload = { text, savedAt: Date.now(), tab };
+    if(edits && Object.keys(edits).length) payload.edits = edits;
+    await sealItemJSON(cryptoKey, rec, 'draft', payload);
     await putRaw(rec);
   });
 }
@@ -2852,6 +2860,7 @@ async function openReader(id){
   rememberRecent(id);   // v1.68.0: feeds the Recent strip on the shelf
   curDraft = null;
   curTabs = null; curTabIdx = 0;
+  resetTabEdits();
   closeNoteTabMenu();
   // v1.53.0: this note's own reading look (markdown notes only), applied on top of the app-wide one
   curReadOverride = it.type === 'markdown' ? readPrefsClean(it.readerPrefs) : null;
@@ -3280,11 +3289,22 @@ function startEditNote(){
   // If an unsaved draft exists for this note, editing RESUMES it rather than
   // starting over from the saved text — otherwise the first autosave tick
   // would overwrite the draft the user never got back.
+  // v1.70.0: a draft can cover several tabs. The tab on screen opens with its own draft text (if it has
+  // one); the drafts of the other tabs wait in `tabEdits` until you switch to them.
+  resetTabEdits();
+  tabBackFromSwitch = false;
+  if(curDraft && curTabs){
+    if(curDraft.text !== (curTabs[curDraft.tab] || {}).text) tabEdits.set(curDraft.tab, curDraft.text);
+    Object.keys(curDraft.edits || {}).forEach(k=>{ tabEdits.set(Number(k), curDraft.edits[k]); });
+  } else if(curDraft){
+    tabEdits.set(curTabIdx, curDraft.text);
+  }
   editResumedDraft = false;
   const draftBanner = document.getElementById('draftBanner');
   if(draftBanner) draftBanner.style.display = 'none'; // the editor's own notice takes over while editing
-  if(curDraft){
-    document.getElementById('mdEditArea').value = collapseImagesForEdit(curDraft.text);
+  if(tabEdits.has(curTabIdx)){
+    document.getElementById('mdEditArea').value = collapseImagesForEdit(tabEdits.get(curTabIdx));
+    tabEdits.delete(curTabIdx);
     editResumedDraft = true;
     editBaselineValue = null;
   } else {
@@ -3293,7 +3313,7 @@ function startEditNote(){
   }
   document.getElementById('mdView').style.display = 'none';
   document.getElementById('mdEditWrap').style.display = 'flex';
-  const ntb = document.getElementById('noteTabs'); if(ntb) ntb.classList.add('locked');
+  refreshTabDots();   // v1.70.0: tabs stay usable while editing (they used to be greyed out and refused)
   if(helpDockWanted) openHelpDock(); else syncHelpToggleBtn();
   document.getElementById('bmBtn').style.display = 'none';
   document.getElementById('outlineBtn').style.display = 'none';
@@ -3302,6 +3322,7 @@ function startEditNote(){
   document.getElementById('mdEditArea').focus();
   resetUndoHistory();
   draftLastValue = document.getElementById('mdEditArea').value;
+  tabEditsSavedRev = tabEditsRev;   // opening the editor is not a change: no draft write until something changes
   startDraftTimer();
   updateDraftNotice();
   findRefresh(); // switch an open find bar over to editor mode
@@ -3552,6 +3573,17 @@ let draftTimer = null;
 let draftLastValue = null;    // textarea value as of the last draft write (or edit start)
 let editResumedDraft = false; // this edit session began from a draft, not from the saved text
 let editBaselineValue = null; // textarea value at edit start when NOT resuming; null when resuming
+// v1.70.0: unsaved text of the tabs you switched away from while editing: {tabIndex -> full text with real
+// image data}. The tab shown in the editor is NOT in here (its text is the textarea). Tabs can't be added,
+// moved, renamed or deleted while any of this exists, so the indexes stay valid.
+let tabEdits = new Map();
+let tabEditsRev = 0, tabEditsSavedRev = 0;   // bumped on every change, so the draft is rewritten even if the textarea itself didn't change
+let tabBackFromSwitch = false;               // the notice should say "edits are back" (came from a tab switch), not quote the saved draft's time
+let mdViewStale = false;                     // the reading view still shows a different tab than the one now active
+function resetTabEdits(){ tabEdits = new Map(); tabEditsRev++; mdViewStale = false; }
+function tabEditsObject(){
+  const o = {}; tabEdits.forEach((t, i)=>{ o[i] = t; }); return o;
+}
 function noteEditActive(){
   const w = document.getElementById('mdEditWrap');
   return !!w && w.style.display === 'flex';
@@ -3567,9 +3599,10 @@ function draftTick(){ flushDraftNow(); }
 function flushDraftNow(){
   if(!curId || curType !== 'markdown' || !noteEditActive()) return;
   const ta = document.getElementById('mdEditArea');
-  if(!ta || ta.value === draftLastValue) return;
+  if(!ta || (ta.value === draftLastValue && tabEditsRev === tabEditsSavedRev)) return;
   draftLastValue = ta.value;
-  putDraft(curId, expandImagesForSave(ta.value), curTabIdx).catch(()=>{}); // fail silently, see above
+  tabEditsSavedRev = tabEditsRev;
+  putDraft(curId, expandImagesForSave(ta.value), curTabIdx, tabEditsObject()).catch(()=>{}); // fail silently, see above
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flushDraftNow(); });
 window.addEventListener('pagehide', flushDraftNow);
@@ -3580,8 +3613,17 @@ async function loadDraftFor(id, savedText){
   if(!d) return null;
   const t = (curTabs && Number.isInteger(d.tab) && curTabs[d.tab]) ? d.tab : curTabIdx;
   const saved = curTabs ? curTabs[t].text : savedText;
-  if(d.text === saved){ clearDraft(id).catch(()=>{}); return null; }
+  // v1.70.0: keep only edits for tabs that still exist and really differ from what is saved
+  const edits = {};
+  if(curTabs && d.edits && typeof d.edits === 'object'){
+    Object.keys(d.edits).forEach(k=>{
+      const i = Number(k);
+      if(Number.isInteger(i) && i !== t && curTabs[i] && typeof d.edits[k] === 'string' && d.edits[k] !== curTabs[i].text) edits[i] = d.edits[k];
+    });
+  }
+  if(d.text === saved && !Object.keys(edits).length){ clearDraft(id).catch(()=>{}); return null; }
   d.tab = t;
+  if(Object.keys(edits).length) d.edits = edits; else delete d.edits;
   return d;
 }
 function fmtDraftTime(ts){
@@ -3590,15 +3632,36 @@ function fmtDraftTime(ts){
 function renderDraftBanner(){
   const old = document.getElementById('draftBanner');
   if(old) old.remove();
+  refreshTabDots();
   const view = document.getElementById('mdView');
   if(!curDraft || !view) return;
   const b = document.createElement('div');
   b.id = 'draftBanner';
   b.className = 'draft-banner';
-  b.innerHTML = `<span>Unsaved draft from ${escapeHtml(fmtDraftTime(curDraft.savedAt))} — your last edits weren't saved.</span>`
-    + `<button type="button" data-on-click="startEditNote">Continue editing</button>`
+  const names = draftTabNames();
+  b.innerHTML = `<span>Unsaved draft${names ? ' in ' + escapeHtml(names) : ''} from ${escapeHtml(fmtDraftTime(curDraft.savedAt))} — your last edits weren't saved.</span>`
+    + `<button type="button" data-on-click="continueDraftEdit">Continue editing</button>`
     + `<button type="button" data-on-click="discardDraft">Discard</button>`;
   view.parentNode.insertBefore(b, view);
+}
+// "Continue editing" on the draft banner: open the editor on the tab the draft was made in.
+function continueDraftEdit(){
+  if(curDraft && curTabs && curTabs[curDraft.tab] && curDraft.tab !== curTabIdx){
+    dropTableUndo();
+    curTabIdx = curDraft.tab; curNoteRaw = curTabs[curTabIdx].text;
+    mdViewStale = true;
+    renderNoteTabs();
+    putMetaOnly(curId, { activeTab: curTabIdx }).catch(()=>{});
+  }
+  startEditNote();
+}
+// Names of the tabs a saved draft touches (only when the note has several tabs): "Tab 2" or "Tab 2, Notes"
+function draftTabNames(){
+  if(!curDraft || !curTabs || curTabs.length < 2) return '';
+  const idx = [];
+  if(curDraft.text !== (curTabs[curDraft.tab] || {}).text) idx.push(curDraft.tab);
+  Object.keys(curDraft.edits || {}).forEach(k=>idx.push(Number(k)));
+  return idx.sort((a, b)=>a - b).map(i=>'\u201c' + (curTabs[i] ? curTabs[i].name : '?') + '\u201d').join(', ');
 }
 async function discardDraft(){
   if(!confirm("Discard this unsaved draft? This can't be undone.")) return;
@@ -3611,7 +3674,11 @@ function updateDraftNotice(){
   const box = document.getElementById('draftNotice');
   if(!box) return;
   box.style.display = editResumedDraft ? 'flex' : 'none';
-  if(editResumedDraft && curDraft) document.getElementById('draftNoticeText').textContent = 'Resumed your unsaved draft from ' + fmtDraftTime(curDraft.savedAt) + '.';
+  if(editResumedDraft){
+    document.getElementById('draftNoticeText').textContent = curDraft && !tabBackFromSwitch
+      ? 'Resumed your unsaved draft from ' + fmtDraftTime(curDraft.savedAt) + '.'
+      : 'Your unsaved edits to this tab are back.';
+  }
 }
 // Not undoable on purpose: collapseImagesForEdit renumbers the picture
 // placeholders (img:1, img:2…) for whichever text it's given, so undoing back
@@ -3632,15 +3699,19 @@ function revertToSaved(){
 // closeReader — that's the accidental-back case this whole feature is for.)
 function cancelEditNote(){
   const ta = document.getElementById('mdEditArea');
-  const dirty = editResumedDraft || (ta && editBaselineValue !== null && ta.value !== editBaselineValue);
-  if(dirty && !confirm('Discard your unsaved changes to this note?')) return;
+  const dirty = editResumedDraft || tabEdits.size > 0 || (ta && editBaselineValue !== null && ta.value !== editBaselineValue);
+  const nTabs = tabEdits.size + (editResumedDraft || (ta && editBaselineValue !== null && ta.value !== editBaselineValue) ? 1 : 0);
+  if(dirty && !confirm(nTabs > 1 ? 'Discard your unsaved changes in ' + nTabs + ' tabs of this note?' : 'Discard your unsaved changes to this note?')) return;
   stopDraftTimer();
   const id = curId;
   curDraft = null;
   renderDraftBanner();
   if(id) clearDraft(id).catch(()=>{});
+  const stale = mdViewStale;
+  resetTabEdits();
   leaveEditMode();
-  restoreReadingSpot({ scrollTop: editEnterScroll });
+  if(stale){ rerenderNoteView().then(()=>{ const rc = document.getElementById('rcontent'); if(rc) rc.scrollTop = 0; }).catch(()=>{}); }
+  else restoreReadingSpot({ scrollTop: editEnterScroll });
 }
 function leaveEditMode(){
   stopDraftTimer();
@@ -3649,7 +3720,8 @@ function leaveEditMode(){
   closeWikiAutocomplete();
   document.getElementById('mdEditWrap').style.display = 'none';
   document.getElementById('mdView').style.display = 'block';
-  const ntb = document.getElementById('noteTabs'); if(ntb) ntb.classList.remove('locked');
+  tabBackFromSwitch = false;
+  refreshTabDots();
   document.getElementById('bmBtn').style.display = 'flex';
   document.getElementById('editNoteBtn').classList.remove('active');
   updateOutlineUI(buildOutline(document.getElementById('mdView')));
@@ -3661,7 +3733,8 @@ async function saveEditNote(){
   const text = expandImagesForSave(document.getElementById('mdEditArea').value);
   const spot = editReturnSpot();   // before anything is re-rendered
   try{
-    await putNoteSlice(text);
+    // v1.70.0: Save writes every tab you changed, not just the one in the editor
+    await putNoteSlice(text, tabEditsObject());
   }catch(err){
     startDraftTimer(); // save failed and the editor stays open — keep protecting the text
     alert(isQuotaError(err) ? "Your device's storage is full, so this couldn't be saved. Your edits are still in the text box — free up space and try Save again." : "Couldn't save this note — please try again.");
@@ -3684,6 +3757,7 @@ async function saveEditNote(){
   updateOutlineUI(buildOutline(mdView));
   const savedId = curId;
   curDraft = null;
+  resetTabEdits();
   renderDraftBanner();
   clearDraft(savedId).catch(()=>{}); // queued after the content write, so it can't resurrect stale text
   leaveEditMode();
@@ -6568,6 +6642,7 @@ function renderNoteTabs(){
   }).join('') + `<button type="button" class="ntab-add" data-on-click="addNoteTab" title="New tab" aria-label="New tab">+</button>`;
   const act = bar.querySelector('.ntab.active');
   if(act && act.scrollIntoView) act.scrollIntoView({ block:'nearest', inline:'nearest' });
+  refreshTabDots();
 }
 // ---- Tab options menu: rename / colour / move / delete ----
 function closeNoteTabMenu(){
@@ -6710,7 +6785,7 @@ let noteTabDrag = null, noteTabDragSuppressClick = false;
   document.addEventListener('contextmenu', e=>{ if(noteTabDrag && noteTabDrag.touch && e.target.closest && e.target.closest('#noteTabs')) e.preventDefault(); });
 })();
 function tabsBusyMessage(){
-  if(noteEditActive()) return 'Save or cancel your edit first, then change tabs.';
+  if(noteEditActive()) return 'Save or cancel your edit first, then add, move, rename, recolour or delete tabs. (Switching between tabs works while editing.)';
   if(curDraft) return 'This note has an unsaved draft in the tab "' + ((curTabs[curDraft.tab] || {}).name || '') + '". Continue editing or discard it first.';
   return '';
 }
@@ -6719,8 +6794,7 @@ async function selectNoteTab(arg){
   const i = Number(arg);
   if(!(i >= 0 && i < curTabs.length)) return;
   if(i === curTabIdx) return renameNoteTab();
-  const busy = tabsBusyMessage();
-  if(busy){ alert(busy); return; }
+  if(noteEditActive()){ switchTabWhileEditing(i); return; }   // v1.70.0: no prompt, nothing is lost
   dropTableUndo();
   curTabIdx = i; curNoteRaw = curTabs[i].text;
   renderNoteTabs();
@@ -6728,6 +6802,63 @@ async function selectNoteTab(arg){
   await rerenderNoteView();
   putMetaOnly(curId, { activeTab: i }).catch(()=>{});
 }
+// v1.70.0: switching tabs while the editor is open. The tab you leave keeps its unsaved text in `tabEdits`
+// (and in the draft), the tab you open shows its own unsaved text if it has any, else its saved text. Nothing
+// is saved or discarded; Save writes every changed tab, Cancel drops them all.
+function switchTabWhileEditing(i){
+  const ta = document.getElementById('mdEditArea');
+  if(!ta || i === curTabIdx || !curTabs || !curTabs[i]) return;
+  const leaving = curTabIdx;
+  const leavingText = expandImagesForSave(ta.value);   // before the image placeholders are rebuilt for the next tab
+  if(leavingText !== curTabs[leaving].text) tabEdits.set(leaving, leavingText); else tabEdits.delete(leaving);
+  const back = tabEdits.has(i);
+  const incoming = back ? tabEdits.get(i) : curTabs[i].text;
+  tabEdits.delete(i);
+  tabEditsRev++;
+  closeWikiAutocomplete();
+  curTabIdx = i; curNoteRaw = curTabs[i].text;
+  mdViewStale = true;
+  ta.value = collapseImagesForEdit(incoming);
+  editResumedDraft = back;
+  tabBackFromSwitch = back;
+  editBaselineValue = back ? null : ta.value;
+  resetUndoHistory();
+  draftLastValue = ta.value;
+  ta.scrollTop = 0; ta.setSelectionRange(0, 0);
+  updateDraftNotice();
+  renderNoteTabs();
+  findRefresh();
+  flushDraftNow();   // a draft that now spans two tabs is written straight away, not at the next 3 s tick
+  putMetaOnly(curId, { activeTab: i }).catch(()=>{});
+  ta.focus();
+}
+// Which tabs have unsaved changes (a Set of indexes): other tabs from `tabEdits`, the open one from the editor,
+// and, in reading view, the tabs a restored draft touches.
+function dirtyTabSet(){
+  const out = new Set(tabEdits.keys());
+  if(noteEditActive()){
+    const ta = document.getElementById('mdEditArea');
+    if(editResumedDraft || (ta && editBaselineValue !== null && ta.value !== editBaselineValue)) out.add(curTabIdx);
+  } else if(curDraft && curTabs){
+    if(curDraft.text !== (curTabs[curDraft.tab] || {}).text) out.add(curDraft.tab);
+    Object.keys(curDraft.edits || {}).forEach(k=>out.add(Number(k)));
+  }
+  return out;
+}
+function refreshTabDots(){
+  const bar = document.getElementById('noteTabs');
+  if(!bar || !curTabs) return;
+  const dirty = dirtyTabSet();
+  bar.querySelectorAll('.ntab').forEach((el, i)=>{
+    el.classList.toggle('dirty', dirty.has(i));
+    const nm = el.querySelector('.ntab-name');
+    if(nm && curTabs[i]){
+      const base = nm.getAttribute('title').replace(/ · unsaved changes$/, '');
+      nm.setAttribute('title', dirty.has(i) ? base + ' · unsaved changes' : base);
+    }
+  });
+}
+document.addEventListener('input', e=>{ if(e.target && e.target.id === 'mdEditArea') refreshTabDots(); });
 async function renameNoteTab(){
   closeNoteTabMenu();
   if(!curTabs) return;
@@ -7724,7 +7855,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  selectNoteTab, addNoteTab, closeNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  selectNoteTab, continueDraftEdit, addNoteTab, closeNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
