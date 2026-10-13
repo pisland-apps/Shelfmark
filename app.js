@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.70.0';
+const APP_VERSION = '1.70.1';
 const APP_VERSION_DATE = '2026-10-13';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2861,6 +2861,7 @@ async function openReader(id){
   curDraft = null;
   curTabs = null; curTabIdx = 0;
   resetTabEdits();
+  editSession = false;
   closeNoteTabMenu();
   // v1.53.0: this note's own reading look (markdown notes only), applied on top of the app-wide one
   curReadOverride = it.type === 'markdown' ? readPrefsClean(it.readerPrefs) : null;
@@ -3284,7 +3285,35 @@ function restoreReadingSpot(spot){
   }
   rc.scrollTop = spot.scrollTop || 0;
 }
+// v1.70.1: show the editor in place of the reading view / put the reading view back, WITHOUT ending the edit
+// session (the textarea keeps its text and undo history while another tab is being read).
+function enterEditorUI(){
+  document.getElementById('mdView').style.display = 'none';
+  document.getElementById('mdEditWrap').style.display = 'flex';
+  refreshTabDots();   // tabs stay usable while editing (they used to be greyed out and refused)
+  if(helpDockWanted) openHelpDock(); else syncHelpToggleBtn();
+  document.getElementById('bmBtn').style.display = 'none';
+  document.getElementById('outlineBtn').style.display = 'none';
+  applyOutlineDock(); // the editor has no outline column
+  document.getElementById('editNoteBtn').classList.add('active');
+  document.getElementById('mdEditArea').focus();
+}
+function exitEditorUI(){
+  closeWikiAutocomplete();
+  document.getElementById('mdEditWrap').style.display = 'none';
+  document.getElementById('mdView').style.display = 'block';
+  document.getElementById('bmBtn').style.display = 'flex';
+  document.getElementById('editNoteBtn').classList.remove('active');
+  findRefresh();
+}
 function startEditNote(){
+  if(editSession){
+    // v1.70.1: already editing. In the editor: nothing to do. Another tab is showing in reading view
+    // (pencil / paragraph tap there): the editor moves to that tab, the old tab keeps its unsaved text.
+    if(curTabIdx !== editorTabIdx) moveEditorTo(curTabIdx);
+    else if(!noteEditActive()) switchTabWhileEditing(editorTabIdx);
+    return;
+  }
   { const rc = document.getElementById('rcontent'); editEnterScroll = rc ? rc.scrollTop : 0; }
   // If an unsaved draft exists for this note, editing RESUMES it rather than
   // starting over from the saved text — otherwise the first autosave tick
@@ -3311,15 +3340,8 @@ function startEditNote(){
     document.getElementById('mdEditArea').value = collapseImagesForEdit(curNoteRaw);
     editBaselineValue = document.getElementById('mdEditArea').value;
   }
-  document.getElementById('mdView').style.display = 'none';
-  document.getElementById('mdEditWrap').style.display = 'flex';
-  refreshTabDots();   // v1.70.0: tabs stay usable while editing (they used to be greyed out and refused)
-  if(helpDockWanted) openHelpDock(); else syncHelpToggleBtn();
-  document.getElementById('bmBtn').style.display = 'none';
-  document.getElementById('outlineBtn').style.display = 'none';
-  applyOutlineDock(); // the editor has no outline column
-  document.getElementById('editNoteBtn').classList.add('active');
-  document.getElementById('mdEditArea').focus();
+  editSession = true; editorTabIdx = curTabIdx;
+  enterEditorUI();
   resetUndoHistory();
   draftLastValue = document.getElementById('mdEditArea').value;
   tabEditsSavedRev = tabEditsRev;   // opening the editor is not a change: no draft write until something changes
@@ -3449,6 +3471,7 @@ function blockOffsets(text){
 // curNoteRaw's.
 function editParagraphAt(idx){
   if(curNoteRaw == null) return;
+  if(editSession && curTabIdx !== editorTabIdx) return;   // v1.70.1: reading another tab while an edit is open: a tap on text must not move the editor (the pencil does that)
   startEditNote();
   // Resuming a draft: paragraph numbers refer to the SAVED text, so they don't
   // line up with the draft — leave the caret alone rather than land on the
@@ -3577,6 +3600,9 @@ let editBaselineValue = null; // textarea value at edit start when NOT resuming;
 // image data}. The tab shown in the editor is NOT in here (its text is the textarea). Tabs can't be added,
 // moved, renamed or deleted while any of this exists, so the indexes stay valid.
 let tabEdits = new Map();
+// v1.70.1: the editor belongs to ONE tab (editorTabIdx). Other tabs are shown in reading view while the edit
+// session stays open (editSession); coming back to the editor's tab shows the editor again, text intact.
+let editSession = false, editorTabIdx = 0;
 let tabEditsRev = 0, tabEditsSavedRev = 0;   // bumped on every change, so the draft is rewritten even if the textarea itself didn't change
 let tabBackFromSwitch = false;               // the notice should say "edits are back" (came from a tab switch), not quote the saved draft's time
 let mdViewStale = false;                     // the reading view still shows a different tab than the one now active
@@ -3597,12 +3623,12 @@ function stopDraftTimer(){
 }
 function draftTick(){ flushDraftNow(); }
 function flushDraftNow(){
-  if(!curId || curType !== 'markdown' || !noteEditActive()) return;
+  if(!curId || curType !== 'markdown' || !editSession) return;
   const ta = document.getElementById('mdEditArea');
   if(!ta || (ta.value === draftLastValue && tabEditsRev === tabEditsSavedRev)) return;
   draftLastValue = ta.value;
   tabEditsSavedRev = tabEditsRev;
-  putDraft(curId, expandImagesForSave(ta.value), curTabIdx, tabEditsObject()).catch(()=>{}); // fail silently, see above
+  putDraft(curId, expandImagesForSave(ta.value), editorTabIdx, tabEditsObject()).catch(()=>{}); // fail silently, see above
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flushDraftNow(); });
 window.addEventListener('pagehide', flushDraftNow);
@@ -3714,6 +3740,7 @@ function cancelEditNote(){
   else restoreReadingSpot({ scrollTop: editEnterScroll });
 }
 function leaveEditMode(){
+  editSession = false;
   stopDraftTimer();
   editResumedDraft = false;
   updateDraftNotice();
@@ -3730,6 +3757,7 @@ function leaveEditMode(){
 async function saveEditNote(){
   if(!curId) return;
   stopDraftTimer(); // no new draft write may start once Save has (an in-flight one finishes first — see serialized())
+  if(editSession && curTabIdx !== editorTabIdx){ curTabIdx = editorTabIdx; curNoteRaw = curTabs[curTabIdx].text; renderNoteTabs(); }   // saving from another tab's reading view: the text belongs to the editor's tab
   const text = expandImagesForSave(document.getElementById('mdEditArea').value);
   const spot = editReturnSpot();   // before anything is re-rendered
   try{
@@ -6785,7 +6813,7 @@ let noteTabDrag = null, noteTabDragSuppressClick = false;
   document.addEventListener('contextmenu', e=>{ if(noteTabDrag && noteTabDrag.touch && e.target.closest && e.target.closest('#noteTabs')) e.preventDefault(); });
 })();
 function tabsBusyMessage(){
-  if(noteEditActive()) return 'Save or cancel your edit first, then add, move, rename, recolour or delete tabs. (Switching between tabs works while editing.)';
+  if(editSession) return 'Save or cancel your edit first, then add, move, rename, recolour or delete tabs. (Switching between tabs works while editing.)';
   if(curDraft) return 'This note has an unsaved draft in the tab "' + ((curTabs[curDraft.tab] || {}).name || '') + '". Continue editing or discard it first.';
   return '';
 }
@@ -6794,7 +6822,7 @@ async function selectNoteTab(arg){
   const i = Number(arg);
   if(!(i >= 0 && i < curTabs.length)) return;
   if(i === curTabIdx) return renameNoteTab();
-  if(noteEditActive()){ switchTabWhileEditing(i); return; }   // v1.70.0: no prompt, nothing is lost
+  if(editSession){ await switchTabWhileEditing(i); return; }   // v1.70.0: no prompt, nothing is lost
   dropTableUndo();
   curTabIdx = i; curNoteRaw = curTabs[i].text;
   renderNoteTabs();
@@ -6805,18 +6833,41 @@ async function selectNoteTab(arg){
 // v1.70.0: switching tabs while the editor is open. The tab you leave keeps its unsaved text in `tabEdits`
 // (and in the draft), the tab you open shows its own unsaved text if it has any, else its saved text. Nothing
 // is saved or discarded; Save writes every changed tab, Cancel drops them all.
-function switchTabWhileEditing(i){
+// Clicking a tab while the editor is open (v1.70.1): the editor's own tab shows the editor again, any other
+// tab shows in READING view. Nothing is saved or discarded; the editor keeps its text and undo history.
+async function switchTabWhileEditing(i){
+  if(!curTabs || !curTabs[i]) return;
+  dropTableUndo();
+  curTabIdx = i; curNoteRaw = curTabs[i].text;
+  mdViewStale = true;   // the reading view may now show a different tab than the one that ends up active
+  if(i === editorTabIdx){
+    enterEditorUI();
+    renderNoteTabs();
+    updateDraftNotice();
+    findRefresh();
+    putMetaOnly(curId, { activeTab: i }).catch(()=>{});
+    return;
+  }
+  exitEditorUI();
+  renderNoteTabs();
+  const c = document.getElementById('rcontent'); if(c) c.scrollTop = 0;
+  await rerenderNoteView();
+  putMetaOnly(curId, { activeTab: i }).catch(()=>{});
+}
+// Start editing the tab that is showing in reading view while another tab's edit session is open (pencil or a
+// paragraph tap): the old tab's text goes into `tabEdits` (if it differs from what is saved), this tab opens
+// with its own unsaved text if it has any, else its saved text.
+function moveEditorTo(i){
   const ta = document.getElementById('mdEditArea');
-  if(!ta || i === curTabIdx || !curTabs || !curTabs[i]) return;
-  const leaving = curTabIdx;
+  if(!ta || i === editorTabIdx || !curTabs || !curTabs[i]) return;
+  const leaving = editorTabIdx;
   const leavingText = expandImagesForSave(ta.value);   // before the image placeholders are rebuilt for the next tab
   if(leavingText !== curTabs[leaving].text) tabEdits.set(leaving, leavingText); else tabEdits.delete(leaving);
   const back = tabEdits.has(i);
   const incoming = back ? tabEdits.get(i) : curTabs[i].text;
   tabEdits.delete(i);
   tabEditsRev++;
-  closeWikiAutocomplete();
-  curTabIdx = i; curNoteRaw = curTabs[i].text;
+  editorTabIdx = i; curTabIdx = i; curNoteRaw = curTabs[i].text;
   mdViewStale = true;
   ta.value = collapseImagesForEdit(incoming);
   editResumedDraft = back;
@@ -6824,21 +6875,21 @@ function switchTabWhileEditing(i){
   editBaselineValue = back ? null : ta.value;
   resetUndoHistory();
   draftLastValue = ta.value;
+  enterEditorUI();
   ta.scrollTop = 0; ta.setSelectionRange(0, 0);
   updateDraftNotice();
   renderNoteTabs();
   findRefresh();
   flushDraftNow();   // a draft that now spans two tabs is written straight away, not at the next 3 s tick
   putMetaOnly(curId, { activeTab: i }).catch(()=>{});
-  ta.focus();
 }
 // Which tabs have unsaved changes (a Set of indexes): other tabs from `tabEdits`, the open one from the editor,
 // and, in reading view, the tabs a restored draft touches.
 function dirtyTabSet(){
   const out = new Set(tabEdits.keys());
-  if(noteEditActive()){
+  if(editSession){
     const ta = document.getElementById('mdEditArea');
-    if(editResumedDraft || (ta && editBaselineValue !== null && ta.value !== editBaselineValue)) out.add(curTabIdx);
+    if(editResumedDraft || (ta && editBaselineValue !== null && ta.value !== editBaselineValue)) out.add(editorTabIdx);
   } else if(curDraft && curTabs){
     if(curDraft.text !== (curTabs[curDraft.tab] || {}).text) out.add(curDraft.tab);
     Object.keys(curDraft.edits || {}).forEach(k=>out.add(Number(k)));
@@ -7980,7 +8031,7 @@ function navLayers(){
   const rd = document.getElementById('reader'), tg = document.getElementById('tagsPage');
   if(tg && tg.classList.contains('open')) out.push(closeTagsPage);
   if(rd && rd.classList.contains('open')){
-    if(noteEditActive()) out.push(cancelEditNote); // asks "Discard your unsaved changes?" only when there are some
+    if(editSession) out.push(cancelEditNote); // asks "Discard your unsaved changes?" only when there are some
     out.push(closeReader);
   }
   if(selectMode) out.push(exitSelectMode);
