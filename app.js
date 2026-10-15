@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.70.2';
-const APP_VERSION_DATE = '2026-10-13';
+const APP_VERSION = '1.71.0';
+const APP_VERSION_DATE = '2026-10-15';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -5898,17 +5898,587 @@ function tableSplit(matrix, m, c){
     for(let cc = c; cc < c + st.cs; cc++) if(r !== m || cc !== c) matrix[r][cc] = '';
   return true;
 }
-function tableToHtml(block){
+// @@TABLE-FORMULA-START
+// ---- Table formulas (v1.71.0) ----
+// A table cell whose text starts with "=" is a formula, like in Excel / Google Sheets: =SUM(B2:B5),
+// =B2*C2, =IF(D2>100,"big","ok"), =VLOOKUP("pen",A2:C9,3,FALSE) ... The note text keeps the formula
+// as typed (so it stays plain Markdown); reading view shows the result, and tapping the cell shows the
+// formula again. Addresses count the header row as row 1: A1 is the first header cell, A2 the first
+// body cell. Nothing is ever run as code: a small parser + evaluator (no eval / Function), a circular
+// reference shows #CIRC!, and every error shows as an Excel-style code (#DIV/0!, #NAME?, #VALUE!, #REF!, #N/A, #NUM!, #ERR!).
+class TfError extends Error{ constructor(code){ super(code); this.code = code; } }
+const TF_MAXCELLS = 20000;
+// What counts as a formula: "=" followed by something a formula can start with. A cell like "=> next" or "== x" stays plain text.
+const TF_FSTART = /^=\s*["\-+(A-Za-z0-9_$.]/;
+// "1,234.50", "RM 12", "S$3", "(45)", "12%" -> number; anything else -> NaN. Dates stay text (see tfNum).
+function tfParseNum(t){
+  let s = String(t == null ? '' : t).trim();
+  if(!s) return NaN;
+  let sign = 1;
+  if(/^\(.*\)$/.test(s)){ sign = -1; s = s.slice(1, -1).trim(); }
+  const sg = ()=>{ const m = /^([-+])\s*/.exec(s); if(m){ if(m[1] === '-') sign = -sign; s = s.slice(m[0].length); } };
+  sg();
+  s = s.replace(/^(?:RM|S\$|US\$|MYR|SGD|USD|\$|\u20ac|\u00a3|\u00a5|\uffe5)\s*/i, '');
+  sg();
+  let pct = false;
+  if(s.endsWith('%')){ pct = true; s = s.slice(0, -1).trim(); }
+  if(/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) s = s.replace(/,/g, '');
+  if(!/^(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s)) return NaN;
+  const n = parseFloat(s) * sign;
+  return pct ? n / 100 : n;
+}
+function tfFmtNum(n){ return String(+n.toPrecision(12)); }
+function tfDays(v){   // "2026-10-15" (optionally + " 09:30") -> days since 1970-01-01, else null
+  const d = /^(\d{4})-(\d{2})-(\d{2})(?:[ T]\d{2}:\d{2})?$/.exec(String(v).trim());
+  return d ? Math.round(Date.UTC(+d[1], +d[2] - 1, +d[3]) / 86400000) : null;
+}
+function tfIso(n){
+  const d = new Date(Math.round(n) * 86400000);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+}
+function tfNum(v){
+  if(v instanceof TfError) throw v;
+  if(typeof v === 'number') return v;
+  if(typeof v === 'boolean') return v ? 1 : 0;
+  if(v === null || v === undefined || v === '') return 0;
+  const n = tfParseNum(v);
+  if(!isNaN(n)) return n;
+  const d = tfDays(v);
+  if(d !== null) return d;
+  throw new TfError('#VALUE!');
+}
+function tfStr(v){
+  if(v instanceof TfError) throw v;
+  if(v === null || v === undefined) return '';
+  if(typeof v === 'number') return tfFmtNum(v);
+  if(typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+  return String(v);
+}
+function tfBool(v){
+  if(v instanceof TfError) throw v;
+  if(typeof v === 'boolean') return v;
+  if(typeof v === 'number') return v !== 0;
+  if(v === null || v === '') return false;
+  const u = String(v).trim().toUpperCase();
+  if(u === 'TRUE') return true;
+  if(u === 'FALSE') return false;
+  throw new TfError('#VALUE!');
+}
+function tfCmp(a, b){
+  if(a === null) a = typeof b === 'string' ? '' : typeof b === 'boolean' ? false : 0;
+  if(b === null) b = typeof a === 'string' ? '' : typeof a === 'boolean' ? false : 0;
+  const rank = v=>typeof v === 'number' ? 0 : typeof v === 'string' ? 1 : 2;
+  if(rank(a) !== rank(b)) return rank(a) < rank(b) ? -1 : 1;
+  if(typeof a === 'string'){ a = a.toLowerCase(); b = b.toLowerCase(); }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+// Round half away from zero, on the decimal digits (so 1.005 -> 1.01 like Excel, and 3.3000000000000003 stays 3.3).
+function tfRound(n, d, mode){
+  d = Math.trunc(d);
+  const s = +Math.abs(n).toPrecision(15);
+  const f = mode === 'up' ? Math.ceil : mode === 'down' ? Math.floor : Math.round;
+  let r = Number(f(Number(s + 'e' + d)) + 'e' + (-d));
+  if(isNaN(r)){ const k = Math.pow(10, d); r = f(s * k) / k; }
+  return n < 0 ? -r : r;
+}
+function tfColName(c){ let s = ''; c++; while(c > 0){ const k = (c - 1) % 26; s = String.fromCharCode(65 + k) + s; c = Math.floor((c - 1) / 26); } return s; }
+function tfAddr(a){
+  const m = /^([A-Z]{1,3})(\d+)$/.exec(a);
+  let c = 0;
+  for(const ch of m[1]) c = c * 26 + (ch.charCodeAt(0) - 64);
+  const row = parseInt(m[2], 10) - 1;
+  if(row < 0) throw new TfError('#REF!');
+  return { row, col: c - 1 };
+}
+// TEXT(value, "0.00") / "#,##0.00" / "RM#,##0.00" / "0%" / "yyyy-mm-dd"
+function tfText(v, fmt){
+  fmt = String(fmt).replace(/"/g, '');
+  if(typeof v === 'string' && /[ymd]/i.test(fmt)){
+    const d = tfDays(v);
+    if(d !== null) v = d;
+  }
+  if(typeof v !== 'number') return tfStr(v);
+  if(/[ymd]/i.test(fmt) && !/[#0]/.test(fmt)){
+    const dt = new Date(Math.round(v) * 86400000);
+    const Y = dt.getUTCFullYear(), M = dt.getUTCMonth(), D = dt.getUTCDate();
+    const MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    return fmt.replace(/yyyy|yy|mmmm|mmm|mm|m|dd|d/gi, t=>{
+      switch(t.toLowerCase()){
+        case 'yyyy': return String(Y);
+        case 'yy': return String(Y).slice(-2);
+        case 'mmmm': return MN[M];
+        case 'mmm': return MN[M].slice(0, 3);
+        case 'mm': return String(M + 1).padStart(2, '0');
+        case 'm': return String(M + 1);
+        case 'dd': return String(D).padStart(2, '0');
+        default: return String(D);
+      }
+    });
+  }
+  const m = /^([^#0]*)([#0,]*)(?:\.([0#]*))?([^#0]*)$/.exec(fmt);
+  if(!m) return tfFmtNum(v);
+  const pct = m[1].includes('%') || m[4].includes('%');
+  const x = pct ? v * 100 : v;
+  const dec = (m[3] || '').length, minDec = (m[3] || '').replace(/#/g, '').length;
+  const r = tfRound(Math.abs(x), dec);
+  let [ip, fp = ''] = r.toFixed(dec).split('.');
+  while(fp.length > minDec && fp.endsWith('0')) fp = fp.slice(0, -1);
+  const zeros = (m[2].replace(/,/g, '').match(/0/g) || []).length;
+  ip = ip.padStart(zeros, '0');
+  if(zeros === 0 && ip === '0' && fp) ip = (m[2].includes('0') ? '0' : '');
+  if(m[2].includes(',')) ip = ip.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return (x < 0 && r !== 0 ? '-' : '') + m[1] + ip + (fp ? '.' + fp : '') + m[4];
+}
+// COUNTIF-style criteria: 5, ">5", "<=10", "<>x", "=abc", "ab*" (wildcards * and ?)
+function tfCrit(c){
+  if(c instanceof TfError) throw c;
+  let s = tfStr(c), op = '=';
+  const m = /^(<=|>=|<>|=|<|>)([\s\S]*)$/.exec(s);
+  if(m){ op = m[1]; s = m[2]; }
+  const n = typeof c === 'number' ? c : (s.trim() === '' ? NaN : tfParseNum(s));
+  const isN = !isNaN(n);
+  const re = (!isN && /[*?]/.test(s)) ? new RegExp('^' + s.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i') : null;
+  return v=>{
+    if(v instanceof TfError) return false;
+    let r;
+    if(isN){
+      if(typeof v !== 'number') return op === '<>';
+      r = v < n ? -1 : v > n ? 1 : 0;
+    } else if(op === '=' || op === '<>'){
+      const eq = v === null ? s === '' : (re ? re.test(tfStr(v)) : tfStr(v).toLowerCase() === s.toLowerCase());
+      return op === '=' ? eq : !eq;
+    } else {
+      if(typeof v === 'number' || v === null) return false;
+      const a = tfStr(v).toLowerCase(), b = s.toLowerCase();
+      r = a < b ? -1 : a > b ? 1 : 0;
+    }
+    return op === '=' ? r === 0 : op === '<>' ? r !== 0 : op === '<' ? r < 0 : op === '>' ? r > 0 : op === '<=' ? r <= 0 : r >= 0;
+  };
+}
+function tfTokens(src){
+  const out = [], n = src.length;
+  let i = 0, m;
+  while(i < n){
+    const ch = src[i];
+    if(/\s/.test(ch)){ i++; continue; }
+    const rest = src.slice(i);
+    if(ch === '"'){
+      let j = i + 1, s = '';
+      for(;;){
+        if(j >= n) throw new TfError('#ERR!');
+        if(src[j] === '"'){ if(src[j + 1] === '"'){ s += '"'; j += 2; continue; } break; }
+        s += src[j++];
+      }
+      out.push({ t:'s', v:s }); i = j + 1; continue;
+    }
+    if((m = /^(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/.exec(rest))){ out.push({ t:'n', v:parseFloat(m[0]) }); i += m[0].length; continue; }
+    if((m = /^\$?[A-Za-z]{1,3}\$?\d+(?![A-Za-z0-9_.(])/.exec(rest))){ out.push({ t:'ref', v:m[0].replace(/\$/g, '').toUpperCase() }); i += m[0].length; continue; }
+    if((m = /^[A-Za-z_][A-Za-z0-9_.]*/.exec(rest))){
+      const name = m[0].toUpperCase();
+      i += m[0].length;
+      if(/^\s*\(/.test(src.slice(i))) out.push({ t:'fn', v:name });
+      else if(name === 'TRUE' || name === 'FALSE') out.push({ t:'b', v:name === 'TRUE' });
+      else throw new TfError('#NAME?');
+      continue;
+    }
+    if((m = /^(<=|>=|<>|[-+*\/^&=<>(),:;%])/.exec(rest))){ out.push({ t:'op', v:m[0] === ';' ? ',' : m[0] }); i += m[0].length; continue; }
+    throw new TfError('#ERR!');
+  }
+  return out;
+}
+function tfParse(tokens){
+  let p = 0;
+  const peek = ()=>tokens[p], next = ()=>tokens[p++];
+  const isOp = v=>{ const t = tokens[p]; return !!t && t.t === 'op' && t.v === v; };
+  const CMP = ['=', '<>', '<', '>', '<=', '>='];
+  function cmp(){ let l = cat(); while(peek() && peek().t === 'op' && CMP.includes(peek().v)){ const op = next().v; l = { k:'bin', op, l, r:cat() }; } return l; }
+  function cat(){ let l = add(); while(isOp('&')){ next(); l = { k:'bin', op:'&', l, r:add() }; } return l; }
+  function add(){ let l = mul(); while(isOp('+') || isOp('-')){ const op = next().v; l = { k:'bin', op, l, r:mul() }; } return l; }
+  function mul(){ let l = pow(); while(isOp('*') || isOp('/')){ const op = next().v; l = { k:'bin', op, l, r:pow() }; } return l; }
+  function pow(){ let l = unary(); while(isOp('^')){ next(); l = { k:'bin', op:'^', l, r:unary() }; } return l; }
+  function unary(){ if(isOp('-')){ next(); return { k:'neg', x:unary() }; } if(isOp('+')){ next(); return unary(); } return post(); }
+  function post(){ let x = prim(); while(isOp('%')){ next(); x = { k:'pct', x }; } return x; }
+  function prim(){
+    const t = next();
+    if(!t) throw new TfError('#ERR!');
+    if(t.t === 'n') return { k:'num', v:t.v };
+    if(t.t === 's') return { k:'str', v:t.v };
+    if(t.t === 'b') return { k:'bool', v:t.v };
+    if(t.t === 'ref'){
+      const a = tfAddr(t.v);
+      if(isOp(':')){
+        next();
+        const t2 = next();
+        if(!t2 || t2.t !== 'ref') throw new TfError('#ERR!');
+        const b = tfAddr(t2.v);
+        return { k:'range', r1:a.row, c1:a.col, r2:b.row, c2:b.col };
+      }
+      return { k:'ref', row:a.row, col:a.col };
+    }
+    if(t.t === 'fn'){
+      next();   // "("
+      const args = [];
+      if(isOp(')')) next();
+      else for(;;){
+        if(!peek()) break;   // a missing ")" at the very end is forgiven, like when typing in Excel
+        if(isOp(',') || isOp(')')) args.push({ k:'empty' }); else args.push(cmp());
+        if(isOp(',')){ next(); continue; }
+        if(isOp(')')){ next(); break; }
+        if(!peek()) break;
+        throw new TfError('#ERR!');
+      }
+      return { k:'fn', name:t.v, args };
+    }
+    if(t.t === 'op' && t.v === '('){
+      const e = cmp();
+      if(isOp(')')) next(); else if(peek()) throw new TfError('#ERR!');
+      return e;
+    }
+    throw new TfError('#ERR!');
+  }
+  const ast = cmp();
+  if(p < tokens.length) throw new TfError('#ERR!');
+  return ast;
+}
+function tfScalar(v){
+  if(v && v.rng){
+    if(v.rows.length === 1 && v.rows[0].length === 1) v = v.rows[0][0]; else throw new TfError('#VALUE!');
+  }
+  if(v instanceof TfError) throw v;
+  return v;
+}
+function tfRun(n, X){
+  switch(n.k){
+    case 'num': case 'str': case 'bool': return n.v;
+    case 'empty': return null;
+    case 'ref': { const v = X.cell(n.row, n.col); if(v instanceof TfError) throw v; return v; }
+    case 'range': return X.rg(n);
+    case 'neg': return -tfNum(tfScalar(tfRun(n.x, X)));
+    case 'pct': return tfNum(tfScalar(tfRun(n.x, X))) / 100;
+    case 'bin': {
+      const a = tfScalar(tfRun(n.l, X)), b = tfScalar(tfRun(n.r, X));
+      switch(n.op){
+        case '+': return tfNum(a) + tfNum(b);
+        case '-': return tfNum(a) - tfNum(b);
+        case '*': return tfNum(a) * tfNum(b);
+        case '/': { const d = tfNum(b); if(d === 0) throw new TfError('#DIV/0!'); return tfNum(a) / d; }
+        case '^': { const r = Math.pow(tfNum(a), tfNum(b)); if(!isFinite(r)) throw new TfError('#NUM!'); return r; }
+        case '&': return tfStr(a) + tfStr(b);
+        default: {
+          const c = tfCmp(a, b);
+          return n.op === '=' ? c === 0 : n.op === '<>' ? c !== 0 : n.op === '<' ? c < 0 : n.op === '>' ? c > 0 : n.op === '<=' ? c <= 0 : c >= 0;
+        }
+      }
+    }
+    case 'fn': { const f = TF_FN[n.name]; if(!f) throw new TfError('#NAME?'); return f(n.args, X); }
+  }
+  throw new TfError('#ERR!');
+}
+// Numbers from the arguments. Cells / ranges: only real numbers count (text and blanks are skipped, like Excel);
+// an error in them is passed on. A typed-in argument must be a number. lenient = skip errors instead (COUNT).
+function tfNums(a, X, lenient){
+  const o = [];
+  const add = v=>{ if(v instanceof TfError){ if(lenient) return; throw v; } if(typeof v === 'number') o.push(v); };
+  for(const n of a){
+    if(n.k === 'empty') continue;
+    if(n.k === 'ref' || n.k === 'range'){ X.rg(n).rows.forEach(r=>r.forEach(add)); continue; }
+    let v;
+    try{ v = tfScalar(tfRun(n, X)); }catch(e){ if(lenient && e instanceof TfError) continue; throw e; }
+    if(lenient){ if(typeof v === 'number') o.push(v); } else o.push(tfNum(v));
+  }
+  return o;
+}
+// every value of every argument, ranges flattened (blank = null, errors stay TfError objects)
+function tfItems(a, X){
+  const o = [];
+  for(const n of a){
+    if(n.k === 'empty') continue;
+    if(n.k === 'ref' || n.k === 'range') X.rg(n).rows.forEach(r=>r.forEach(v=>o.push(v)));
+    else o.push(tfScalar(tfRun(n, X)));
+  }
+  return o;
+}
+const tfS = (n, X)=>tfScalar(tfRun(n, X));
+function tfArg(a, i, X, dflt){ return a[i] === undefined || a[i].k === 'empty' ? dflt : tfS(a[i], X); }
+function tfMatches(X, rangeNodes, critNodes){   // [{i,j}] of the cells that pass every (range, criterion) pair
+  const rgs = rangeNodes.map(n=>X.rg(n)), crits = critNodes.map(n=>tfCrit(tfS(n, X)));
+  const out = [];
+  rgs[0].rows.forEach((row, i)=>row.forEach((_, j)=>{
+    if(rgs.every((rg, k)=>{ const v = rg.rows[i] && rg.rows[i][j]; return crits[k](v === undefined ? null : v); })) out.push([i, j]);
+  }));
+  return out;
+}
+const tfAt = (rg, ij)=>{ const v = rg.rows[ij[0]] && rg.rows[ij[0]][ij[1]]; return v === undefined ? null : v; };
+const tfPad2 = n=>String(n).padStart(2, '0');
+const TF_FN = {
+  // --- maths ---
+  SUM:(a, X)=>tfNums(a, X).reduce((s, v)=>s + v, 0),
+  AVERAGE:(a, X)=>{ const v = tfNums(a, X); if(!v.length) throw new TfError('#DIV/0!'); return v.reduce((s, x)=>s + x, 0) / v.length; },
+  MIN:(a, X)=>{ const v = tfNums(a, X); return v.length ? Math.min(...v) : 0; },
+  MAX:(a, X)=>{ const v = tfNums(a, X); return v.length ? Math.max(...v) : 0; },
+  COUNT:(a, X)=>tfNums(a, X, true).length,
+  COUNTA:(a, X)=>tfItems(a, X).filter(v=>v !== null && v !== '').length,
+  COUNTBLANK:(a, X)=>tfItems(a, X).filter(v=>v === null || v === '').length,
+  PRODUCT:(a, X)=>{ const v = tfNums(a, X); return v.length ? v.reduce((s, x)=>s * x, 1) : 0; },
+  MEDIAN:(a, X)=>{ const v = tfNums(a, X).sort((x, y)=>x - y); if(!v.length) throw new TfError('#NUM!'); const h = v.length >> 1; return v.length % 2 ? v[h] : (v[h - 1] + v[h]) / 2; },
+  STDEV:(a, X)=>{ const v = tfNums(a, X); if(v.length < 2) throw new TfError('#DIV/0!'); const m = v.reduce((s, x)=>s + x, 0) / v.length; return Math.sqrt(v.reduce((s, x)=>s + (x - m) * (x - m), 0) / (v.length - 1)); },
+  LARGE:(a, X)=>{ const v = tfNums([a[0]], X).sort((x, y)=>y - x), k = Math.trunc(tfNum(tfS(a[1], X))); if(k < 1 || k > v.length) throw new TfError('#NUM!'); return v[k - 1]; },
+  SMALL:(a, X)=>{ const v = tfNums([a[0]], X).sort((x, y)=>x - y), k = Math.trunc(tfNum(tfS(a[1], X))); if(k < 1 || k > v.length) throw new TfError('#NUM!'); return v[k - 1]; },
+  ROUND:(a, X)=>tfRound(tfNum(tfS(a[0], X)), tfNum(tfArg(a, 1, X, 0))),
+  ROUNDUP:(a, X)=>tfRound(tfNum(tfS(a[0], X)), tfNum(tfArg(a, 1, X, 0)), 'up'),
+  ROUNDDOWN:(a, X)=>tfRound(tfNum(tfS(a[0], X)), tfNum(tfArg(a, 1, X, 0)), 'down'),
+  TRUNC:(a, X)=>tfRound(tfNum(tfS(a[0], X)), tfNum(tfArg(a, 1, X, 0)), 'down'),
+  INT:(a, X)=>Math.floor(tfNum(tfS(a[0], X))),
+  ABS:(a, X)=>Math.abs(tfNum(tfS(a[0], X))),
+  SIGN:(a, X)=>Math.sign(tfNum(tfS(a[0], X))),
+  SQRT:(a, X)=>{ const v = tfNum(tfS(a[0], X)); if(v < 0) throw new TfError('#NUM!'); return Math.sqrt(v); },
+  POWER:(a, X)=>{ const r = Math.pow(tfNum(tfS(a[0], X)), tfNum(tfS(a[1], X))); if(!isFinite(r)) throw new TfError('#NUM!'); return r; },
+  MOD:(a, X)=>{ const x = tfNum(tfS(a[0], X)), d = tfNum(tfS(a[1], X)); if(d === 0) throw new TfError('#DIV/0!'); return x - d * Math.floor(x / d); },
+  EXP:(a, X)=>Math.exp(tfNum(tfS(a[0], X))),
+  LN:(a, X)=>{ const v = tfNum(tfS(a[0], X)); if(v <= 0) throw new TfError('#NUM!'); return Math.log(v); },
+  LOG:(a, X)=>{ const v = tfNum(tfS(a[0], X)), b = tfNum(tfArg(a, 1, X, 10)); if(v <= 0 || b <= 0 || b === 1) throw new TfError('#NUM!'); return Math.log(v) / Math.log(b); },
+  PI:()=>Math.PI,
+  CEILING:(a, X)=>{ const v = tfNum(tfS(a[0], X)), s = tfNum(tfArg(a, 1, X, 1)); return s === 0 ? 0 : Math.ceil(+(v / s).toPrecision(15)) * s; },
+  FLOOR:(a, X)=>{ const v = tfNum(tfS(a[0], X)), s = tfNum(tfArg(a, 1, X, 1)); if(s === 0) throw new TfError('#DIV/0!'); return Math.floor(+(v / s).toPrecision(15)) * s; },
+  SUMPRODUCT:(a, X)=>{
+    const rs = a.map(n=>X.rg(n));
+    const h = rs[0].rows.length, w = rs[0].rows[0].length;
+    if(rs.some(r=>r.rows.length !== h || r.rows[0].length !== w)) throw new TfError('#VALUE!');
+    let s = 0;
+    for(let i = 0; i < h; i++) for(let j = 0; j < w; j++){
+      let p = 1;
+      for(const r of rs){ const v = r.rows[i][j]; if(v instanceof TfError) throw v; p *= typeof v === 'number' ? v : 0; }
+      s += p;
+    }
+    return s;
+  },
+  SUMIF:(a, X)=>{ const rg = X.rg(a[0]), sr = a[2] ? X.rg(a[2]) : rg; let s = 0; for(const ij of tfMatches(X, [a[0]], [a[1]])){ const v = tfAt(sr, ij); if(typeof v === 'number') s += v; } return s; },
+  COUNTIF:(a, X)=>tfMatches(X, [a[0]], [a[1]]).length,
+  AVERAGEIF:(a, X)=>{ const sr = a[2] ? X.rg(a[2]) : X.rg(a[0]); const v = tfMatches(X, [a[0]], [a[1]]).map(ij=>tfAt(sr, ij)).filter(x=>typeof x === 'number'); if(!v.length) throw new TfError('#DIV/0!'); return v.reduce((s, x)=>s + x, 0) / v.length; },
+  SUMIFS:(a, X)=>{ const sr = X.rg(a[0]); const rn = [], cn = []; for(let i = 1; i + 1 < a.length; i += 2){ rn.push(a[i]); cn.push(a[i + 1]); } return tfMatches(X, rn, cn).map(ij=>tfAt(sr, ij)).filter(x=>typeof x === 'number').reduce((s, x)=>s + x, 0); },
+  COUNTIFS:(a, X)=>{ const rn = [], cn = []; for(let i = 0; i + 1 < a.length; i += 2){ rn.push(a[i]); cn.push(a[i + 1]); } return tfMatches(X, rn, cn).length; },
+  AVERAGEIFS:(a, X)=>{ const sr = X.rg(a[0]); const rn = [], cn = []; for(let i = 1; i + 1 < a.length; i += 2){ rn.push(a[i]); cn.push(a[i + 1]); } const v = tfMatches(X, rn, cn).map(ij=>tfAt(sr, ij)).filter(x=>typeof x === 'number'); if(!v.length) throw new TfError('#DIV/0!'); return v.reduce((s, x)=>s + x, 0) / v.length; },
+  // --- logic ---
+  IF:(a, X)=>{
+    if(a.length < 2 || a.length > 3) throw new TfError('#ERR!');
+    const c = tfBool(tfS(a[0], X));
+    const pick = n=>n === undefined ? false : n.k === 'empty' ? 0 : tfRun(n, X);
+    return c ? pick(a[1]) : pick(a[2]);
+  },
+  IFS:(a, X)=>{ for(let i = 0; i + 1 < a.length; i += 2) if(tfBool(tfS(a[i], X))) return tfRun(a[i + 1], X); throw new TfError('#N/A'); },
+  IFERROR:(a, X)=>{ try{ return tfRun(a[0], X); }catch(e){ if(e instanceof TfError) return a[1] ? tfRun(a[1], X) : ''; throw e; } },
+  AND:(a, X)=>{ const v = tfItems(a, X).filter(x=>x !== null && x !== ''); if(!v.length) throw new TfError('#VALUE!'); return v.every(x=>tfBool(x)); },
+  OR:(a, X)=>{ const v = tfItems(a, X).filter(x=>x !== null && x !== ''); if(!v.length) throw new TfError('#VALUE!'); return v.some(x=>tfBool(x)); },
+  NOT:(a, X)=>!tfBool(tfS(a[0], X)),
+  TRUE:()=>true, FALSE:()=>false,
+  ISNUMBER:(a, X)=>{ try{ return typeof tfS(a[0], X) === 'number'; }catch(e){ if(e instanceof TfError) return false; throw e; } },
+  ISTEXT:(a, X)=>{ try{ const v = tfS(a[0], X); return typeof v === 'string' && v !== ''; }catch(e){ if(e instanceof TfError) return false; throw e; } },
+  ISBLANK:(a, X)=>{ const n = a[0]; if(n.k === 'ref') return X.cell(n.row, n.col) === null; try{ return tfS(n, X) === null; }catch(e){ if(e instanceof TfError) return false; throw e; } },
+  ISERROR:(a, X)=>{ try{ tfS(a[0], X); return false; }catch(e){ if(e instanceof TfError) return true; throw e; } },
+  // --- text ---
+  CONCAT:(a, X)=>tfItems(a, X).map(tfStr).join(''),
+  CONCATENATE:(a, X)=>tfItems(a, X).map(tfStr).join(''),
+  TEXTJOIN:(a, X)=>{ const d = tfStr(tfS(a[0], X)), ig = tfBool(tfS(a[1], X)); let v = tfItems(a.slice(2), X); if(ig) v = v.filter(x=>x !== null && x !== ''); return v.map(tfStr).join(d); },
+  LEN:(a, X)=>tfStr(tfS(a[0], X)).length,
+  UPPER:(a, X)=>tfStr(tfS(a[0], X)).toUpperCase(),
+  LOWER:(a, X)=>tfStr(tfS(a[0], X)).toLowerCase(),
+  PROPER:(a, X)=>tfStr(tfS(a[0], X)).toLowerCase().replace(/(^|[^a-z\u00c0-\u024f])([a-z\u00c0-\u024f])/g, (m, p, c)=>p + c.toUpperCase()),
+  TRIM:(a, X)=>tfStr(tfS(a[0], X)).trim().replace(/\s+/g, ' '),
+  LEFT:(a, X)=>tfStr(tfS(a[0], X)).slice(0, Math.max(0, Math.trunc(tfNum(tfArg(a, 1, X, 1))))),
+  RIGHT:(a, X)=>{ const s = tfStr(tfS(a[0], X)), n = Math.max(0, Math.trunc(tfNum(tfArg(a, 1, X, 1)))); return n === 0 ? '' : s.slice(-n); },
+  MID:(a, X)=>{ const s = tfStr(tfS(a[0], X)), st = Math.trunc(tfNum(tfS(a[1], X))), n = Math.trunc(tfNum(tfS(a[2], X))); if(st < 1 || n < 0) throw new TfError('#VALUE!'); return s.substr(st - 1, n); },
+  FIND:(a, X)=>{ const f = tfStr(tfS(a[0], X)), s = tfStr(tfS(a[1], X)), i = s.indexOf(f, Math.trunc(tfNum(tfArg(a, 2, X, 1))) - 1); if(i < 0) throw new TfError('#VALUE!'); return i + 1; },
+  SEARCH:(a, X)=>{ const f = tfStr(tfS(a[0], X)).toLowerCase(), s = tfStr(tfS(a[1], X)).toLowerCase(), i = s.indexOf(f, Math.trunc(tfNum(tfArg(a, 2, X, 1))) - 1); if(i < 0) throw new TfError('#VALUE!'); return i + 1; },
+  SUBSTITUTE:(a, X)=>{
+    const s = tfStr(tfS(a[0], X)), o = tfStr(tfS(a[1], X)), nw = tfStr(tfS(a[2], X));
+    if(o === '') return s;
+    if(a[3] === undefined) return s.split(o).join(nw);
+    let k = Math.trunc(tfNum(tfS(a[3], X))), at = -1;
+    while(k-- > 0){ at = s.indexOf(o, at + 1); if(at < 0) return s; }
+    return s.slice(0, at) + nw + s.slice(at + o.length);
+  },
+  REPT:(a, X)=>{ const n = Math.trunc(tfNum(tfS(a[1], X))); if(n < 0 || n > 1000) throw new TfError('#VALUE!'); return tfStr(tfS(a[0], X)).repeat(n); },
+  TEXT:(a, X)=>tfText(tfS(a[0], X), tfStr(tfS(a[1], X))),
+  VALUE:(a, X)=>tfNum(tfS(a[0], X)),
+  FIXED:(a, X)=>{ const d = Math.trunc(tfNum(tfArg(a, 1, X, 2))); return tfText(tfNum(tfS(a[0], X)), (tfBool(tfArg(a, 2, X, false)) ? '0' : '#,##0') + (d > 0 ? '.' + '0'.repeat(d) : '')); },
+  // --- lookup ---
+  VLOOKUP:(a, X)=>{
+    const key = tfS(a[0], X), rg = X.rg(a[1]), col = Math.trunc(tfNum(tfS(a[2], X)));
+    if(col < 1 || col > rg.rows[0].length) throw new TfError('#REF!');
+    const exact = a[3] !== undefined && a[3].k !== 'empty' ? !tfBool(tfS(a[3], X)) : typeof key !== 'number';
+    let hit = -1;
+    if(exact) rg.rows.forEach((r, i)=>{ if(hit < 0 && !(r[0] instanceof TfError) && r[0] !== null && tfCmp(r[0], key) === 0) hit = i; });
+    else rg.rows.forEach((r, i)=>{ if(typeof r[0] === 'number' && typeof key === 'number' && r[0] <= key) hit = i; });
+    if(hit < 0) throw new TfError('#N/A');
+    const v = rg.rows[hit][col - 1];
+    if(v instanceof TfError) throw v;
+    return v;
+  },
+  INDEX:(a, X)=>{
+    const rg = X.rg(a[0]); let r = Math.trunc(tfNum(tfArg(a, 1, X, 1))), c = Math.trunc(tfNum(tfArg(a, 2, X, 1)));
+    if(rg.rows.length === 1 && a[2] === undefined){ c = r; r = 1; }
+    if(r < 1 || c < 1 || r > rg.rows.length || c > rg.rows[0].length) throw new TfError('#REF!');
+    const v = rg.rows[r - 1][c - 1];
+    if(v instanceof TfError) throw v;
+    return v;
+  },
+  MATCH:(a, X)=>{
+    const key = tfS(a[0], X), rg = X.rg(a[1]), t = Math.trunc(tfNum(tfArg(a, 2, X, 1)));
+    const flat = rg.rows.length === 1 ? rg.rows[0] : rg.rows.map(r=>r[0]);
+    let hit = -1;
+    if(t === 0) flat.forEach((v, i)=>{ if(hit < 0 && !(v instanceof TfError) && v !== null && tfCmp(v, key) === 0) hit = i; });
+    else flat.forEach((v, i)=>{ if(v instanceof TfError || v === null) return; const c = tfCmp(v, key); if(t > 0 ? c <= 0 : c >= 0) hit = i; });
+    if(hit < 0) throw new TfError('#N/A');
+    return hit + 1;
+  },
+  XLOOKUP:(a, X)=>{
+    const key = tfS(a[0], X), look = X.rg(a[1]), ret = X.rg(a[2]);
+    const lf = look.rows.length === 1 ? look.rows[0] : look.rows.map(r=>r[0]);
+    const rf = ret.rows.length === 1 ? ret.rows[0] : ret.rows.map(r=>r[0]);
+    const i = lf.findIndex(v=>!(v instanceof TfError) && v !== null && tfCmp(v, key) === 0);
+    if(i < 0){ if(a[3] !== undefined && a[3].k !== 'empty') return tfRun(a[3], X); throw new TfError('#N/A'); }
+    if(rf[i] instanceof TfError) throw rf[i];
+    return rf[i] === undefined ? null : rf[i];
+  },
+  // --- dates (a date is text like 2026-10-15; arithmetic on dates counts days) ---
+  TODAY:()=>{ const d = new Date(); return d.getFullYear() + '-' + tfPad2(d.getMonth() + 1) + '-' + tfPad2(d.getDate()); },
+  NOW:()=>{ const d = new Date(); return d.getFullYear() + '-' + tfPad2(d.getMonth() + 1) + '-' + tfPad2(d.getDate()) + ' ' + tfPad2(d.getHours()) + ':' + tfPad2(d.getMinutes()); },
+  DATE:(a, X)=>{ const t = Date.UTC(tfNum(tfS(a[0], X)), tfNum(tfS(a[1], X)) - 1, tfNum(tfS(a[2], X))); if(isNaN(t)) throw new TfError('#NUM!'); return tfIso(t / 86400000); },
+  YEAR:(a, X)=>new Date(tfNum(tfS(a[0], X)) * 86400000).getUTCFullYear(),
+  MONTH:(a, X)=>new Date(tfNum(tfS(a[0], X)) * 86400000).getUTCMonth() + 1,
+  DAY:(a, X)=>new Date(tfNum(tfS(a[0], X)) * 86400000).getUTCDate(),
+  DAYS:(a, X)=>Math.round(tfNum(tfS(a[0], X)) - tfNum(tfS(a[1], X)))
+};
+TF_FN.AVG = TF_FN.AVERAGE; TF_FN['STDEV.S'] = TF_FN.STDEV;
+// Function names offered by the ƒx menu in the table bar (and listed in the Help card)
+const TF_MENU = [
+  ['Maths', ['SUM','AVERAGE','MIN','MAX','COUNT','COUNTA','ROUND','ROUNDUP','ROUNDDOWN','INT','ABS','SQRT','POWER','MOD','PRODUCT','MEDIAN','STDEV','LARGE','SMALL','CEILING','FLOOR','SUMPRODUCT','LOG','LN','EXP','PI']],
+  ['If / count', ['IF','IFS','IFERROR','AND','OR','NOT','SUMIF','COUNTIF','AVERAGEIF','SUMIFS','COUNTIFS','AVERAGEIFS','ISNUMBER','ISBLANK','ISERROR']],
+  ['Text', ['CONCAT','TEXTJOIN','LEN','UPPER','LOWER','PROPER','TRIM','LEFT','RIGHT','MID','FIND','SEARCH','SUBSTITUTE','REPT','TEXT','VALUE','FIXED']],
+  ['Lookup', ['VLOOKUP','XLOOKUP','INDEX','MATCH']],
+  ['Dates', ['TODAY','NOW','DATE','YEAR','MONTH','DAY','DAYS']]
+];
+// Evaluates a whole table. grid = rows of PLAIN cell text (a formula still starts with "="; row 0 = header = row 1).
+// Returns { isF(r,c), get(r,c) } where get() gives the cell's value (null | number | string | boolean) or a TfError.
+function tfEvalGrid(grid){
+  const text = (r, c)=>{ const row = grid[r]; return row && row[c] != null ? String(row[c]) : ''; };
+  const memo = new Map(), busy = new Set();
+  const isF = (r, c)=>TF_FSTART.test(text(r, c).trim());
+  function cell(r, c){
+    if(r < 0 || c < 0) return new TfError('#REF!');
+    const t = text(r, c).trim();
+    if(t === '' || t === '<<' || t === '^^') return null;
+    if(!TF_FSTART.test(t)){ const n = tfParseNum(t); return isNaN(n) ? t : n; }
+    const k = r * 4096 + c;
+    if(memo.has(k)) return memo.get(k);
+    if(busy.has(k)) return new TfError('#CIRC!');
+    busy.add(k);
+    let out;
+    try{
+      out = tfRun(tfParse(tfTokens(t.replace(/^=\s*/, ''))), X);
+      if(out && out.rng) out = tfScalar(out);
+      if(typeof out === 'number' && !isFinite(out)) out = new TfError('#NUM!');
+    }catch(e){
+      if(e instanceof TfError) out = e;
+      else if(e instanceof RangeError) out = new TfError('#ERR!');
+      else throw e;
+    }
+    busy.delete(k);
+    memo.set(k, out);
+    return out;
+  }
+  const X = {
+    cell,
+    rg(n){
+      if(n.k === 'ref') return { rng:true, rows:[[cell(n.row, n.col)]] };
+      if(n.k !== 'range') throw new TfError('#VALUE!');
+      const ra = Math.min(n.r1, n.r2), rb = Math.max(n.r1, n.r2), ca = Math.min(n.c1, n.c2), cb = Math.max(n.c1, n.c2);
+      if((rb - ra + 1) * (cb - ca + 1) > TF_MAXCELLS) throw new TfError('#REF!');
+      const rows = [];
+      for(let r = ra; r <= rb; r++){ const row = []; for(let c = ca; c <= cb; c++) row.push(cell(r, c)); rows.push(row); }
+      return { rng:true, rows };
+    }
+  };
+  return { isF, get:cell };
+}
+function tfShow(v){   // a value as it is shown in the table
+  if(v instanceof TfError) return v.code;
+  if(v === null || v === undefined) return '';
+  return tfStr(v);
+}
+// Plain text of one table cell from rendered (escaped / inline-formatted) HTML, for evaluation.
+function tfPlainCell(html, store){
+  const m = /^\u0003F(\d+)\u0003$/.exec(html);
+  if(m) return unescapeHtml(store[+m[1]] || '');
+  return unescapeHtml(html.replace(/<[^>]*>/g, '')).replace(/<br\s*\/?>/gi, '\n');
+}
+// renderMarkdown pre-pass: lifts "= ..." cells of pipe tables out of the text (so the bold/italic/highlight passes
+// can't mangle =A1*B1*C1) into `store`, leaving a \u0003F<n>\u0003 token. tableToHtml turns each token into its result.
+function tfShieldTables(s, store){
+  return s.split(/(\n{2,})/).map((blk, i)=>{
+    if(i % 2 || !blk.includes('=') || !looksLikeTable(blk)) return blk;
+    return blk.split('\n').map(line=>{
+      if(!line.includes('|')) return line;
+      return line.split(/(?<!\\)\|/).map(part=>{
+        const m = /^(\s*)(=[\s\S]*?)(\s*)$/.exec(part);
+        if(!m || !TF_FSTART.test(unescapeHtml(m[2]))) return part;
+        store.push(m[2].replace(/\\\|/g, '|'));
+        return m[1] + '\u0003F' + (store.length - 1) + '\u0003' + m[3];
+      }).join('|');
+    }).join('\n');
+  }).join('');
+}
+// Values of a RAW table matrix (formulas computed) as rows of strings — used for "Copy" (paste into Excel).
+function tfGridValues(matrix){
+  const ev = tfEvalGrid(matrix);
+  return matrix.map((row, r)=>row.map((raw, c)=>{
+    const t = String(raw == null ? '' : raw).trim();
+    if(t === '<<' || t === '^^') return '';
+    return ev.isF(r, c) ? tfShow(ev.get(r, c)) : String(raw == null ? '' : raw).replace(/<br\s*\/?>/gi, '\n');
+  }));
+}
+// Excel / Sheets copy = tab-separated text, cells with line breaks or quotes wrapped in "..."
+function tfParseTSV(t){
+  t = String(t).replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+  const rows = []; let row = [], cell = '', q = false;
+  for(let i = 0; i < t.length; i++){
+    const ch = t[i];
+    if(q){ if(ch === '"'){ if(t[i + 1] === '"'){ cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if(ch === '"' && cell === '') q = true;
+    else if(ch === '\t'){ row.push(cell); cell = ''; }
+    else if(ch === '\n'){ row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  row.push(cell); rows.push(row);
+  return rows.map(r=>r.map(c=>c.trim()));
+}
+function tfToTSV(values){
+  return values.map(r=>r.map(c=>/[\t\n"]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c).join('\t')).join('\n');
+}
+// @@TABLE-FORMULA-END
+
+function tableToHtml(block, fStore){
   const lines = block.split('\n').filter(l=>l.trim());
   const grid = [splitTableRow(lines[0]), ...lines.slice(2).map(splitTableRow)];
   // rendering runs on HTML-escaped text, where "<<" has become "&lt;&lt;"
   const info = tableSpans(grid, v=>v === '&lt;&lt;', v=>v === '^^');
+  // v1.71.0: cells that are formulas (lifted out as \u0003F<n>\u0003 tokens by tfShieldTables) show their result
+  const hasF = !!fStore && grid.some(r=>r.some(c=>/^\u0003F\d+\u0003$/.test(c)));
+  const calc = hasF ? tfEvalGrid(grid.map(r=>r.map(c=>tfPlainCell(c, fStore)))) : null;
   const rowHtml = r => grid[r].map((c, ci)=>{
     const f = info[r][ci];
     if(f.covered) return '';
     const tag = r === 0 ? 'th' : 'td';
     const span = (f.cs > 1 ? ` colspan="${f.cs}"` : '') + (f.rs > 1 ? ` rowspan="${f.rs}"` : '');
-    return `<${tag}${span} data-r="${r}" data-c="${ci}">${cellBreaks(c)}</${tag}>`;
+    const addr = ` data-a="${tfColName(ci)}${r + 1}" data-r="${r}" data-c="${ci}"`;
+    const fm = hasF ? /^\u0003F(\d+)\u0003$/.exec(c) : null;
+    if(fm){
+      const v = calc.get(r, ci);
+      const bad = v instanceof TfError;
+      const cls = 'tf' + (bad ? ' tf-bad' : typeof v === 'number' ? ' tf-num' : '');
+      return `<${tag}${span}${addr} class="${cls}" title="${fStore[+fm[1]]}">${escapeHtml(tfShow(v))}</${tag}>`;
+    }
+    return `<${tag}${span}${addr}>${cellBreaks(c)}</${tag}>`;
   }).join('');
   const thead = `<tr>${rowHtml(0)}</tr>`;
   const tbody = grid.slice(1).map((_, i)=>`<tr>${rowHtml(i + 1)}</tr>`).join('');
@@ -6212,7 +6782,7 @@ function renderMarkdown(src, linkTypes){
   // used for the placeholders below, so a crafted note (a backup file, a synced
   // .md) containing "\u0000CODEBLOCK3\u0000" could otherwise splice another
   // block's HTML into the page, or print "undefined".
-  let s = escapeHtml(src).replace(/\u0000/g, '');
+  let s = escapeHtml(src).replace(/[\u0000\u0003]/g, '');
   // Fenced code blocks are pulled out into placeholder tokens FIRST, before
   // any other regex runs, and only spliced back in as real HTML at the very
   // end (see the `codeBlocks` replace below). Otherwise a snippet containing
@@ -6276,6 +6846,10 @@ function renderMarkdown(src, linkTypes){
     , whole));
     return indent + `\u0000CODEBLOCK${codeBlocks.length - 1}\u0000`;
   });
+  // v1.71.0: formula cells of pipe tables ("=SUM(B2:B5)") are set aside before the inline passes below, which
+  // would otherwise turn =A1*B1*C1 into italics; tableToHtml puts in each result.
+  const fStore = [];
+  s = tfShieldTables(s, fStore);
   // H1-H6 (v1.37.0; was H1-H3 only, so "#### x" used to show as literal text).
   // One pass, so the marker length alone decides the level.
   s = s.replace(/^(#{1,6}) (.*)$/gm, (_, hashes, text)=>`<h${hashes.length}>${text}</h${hashes.length}>`);
@@ -6411,7 +6985,7 @@ function renderMarkdown(src, linkTypes){
     else if(/^<div class="code-block"/.test(block)) html = block;
     else if(/^<div class="shelf-index"/.test(block)) html = block;
     else if(/^<img class="md-img"/.test(block)) html = block;
-    else if(looksLikeTable(block)) html = tableToHtml(block);
+    else if(looksLikeTable(block)) html = tableToHtml(block, fStore);
     else if(hrBlockHtml(block) !== null) html = hrBlockHtml(block);
     else if(/^\s*&gt;/.test(block) && block.split('\n').every(l=>!l.trim() || /^\s*&gt;/.test(l))){
       const lines = block.split('\n').filter(l=>l.trim()).map(l=>l.replace(/^\s*&gt;\s?/,''));
@@ -6521,7 +7095,7 @@ function renderMarkdown(src, linkTypes){
       html = groups.map(g=>chunkHtml(g.lines.join('\n'), idx, g.start)).join('');
     } else html = chunkHtml(block, idx, 0);
     return `<div class="mdblock" data-idx="${idx}"><button class="bm-btn" data-on-click="toggleBookmark" data-args-click="[${Number(idx)}]" title="Bookmark this spot">&#128278;</button>${html}</div>`;
-  }).join('\n').replace(/\u0001/g, '\n\n').replace(/\u0002/g, '');
+  }).join('\n').replace(/\u0001/g, '\n\n').replace(/\u0002/g, '').replace(/\u0003F(\d+)\u0003/g, (m, i)=>fStore[+i] || '');
 }
 
 // A tap on a checklist checkbox re-splits curNoteRaw the same way
@@ -7019,12 +7593,16 @@ async function rerenderNoteView(){
   if(it) updateBookmarkUI(it.bookmarks || []);
   findRefresh(); // the re-render wiped the highlights
 }
-function removeTableBar(){ const b = document.getElementById('tableBar'); if(b) b.remove(); }
+function removeTableBar(){
+  const b = document.getElementById('tableBar'); if(b) b.remove();
+  const f = document.getElementById('tableFx'); if(f) f.remove();
+}
 function closeTableCell(edit){
   const td = edit.td;
-  td.onkeydown = td.onblur = td.onpaste = null;
+  td.onkeydown = td.onblur = td.onpaste = td.oninput = null;
   td.removeAttribute('contenteditable');
   td.classList.remove('editing');
+  const tw = td.closest('.md-table-wrap'); if(tw) tw.classList.remove('show-addr');
   removeTableBar();
 }
 function cancelTableEdit(edit){
@@ -7120,6 +7698,18 @@ async function applyTableEdit(edit, op){
           else if(!dry.lost || confirm("Merging keeps only this cell's text and discards the other cell's text. Continue?")){ tableMerge(matrix, edit.m, edit.c, dir, false); undoLabel = 'Cells merged'; }
         }
         target = { m: edit.m, c: edit.c };
+      } else if(op.type === 'paste'){
+        const g = op.grid, gw = Math.max(...g.map(r=>r.length));
+        const nw = Math.max(ncols, edit.c + gw, ...matrix.map(r=>r.length));
+        matrix.forEach(r=>pad(r, nw));
+        while(sep.length < nw) sep.push('---');
+        g.forEach((row, i)=>{
+          const r = edit.m + i;
+          while(matrix.length <= r) matrix.push(new Array(nw).fill(''));
+          row.forEach((v, j)=>{ matrix[r][edit.c + j] = v.replace(/\r?\n/g, '<br>'); });
+        });
+        target = { m: edit.m, c: edit.c };
+        undoLabel = 'Pasted from spreadsheet';
       } else if(op.type === 'move'){
         target = op.target;
       }
@@ -7212,6 +7802,66 @@ function openTableCellAt(pos){
   }
   if(cell) startTableCellEdit(cell);
 }
+let tfShowAddr = false;   // "A1" button: label every cell with its address while editing
+// ƒx menu under the table bar: quick sums of the cells above / to the left, and every function (v1.71.0)
+function tfInsertInCell(td, text, replaceAll){
+  td.focus();
+  const sel = window.getSelection();
+  if(replaceAll){ const r = document.createRange(); r.selectNodeContents(td); sel.removeAllRanges(); sel.addRange(r); }
+  let ok = false;
+  try{ ok = document.execCommand('insertText', false, text); }catch(e){}
+  if(!ok){
+    td.textContent = replaceAll ? text : tableCellText(td) + text;
+    const r = document.createRange(); r.selectNodeContents(td); r.collapse(false);
+    sel.removeAllRanges(); sel.addRange(r);
+  }
+  if(typeof td.oninput === 'function') td.oninput();
+}
+function toggleFxMenu(edit, model, wrap){
+  const old = document.getElementById('tableFx');
+  if(old){ old.remove(); return; }
+  const td = edit.td, m = edit.m, c = edit.c;
+  const grid = [model.header, ...model.rows];
+  const numish = (r, cc)=>{ const v = String((grid[r] && grid[r][cc]) || '').trim(); return TF_FSTART.test(v) || !isNaN(tfParseNum(v)); };
+  let r = m - 1; while(r >= 1 && numish(r, c)) r--;
+  const above = (m >= 2 && r + 1 <= m - 1) ? tfColName(c) + (r + 2) + ':' + tfColName(c) + m : null;
+  let k = c - 1; while(k >= 0 && numish(m, k)) k--;
+  const left = (c >= 1 && k + 1 <= c - 1) ? tfColName(k + 1) + (m + 1) + ':' + tfColName(c - 1) + (m + 1) : null;
+  const box = document.createElement('div');
+  box.id = 'tableFx'; box.className = 'table-fx';
+  const chip = (row, label, title, fn)=>{
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; if(title) b.title = title;
+    b.onpointerdown = (e)=>{ e.preventDefault(); tableBarPress = true; };
+    const release = ()=>setTimeout(()=>{ tableBarPress = false; if(tableEdit === edit && !edit.done && document.activeElement !== td) td.focus(); }, 400);
+    b.onpointerup = release; b.onpointercancel = release;
+    b.onclick = (e)=>{ e.stopPropagation(); fn(); };
+    row.appendChild(b);
+  };
+  const mkRow = (label)=>{
+    const row = document.createElement('div'); row.className = 'fx-row';
+    const l = document.createElement('span'); l.className = 'fx-label'; l.textContent = label;
+    row.appendChild(l); box.appendChild(row); return row;
+  };
+  if(above || left){
+    const row = mkRow('Quick');
+    if(above) ['SUM', 'AVERAGE', 'MIN', 'MAX', 'COUNT'].forEach(f=>chip(row, f + ' \u2191', '=' + f + '(' + above + ')', ()=>tfInsertInCell(td, '=' + f + '(' + above + ')', true)));
+    if(left) ['SUM', 'AVERAGE'].forEach(f=>chip(row, f + ' \u2190', '=' + f + '(' + left + ')', ()=>tfInsertInCell(td, '=' + f + '(' + left + ')', true)));
+  }
+  TF_MENU.forEach(([label, names])=>{
+    const row = mkRow(label);
+    names.forEach(n=>chip(row, n, n + '(...)', ()=>{
+      const cur = tableCellText(td);
+      if(/^=/.test(cur)) tfInsertInCell(td, n + '(', false); else tfInsertInCell(td, '=' + n + '(', true);
+    }));
+  });
+  const hint = document.createElement('div');
+  hint.className = 'fx-hint';
+  hint.textContent = 'Type = then a formula, e.g. =B2*C2 or =SUM(B2:B5). Column letters + row numbers (header row = 1) \u2014 tap A1 to show them. Ctrl/\u2318+Enter or \u2713 Done saves.';
+  box.appendChild(hint);
+  const bar = document.getElementById('tableBar');
+  if(bar) bar.insertAdjacentElement('afterend', box);
+}
 function startTableCellEdit(td){
   if(tableEdit || tableBusy) return;
   const block = td.closest('.mdblock');
@@ -7231,6 +7881,8 @@ function startTableCellEdit(td){
   td.onpaste = (e)=>{
     e.preventDefault();
     const t = (e.clipboardData || window.clipboardData).getData('text').replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+    // v1.71.0: text copied from Excel / Sheets is tab-separated: fill the table from this cell on
+    if(t.includes('\t')){ applyTableEdit(edit, { type:'paste', grid: tfParseTSV(t) }); return; }
     if(!t.includes('\n')){ document.execCommand('insertText', false, t); return; }
     // multi-line paste: each line becomes a line in the cell
     const sel = window.getSelection();
@@ -7276,19 +7928,46 @@ function startTableCellEdit(td){
   const defs = [['none','\u2713 Done', false], ['rowAfter','+ Row below', false], ['colAfter','+ Col right', false],
                 ['rowDel','Delete row', m === 0], ['colDel','Delete col', nw <= 1],
                 ['mergeR','Merge \u2192', !ms.canRight], ['mergeD','Merge \u2193', !ms.canDown], ['split','Unmerge', !ms.merged]];
-  defs.forEach(([type, label, off])=>{
+  const addr = document.createElement('span');
+  addr.className = 'table-addr';
+  addr.title = 'This cell\'s address (column letter + row number; the header row is row 1)';
+  addr.textContent = tfColName(c) + (m + 1);
+  bar.appendChild(addr);
+  const addBtn = (label, off, onclick, title)=>{
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = label; b.disabled = off;
+    if(title) b.title = title;
     b.onpointerdown = (e)=>{ e.preventDefault(); tableBarPress = true; };
     const release = ()=>setTimeout(()=>{
       tableBarPress = false;
       if(tableEdit === edit && !edit.done && document.activeElement !== td) td.focus(); // pressed but never clicked
     }, 400);
     b.onpointerup = release; b.onpointercancel = release;
-    b.onclick = (e)=>{ e.stopPropagation(); applyTableEdit(edit, { type }); };
+    b.onclick = (e)=>{ e.stopPropagation(); onclick(b); };
     bar.appendChild(b);
-  });
+    return b;
+  };
+  defs.forEach(([type, label, off])=>addBtn(label, off, ()=>applyTableEdit(edit, { type })));
+  // v1.71.0: formulas — \u0192x menu, cell-address labels, copy for Excel
+  addBtn('\u0192x', false, ()=>toggleFxMenu(edit, model, wrap), 'Insert a formula or function');
+  const aBtn = addBtn('A1', false, ()=>{ tfShowAddr = !tfShowAddr; syncAddr(); }, 'Show every cell\'s address (A1, B2...) while editing');
+  addBtn('Copy', false, async (b)=>{
+    const mdl = readTableModel(edit.blockIdx);
+    if(!mdl) return;
+    const mx = [mdl.header, ...mdl.rows].map(r=>r.slice());
+    const w = Math.max(...mx.map(r=>r.length));
+    mx.forEach(r=>{ while(r.length < w) r.push(''); });
+    await writeClipboardText(tfToTSV(tfGridValues(mx)));
+    flashCopied(b);
+  }, 'Copy the whole table (formulas as their results) to paste into Excel / Sheets');
+  const syncAddr = ()=>{
+    const on = tfShowAddr || /^=/.test(tableCellText(td));
+    if(wrap) wrap.classList.toggle('show-addr', on);
+    aBtn.classList.toggle('on', tfShowAddr);
+  };
+  td.oninput = syncAddr;
   if(wrap) wrap.insertAdjacentElement('afterend', bar);
+  syncAddr();
   td.focus();
   const range = document.createRange();
   range.selectNodeContents(td); range.collapse(false);

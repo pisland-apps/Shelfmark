@@ -719,6 +719,18 @@
     font-size:12px;color:var(--ink);font-family:inherit;cursor:pointer;
   }
   .table-bar button:disabled{opacity:.4;cursor:default;}
+  /* Table formulas (v1.71.0) */
+  .table-bar .table-addr{align-self:center;font-size:12px;font-weight:700;color:var(--ink-soft);padding:0 6px;font-variant-numeric:tabular-nums;}
+  .table-bar button.on{background:var(--md);color:var(--paper);border-color:var(--md);}
+  .table-fx{margin:-6px 0 12px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--paper2);display:flex;flex-direction:column;gap:6px;max-height:42vh;overflow:auto;}
+  .table-fx .fx-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center;}
+  .table-fx .fx-label{font-size:11px;color:var(--ink-soft);min-width:54px;}
+  .table-fx button{background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:3px 8px;font-size:12px;color:var(--ink);font-family:inherit;cursor:pointer;}
+  .table-fx .fx-hint{font-size:11px;color:var(--ink-soft);line-height:1.45;}
+  .mdbody td.tf-num{text-align:right;font-variant-numeric:tabular-nums;}
+  .mdbody .tf-bad{color:var(--danger,#c0392b);font-weight:600;font-size:.88em;}
+  .mdbody .tcell.editing{text-align:left;}
+  .md-table-wrap.show-addr td[data-a]::before,.md-table-wrap.show-addr th[data-a]::before{content:attr(data-a);display:block;font-size:9px;line-height:1.1;font-weight:400;color:var(--ink-soft);opacity:.75;}
   .mdbody table{border-collapse:collapse;width:100%;font-size:0.92em;}
   .mdbody table th,.mdbody table td{border:1px solid var(--line);padding:6px 10px;text-align:left;}
   .mdbody table th{background:var(--card);font-weight:600;}
@@ -1412,6 +1424,7 @@ columns: 分类 | 笔记
             <p><code>| Col | Col |</code> then a <code>| --- | --- |</code> row, then your data rows:</p>
       <div class="md-table-wrap"><table><thead><tr><th>Name</th><th>Age</th></tr></thead><tbody><tr><td>Ann</td><td>29</td></tr></tbody></table></div>
       <p><b>Merge cells:</b> tap a cell, then <b>Merge →</b> (join it with the cell on its right) or <b>Merge ↓</b> (with the cell below); <b>Unmerge</b> splits it again. Repeat to build bigger blocks. The neighbour has to line up exactly with the cell (same rows for →, same columns for ↓), only the top-left text is kept, and the header row can merge sideways but not down. In the note text a merged-away cell is written <code>&lt;&lt;</code> (merged into the cell on its left) or <code>^^</code> (merged into the cell above), so you can also type them yourself; other Markdown apps will show them as plain text.</p>
+      <p><b>Formulas (like Excel):</b> a cell that starts with <code>=</code> is a formula and shows its result; tap it to see and edit the formula. <code>=B2*C2</code>, <code>=SUM(B2:B5)</code>, <code>=IF(D2&gt;100,"high","ok")</code>. Columns are letters and rows are numbers, with the header row as row 1 (so the first data cell of column A is A2); tap <b>A1</b> in the table bar to label every cell. The <b>ƒx</b> button inserts a function, or a quick SUM / AVERAGE / MIN / MAX / COUNT of the cells above or to the left. Many Excel functions work: SUM, AVERAGE, MIN, MAX, COUNT, ROUND, IF, IFS, AND, OR, IFERROR, SUMIF / COUNTIF / AVERAGEIF (and the …IFS versions), VLOOKUP, XLOOKUP, INDEX, MATCH, TEXT, CONCAT, TEXTJOIN, LEFT / RIGHT / MID, TODAY, DATE and more (all listed under ƒx). Numbers can be typed like <code>1,200</code>, <code>RM 12.50</code> or <code>15%</code>; dates written <code>2026-10-15</code> can be subtracted to count days. Mistakes show Excel codes such as #DIV/0!, #NAME? or #CIRC! (a formula that refers to itself). Text copied from Excel / Sheets and pasted into a cell fills the table from that cell on; <b>Copy</b> in the table bar copies the whole table (results, not formulas) for pasting into Excel. In the note text a formula stays plain text, so other Markdown apps show the formula itself, not its result.</p>
       <details class="hc-more"><summary>More details</summary><p>In reading view you can edit a table without opening the editor: tap a cell and type. <b>Enter</b> starts a new line inside the cell; save with <b>Ctrl/⌘+Enter</b>, the <b>✓ Done</b> button, or by tapping elsewhere (<b>Esc</b> cancels, <b>Tab</b> moves to the next cell — in the last cell it adds a row). While a cell is open, the bar under the table adds or deletes a row or column. Use <code>\|</code> for a literal pipe inside a cell. A multi-line cell is stored as <code>line one&lt;br&gt;line two</code> — you can type <code>&lt;br&gt;</code> yourself in the note editor to get the same result.</p></details>
       </section>
       <section class="hcard hc-i"><div class="hc-title"><span class="hc-ic">🖼️</span>Images &amp; dividers</div>
