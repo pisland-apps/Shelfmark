@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.71.0';
+const APP_VERSION = '1.72.0';
 const APP_VERSION_DATE = '2026-10-15';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -5982,6 +5982,7 @@ function tfRound(n, d, mode){
   return n < 0 ? -r : r;
 }
 function tfColName(c){ let s = ''; c++; while(c > 0){ const k = (c - 1) % 26; s = String.fromCharCode(65 + k) + s; c = Math.floor((c - 1) / 26); } return s; }
+function tfColIdx(letters){ let c = 0; for(const ch of letters.toUpperCase()) c = c * 26 + (ch.charCodeAt(0) - 64); return c - 1; }
 function tfAddr(a){
   const m = /^([A-Z]{1,3})(\d+)$/.exec(a);
   let c = 0;
@@ -6072,6 +6073,7 @@ function tfTokens(src){
       out.push({ t:'s', v:s }); i = j + 1; continue;
     }
     if((m = /^(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/.exec(rest))){ out.push({ t:'n', v:parseFloat(m[0]) }); i += m[0].length; continue; }
+    if((m = /^\$?([A-Za-z]{1,3}):\$?([A-Za-z]{1,3})(?![A-Za-z0-9_.(])/.exec(rest))){ out.push({ t:'col', v:[m[1].toUpperCase(), m[2].toUpperCase()] }); i += m[0].length; continue; }
     if((m = /^\$?[A-Za-z]{1,3}\$?\d+(?![A-Za-z0-9_.(])/.exec(rest))){ out.push({ t:'ref', v:m[0].replace(/\$/g, '').toUpperCase() }); i += m[0].length; continue; }
     if((m = /^[A-Za-z_][A-Za-z0-9_.]*/.exec(rest))){
       const name = m[0].toUpperCase();
@@ -6115,6 +6117,7 @@ function tfParse(tokens){
       }
       return { k:'ref', row:a.row, col:a.col };
     }
+    if(t.t === 'col') return { k:'range', whole:true, r1:0, r2:0, c1:tfColIdx(t.v[0]), c2:tfColIdx(t.v[1]) };
     if(t.t === 'fn'){
       next();   // "("
       const args = [];
@@ -6350,6 +6353,38 @@ const TF_FN = {
   DAYS:(a, X)=>Math.round(tfNum(tfS(a[0], X)) - tfNum(tfS(a[1], X)))
 };
 TF_FN.AVG = TF_FN.AVERAGE; TF_FN['STDEV.S'] = TF_FN.STDEV;
+// Copy / paste inside a table (v1.72.0): move the cell references of a formula by (dr rows, dc columns), like Excel.
+// $A$1 stays put, A1 and A$1 / $A1 move on the part without "$"; strings are left alone; off the table = #REF!.
+function tfShiftFormula(raw, dr, dc){
+  if(!TF_FSTART.test(String(raw).trim()) || (!dr && !dc)) return raw;
+  return String(raw).split(/("(?:[^"]|"")*")/).map((seg, i)=>{
+    if(i % 2) return seg;
+    seg = seg.replace(/(?<![A-Za-z0-9_.$])(\$?)([A-Za-z]{1,3}):(\$?)([A-Za-z]{1,3})(?![A-Za-z0-9_.(])/g, (m, d1, a, d2, b)=>{
+      const ca = tfColIdx(a) + (d1 ? 0 : dc), cb = tfColIdx(b) + (d2 ? 0 : dc);
+      return ca < 0 || cb < 0 ? '#REF!' : d1 + tfColName(ca) + ':' + d2 + tfColName(cb);
+    });
+    return seg.replace(/(?<![A-Za-z0-9_.$])(\$?)([A-Za-z]{1,3})(\$?)(\d+)(?![A-Za-z0-9_.(])/g, (m, d1, a, d2, num)=>{
+      const c = tfColIdx(a) + (d1 ? 0 : dc), r = +num + (d2 ? 0 : dr);
+      return c < 0 || r < 1 ? '#REF!' : d1 + tfColName(c) + d2 + r;
+    });
+  }).join('');
+}
+// Column settings live in the header cell as small tags: "Price {fmt:RM#,##0.00} {w:fit}" (v1.72.0)
+function tfHeaderTag(raw, name, val){
+  const base = String(raw == null ? '' : raw).replace(new RegExp('\\s*\\{' + name + ':[^}]*\\}', 'g'), '').trim();
+  val = String(val == null ? '' : val).replace(/[{}|\n]/g, '').trim();
+  return val ? (base + ' {' + name + ':' + val + '}').trim() : base;
+}
+function tfHeaderTagValue(raw, name){
+  const m = new RegExp('\\{' + name + ':([^}]*)\\}').exec(String(raw == null ? '' : raw));
+  return m ? m[1] : '';
+}
+// value shown in a column that has a number format
+function tfFormatVal(v, fmt){
+  if(typeof v === 'number') return tfText(v, fmt);
+  if(typeof v === 'string' && /[ymd]/i.test(fmt) && !/[#0]/.test(fmt) && tfDays(v) !== null) return tfText(v, fmt);
+  return null;
+}
 // Function names offered by the ƒx menu in the table bar (and listed in the Help card)
 const TF_MENU = [
   ['Maths', ['SUM','AVERAGE','MIN','MAX','COUNT','COUNTA','ROUND','ROUNDUP','ROUNDDOWN','INT','ABS','SQRT','POWER','MOD','PRODUCT','MEDIAN','STDEV','LARGE','SMALL','CEILING','FLOOR','SUMPRODUCT','LOG','LN','EXP','PI']],
@@ -6392,10 +6427,12 @@ function tfEvalGrid(grid){
     rg(n){
       if(n.k === 'ref') return { rng:true, rows:[[cell(n.row, n.col)]] };
       if(n.k !== 'range') throw new TfError('#VALUE!');
-      const ra = Math.min(n.r1, n.r2), rb = Math.max(n.r1, n.r2), ca = Math.min(n.c1, n.c2), cb = Math.max(n.c1, n.c2);
+      // B:B (whole column, v1.72.0) = every row of the table; a cell that is being worked out right now
+      // (the formula's own cell, e.g. a total at the bottom of the column) is left out instead of #CIRC!
+      const ra = n.whole ? 0 : Math.min(n.r1, n.r2), rb = n.whole ? Math.max(grid.length - 1, 0) : Math.max(n.r1, n.r2), ca = Math.min(n.c1, n.c2), cb = Math.max(n.c1, n.c2);
       if((rb - ra + 1) * (cb - ca + 1) > TF_MAXCELLS) throw new TfError('#REF!');
       const rows = [];
-      for(let r = ra; r <= rb; r++){ const row = []; for(let c = ca; c <= cb; c++) row.push(cell(r, c)); rows.push(row); }
+      for(let r = ra; r <= rb; r++){ const row = []; for(let c = ca; c <= cb; c++) row.push(n.whole && busy.has(r * 4096 + c) ? null : cell(r, c)); rows.push(row); }
       return { rng:true, rows };
     }
   };
@@ -6416,9 +6453,14 @@ function tfPlainCell(html, store){
 // can't mangle =A1*B1*C1) into `store`, leaving a \u0003F<n>\u0003 token. tableToHtml turns each token into its result.
 function tfShieldTables(s, store){
   return s.split(/(\n{2,})/).map((blk, i)=>{
-    if(i % 2 || !blk.includes('=') || !looksLikeTable(blk)) return blk;
+    if(i % 2 || !(blk.includes('=') || blk.includes('{fmt:') || blk.includes('{w:')) || !looksLikeTable(blk)) return blk;
+    let headerDone = false;
     return blk.split('\n').map(line=>{
       if(!line.includes('|')) return line;
+      if(!headerDone && line.trim()){
+        headerDone = true;   // column tags {fmt:..} {w:..} in the header row are set aside too
+        line = line.split(/(?<!\\)\|/).map(part=>part.replace(/\s*\{(fmt|w):([^}]*)\}/g, (m, k, v)=>{ store.push(k + ':' + v); return '\u0003M' + (store.length - 1) + '\u0003'; })).join('|');
+      }
       return line.split(/(?<!\\)\|/).map(part=>{
         const m = /^(\s*)(=[\s\S]*?)(\s*)$/.exec(part);
         if(!m || !TF_FSTART.test(unescapeHtml(m[2]))) return part;
@@ -6460,6 +6502,16 @@ function tfToTSV(values){
 function tableToHtml(block, fStore){
   const lines = block.split('\n').filter(l=>l.trim());
   const grid = [splitTableRow(lines[0]), ...lines.slice(2).map(splitTableRow)];
+  // v1.72.0: column settings. Alignment = the separator row (:--- ---: :---:); number format and width = tags in
+  // the header cell ("Price {fmt:RM#,##0.00} {w:fit}"), set aside by tfShieldTables as \u0003M<n>\u0003 tokens.
+  const align = splitTableRow(lines[1]).map(x=>x.startsWith(':') && x.endsWith(':') && x.length > 1 ? 'c' : x.endsWith(':') ? 'r' : x.startsWith(':') ? 'l' : '');
+  const colFmt = [], colW = [];
+  grid[0] = grid[0].map((c, ci)=>c.replace(/\u0003M(\d+)\u0003/g, (m, i)=>{
+    const t = unescapeHtml((fStore && fStore[+i]) || '');
+    const k = /^(fmt|w):([\s\S]*)$/.exec(t);
+    if(k){ if(k[1] === 'fmt'){ if(k[2].trim()) colFmt[ci] = k[2].trim(); } else if(k[2].trim()) colW[ci] = k[2].trim().toLowerCase(); }
+    return '';
+  }).trim());
   // rendering runs on HTML-escaped text, where "<<" has become "&lt;&lt;"
   const info = tableSpans(grid, v=>v === '&lt;&lt;', v=>v === '^^');
   // v1.71.0: cells that are formulas (lifted out as \u0003F<n>\u0003 tokens by tfShieldTables) show their result
@@ -6470,19 +6522,37 @@ function tableToHtml(block, fStore){
     if(f.covered) return '';
     const tag = r === 0 ? 'th' : 'td';
     const span = (f.cs > 1 ? ` colspan="${f.cs}"` : '') + (f.rs > 1 ? ` rowspan="${f.rs}"` : '');
-    const addr = ` data-a="${tfColName(ci)}${r + 1}" data-r="${r}" data-c="${ci}"`;
+    const attrs = ` data-a="${tfColName(ci)}${r + 1}" data-r="${r}" data-c="${ci}"`;
+    const cls = [];
+    let inner, title = '';
     const fm = hasF ? /^\u0003F(\d+)\u0003$/.exec(c) : null;
     if(fm){
       const v = calc.get(r, ci);
-      const bad = v instanceof TfError;
-      const cls = 'tf' + (bad ? ' tf-bad' : typeof v === 'number' ? ' tf-num' : '');
-      return `<${tag}${span}${addr} class="${cls}" title="${fStore[+fm[1]]}">${escapeHtml(tfShow(v))}</${tag}>`;
+      cls.push('tf');
+      title = ` title="${fStore[+fm[1]]}"`;
+      if(v instanceof TfError){ cls.push('tf-bad'); inner = escapeHtml(v.code); }
+      else {
+        if(typeof v === 'number') cls.push('tf-num');
+        const shown = r > 0 && colFmt[ci] ? tfFormatVal(v, colFmt[ci]) : null;
+        inner = escapeHtml(shown !== null ? shown : tfShow(v));
+      }
+    } else {
+      inner = cellBreaks(c);
+      if(r > 0 && colFmt[ci] && c && !/</.test(c)){
+        const plain = tfPlainCell(c, fStore), n = tfParseNum(plain);
+        const shown = !isNaN(n) ? tfText(n, colFmt[ci]) : tfFormatVal(plain, colFmt[ci]);
+        if(shown !== null){ inner = escapeHtml(shown); if(!isNaN(n)) cls.push('tf-num'); }
+      }
     }
-    return `<${tag}${span}${addr}>${cellBreaks(c)}</${tag}>`;
+    if(align[ci]) cls.push('ta-' + align[ci]);
+    if(colW[ci] === 'fit') cls.push('wfit');
+    const w = r === 0 && f.cs === 1 && /^\d{2,3}$/.test(colW[ci] || '') ? ` style="width:${colW[ci]}px;min-width:${colW[ci]}px"` : '';
+    return `<${tag}${span}${attrs}${cls.length ? ` class="${cls.join(' ')}"` : ''}${title}${w}>${inner}</${tag}>`;
   }).join('');
   const thead = `<tr>${rowHtml(0)}</tr>`;
   const tbody = grid.slice(1).map((_, i)=>`<tr>${rowHtml(i + 1)}</tr>`).join('');
-  return `<div class="md-table-wrap"><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+  const tw = colW.some(x=>x) ? ' class="tw"' : '';
+  return `<div class="md-table-wrap"><table${tw}><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
 }
 
 // minimal markdown renderer
@@ -7095,7 +7165,7 @@ function renderMarkdown(src, linkTypes){
       html = groups.map(g=>chunkHtml(g.lines.join('\n'), idx, g.start)).join('');
     } else html = chunkHtml(block, idx, 0);
     return `<div class="mdblock" data-idx="${idx}"><button class="bm-btn" data-on-click="toggleBookmark" data-args-click="[${Number(idx)}]" title="Bookmark this spot">&#128278;</button>${html}</div>`;
-  }).join('\n').replace(/\u0001/g, '\n\n').replace(/\u0002/g, '').replace(/\u0003F(\d+)\u0003/g, (m, i)=>fStore[+i] || '');
+  }).join('\n').replace(/\u0001/g, '\n\n').replace(/\u0002/g, '').replace(/\u0003F(\d+)\u0003/g, (m, i)=>fStore[+i] || '').replace(/\u0003M\d+\u0003/g, '');
 }
 
 // A tap on a checklist checkbox re-splits curNoteRaw the same way
@@ -7619,7 +7689,7 @@ async function applyTableEdit(edit, op){
   if(edit.done) return;
   edit.done = true;
   tableBusy = true;
-  let target = null, failed = false;
+  let target = null, failed = false, selAfter = null;
   try{
     const model = readTableModel(edit.blockIdx);
     const row0 = model && (edit.m === 0 ? model.header : model.rows[edit.m - 1]);
@@ -7710,6 +7780,44 @@ async function applyTableEdit(edit, op){
         });
         target = { m: edit.m, c: edit.c };
         undoLabel = 'Pasted from spreadsheet';
+      } else if(op.type === 'align' || op.type === 'fmt' || op.type === 'width'){
+        // column formatting (v1.72.0): alignment -> separator row, number format / width -> tag in the header cell
+        const nw = Math.max(ncols, ...matrix.map(r=>r.length));
+        matrix.forEach(r=>pad(r, nw));
+        while(sep.length < nw) sep.push('---');
+        if(op.type === 'align') sep[edit.c] = { l:':---', c:':---:', r:'---:' }[op.v] || '---';
+        else {
+          const cols = op.all ? matrix[0].map((_, i)=>i) : [edit.c];
+          cols.forEach(cc=>{ if(!rawIsL(matrix[0][cc]) && !rawIsU(matrix[0][cc])) matrix[0][cc] = tfHeaderTag(matrix[0][cc], op.type === 'fmt' ? 'fmt' : 'w', op.v); });
+        }
+        target = { m: edit.m, c: edit.c };
+      } else if(op.type === 'sort'){
+        const nw = Math.max(ncols, ...matrix.map(r=>r.length));
+        matrix.forEach(r=>pad(r, nw));
+        if(matrix.length < 3) cancelled = true;
+        else if(matrix.some(r=>r.some(v=>rawIsL(v) || rawIsU(v)))){
+          cancelled = true;
+          alert("This table has merged cells, so it can't be sorted.");
+        } else {
+          // rows with a range formula (a total: =SUM(B2:B5)) stay where they are; the others are sorted by this column
+          // (blank cells last). Formulas move with their row: references to other rows shift like in a copy-paste.
+          const evg = tfEvalGrid(matrix);
+          const summary = r=>matrix[r].some(v=>TF_FSTART.test(String(v).trim()) && String(v).includes(':'));
+          const slots = []; for(let r = 1; r < matrix.length; r++) if(!summary(r)) slots.push(r);
+          const keyOf = r=>{ const v = evg.get(r, edit.c); return v instanceof TfError || v === '' ? null : v; };
+          const order = slots.slice().sort((x, y)=>{
+            const a = keyOf(x), b = keyOf(y);
+            if(a === null || b === null) return a === b ? x - y : a === null ? 1 : -1;
+            return (op.dir === 'desc' ? -tfCmp(a, b) : tfCmp(a, b)) || x - y;
+          });
+          const out = matrix.map(r=>r.slice());
+          slots.forEach((slot, k)=>{ const from = order[k]; out[slot] = matrix[from].map(v=>tfShiftFormula(v, slot - from, 0)); });
+          matrix.splice(0, matrix.length, ...out);
+          undoLabel = 'Table sorted';
+        }
+        target = { m: edit.m, c: edit.c };
+      } else if(op.type === 'select'){
+        selAfter = { a: { m: edit.m, c: edit.c }, b: op.to || null };
       } else if(op.type === 'move'){
         target = op.target;
       }
@@ -7742,6 +7850,7 @@ async function applyTableEdit(edit, op){
     tableBusy = false; tableBarPress = false;
     if(tableEdit === edit) tableEdit = null;
   }
+  if(selAfter && !failed){ pendingTableEdit = null; startTableSel(edit.blockIdx, selAfter.a, selAfter.b); return; }
   const next = failed ? null : (target ? { blockIdx: edit.blockIdx, ...target } : pendingTableEdit);
   pendingTableEdit = null;
   if(next) openTableCellAt(next);
@@ -7753,13 +7862,14 @@ async function applyTableEdit(edit, op){
 // edits. The slot is dropped when the note closes or another tab is opened.
 let tableUndo = null;   // {noteId, tabIdx, blockIdx, before, after, timeoutId}
 function hideTableUndoToast(){ const t = document.getElementById('tableUndoToast'); if(t) t.classList.remove('show'); }
-function dropTableUndo(){
+function dropTableUndo(keepSel){
   if(tableUndo){ clearTimeout(tableUndo.timeoutId); tableUndo = null; }
   hideTableUndoToast();
+  if(keepSel !== true) clearTableSel();   // selection (v1.72.0) ends with the note / tab / an Undo
 }
 function offerTableUndo(label, blockIdx, before, after){
-  dropTableUndo();
-  const timeoutId = setTimeout(dropTableUndo, 10000);
+  dropTableUndo(true);
+  const timeoutId = setTimeout(()=>dropTableUndo(true), 10000);
   tableUndo = { noteId: curId, tabIdx: curTabs ? curTabIdx : 0, blockIdx, before, after, timeoutId };
   document.getElementById('tableUndoText').textContent = label;
   document.getElementById('tableUndoToast').classList.add('show');
@@ -7817,21 +7927,17 @@ function tfInsertInCell(td, text, replaceAll){
   }
   if(typeof td.oninput === 'function') td.oninput();
 }
-function toggleFxMenu(edit, model, wrap){
+// Little panel under the table bar (one at a time): chips are buttons that keep the cell focused, like the bar's.
+function tfBarMenu(edit){
   const old = document.getElementById('tableFx');
-  if(old){ old.remove(); return; }
-  const td = edit.td, m = edit.m, c = edit.c;
-  const grid = [model.header, ...model.rows];
-  const numish = (r, cc)=>{ const v = String((grid[r] && grid[r][cc]) || '').trim(); return TF_FSTART.test(v) || !isNaN(tfParseNum(v)); };
-  let r = m - 1; while(r >= 1 && numish(r, c)) r--;
-  const above = (m >= 2 && r + 1 <= m - 1) ? tfColName(c) + (r + 2) + ':' + tfColName(c) + m : null;
-  let k = c - 1; while(k >= 0 && numish(m, k)) k--;
-  const left = (c >= 1 && k + 1 <= c - 1) ? tfColName(k + 1) + (m + 1) + ':' + tfColName(c - 1) + (m + 1) : null;
+  if(old){ old.remove(); return null; }
+  const td = edit.td;
   const box = document.createElement('div');
   box.id = 'tableFx'; box.className = 'table-fx';
-  const chip = (row, label, title, fn)=>{
+  const chip = (row, label, title, fn, on)=>{
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = label; if(title) b.title = title;
+    if(on) b.classList.add('on');
     b.onpointerdown = (e)=>{ e.preventDefault(); tableBarPress = true; };
     const release = ()=>setTimeout(()=>{ tableBarPress = false; if(tableEdit === edit && !edit.done && document.activeElement !== td) td.focus(); }, 400);
     b.onpointerup = release; b.onpointercancel = release;
@@ -7843,11 +7949,29 @@ function toggleFxMenu(edit, model, wrap){
     const l = document.createElement('span'); l.className = 'fx-label'; l.textContent = label;
     row.appendChild(l); box.appendChild(row); return row;
   };
+  const hint = (text)=>{ const h = document.createElement('div'); h.className = 'fx-hint'; h.textContent = text; box.appendChild(h); };
+  const bar = document.getElementById('tableBar');
+  if(bar) bar.insertAdjacentElement('afterend', box);
+  return { box, chip, mkRow, hint };
+}
+function toggleFxMenu(edit, model, wrap){
+  const mn = tfBarMenu(edit);
+  if(!mn) return;
+  const { chip, mkRow, hint } = mn, td = edit.td, m = edit.m, c = edit.c;
+  const grid = [model.header, ...model.rows];
+  const numish = (r, cc)=>{ const v = String((grid[r] && grid[r][cc]) || '').trim(); return TF_FSTART.test(v) || !isNaN(tfParseNum(v)); };
+  let r = m - 1; while(r >= 1 && numish(r, c)) r--;
+  const above = (m >= 2 && r + 1 <= m - 1) ? tfColName(c) + (r + 2) + ':' + tfColName(c) + m : null;
+  let k = c - 1; while(k >= 0 && numish(m, k)) k--;
+  const left = (c >= 1 && k + 1 <= c - 1) ? tfColName(k + 1) + (m + 1) + ':' + tfColName(c - 1) + (m + 1) : null;
   if(above || left){
     const row = mkRow('Quick');
     if(above) ['SUM', 'AVERAGE', 'MIN', 'MAX', 'COUNT'].forEach(f=>chip(row, f + ' \u2191', '=' + f + '(' + above + ')', ()=>tfInsertInCell(td, '=' + f + '(' + above + ')', true)));
     if(left) ['SUM', 'AVERAGE'].forEach(f=>chip(row, f + ' \u2190', '=' + f + '(' + left + ')', ()=>tfInsertInCell(td, '=' + f + '(' + left + ')', true)));
   }
+  const col = tfColName(c) + ':' + tfColName(c);
+  const rw = mkRow('Column');
+  ['SUM', 'AVERAGE', 'COUNT'].forEach(f=>chip(rw, f + ' ' + col, '=' + f + '(' + col + ')  \u2014 the whole column; this cell is left out', ()=>tfInsertInCell(td, '=' + f + '(' + col + ')', true)));
   TF_MENU.forEach(([label, names])=>{
     const row = mkRow(label);
     names.forEach(n=>chip(row, n, n + '(...)', ()=>{
@@ -7855,14 +7979,232 @@ function toggleFxMenu(edit, model, wrap){
       if(/^=/.test(cur)) tfInsertInCell(td, n + '(', false); else tfInsertInCell(td, '=' + n + '(', true);
     }));
   });
-  const hint = document.createElement('div');
-  hint.className = 'fx-hint';
-  hint.textContent = 'Type = then a formula, e.g. =B2*C2 or =SUM(B2:B5). Column letters + row numbers (header row = 1) \u2014 tap A1 to show them. Ctrl/\u2318+Enter or \u2713 Done saves.';
-  box.appendChild(hint);
-  const bar = document.getElementById('tableBar');
-  if(bar) bar.insertAdjacentElement('afterend', box);
+  hint('Type = then a formula, e.g. =B2*C2 or =SUM(B2:B5). Column letters + row numbers (header row = 1) \u2014 tap A1 to show them. Ctrl/\u2318+Enter or \u2713 Done saves.');
 }
+// "Format" menu (v1.72.0): number format of this column, alignment, width (auto-fit)
+const TF_NUM_FORMATS = [['General', ''], ['1235', '0'], ['1234.5', '0.0'], ['1234.50', '0.00'], ['1,235', '#,##0'], ['1,234.50', '#,##0.00'], ['RM1,234.50', 'RM#,##0.00'], ['S$1,234.50', 'S$#,##0.00'], ['$1,234.50', '$#,##0.00'], ['12%', '0%'], ['12.5%', '0.0%'], ['2026-10-15', 'yyyy-mm-dd'], ['15 Oct 2026', 'dd mmm yyyy']];
+function toggleFormatMenu(edit, model){
+  const mn = tfBarMenu(edit);
+  if(!mn) return;
+  const { chip, mkRow, hint } = mn, c = edit.c;
+  const hdr = model.header[c] || '';
+  const curFmt = tfHeaderTagValue(hdr, 'fmt'), curW = tfHeaderTagValue(hdr, 'w');
+  const sp = model.sep[c] || '';
+  const curA = sp.startsWith(':') && sp.endsWith(':') && sp.length > 1 ? 'c' : sp.endsWith(':') ? 'r' : sp.startsWith(':') ? 'l' : '';
+  const go = (op)=>applyTableEdit(edit, op);
+  let row = mkRow('Number');
+  TF_NUM_FORMATS.forEach(([label, f])=>chip(row, label, f ? 'Format ' + f : 'Show numbers as typed', ()=>go({ type:'fmt', v:f }), curFmt === f));
+  chip(row, 'Custom\u2026', 'Type your own format, e.g. 0.00 or RM#,##0.00 or yyyy-mm-dd', ()=>{
+    const v = prompt('Number format for this column (e.g. 0.00, #,##0.00, RM#,##0.00, 0%, yyyy-mm-dd):', curFmt);
+    if(v !== null) go({ type:'fmt', v });
+  });
+  row = mkRow('Align');
+  [['Default', ''], ['\u2b05 Left', 'l'], ['\u2194 Centre', 'c'], ['\u27a1 Right', 'r']].forEach(([label, v])=>chip(row, label, '', ()=>go({ type:'align', v }), curA === v));
+  row = mkRow('Width');
+  [['Auto', ''], ['Fit', 'fit'], ['80', '80'], ['120', '120'], ['160', '160'], ['240', '240']].forEach(([label, v])=>chip(row, label === 'Fit' ? 'Fit to text' : label === 'Auto' ? 'Auto' : label + ' px', label === 'Fit' ? 'Shrink this column to its longest text (no wrapping)' : '', ()=>go({ type:'width', v }), curW === v));
+  chip(row, 'Fit all columns', 'Auto-fit every column to its text', ()=>go({ type:'width', v:'fit', all:true }));
+  chip(row, 'Reset widths', 'Back to automatic widths for every column', ()=>go({ type:'width', v:'', all:true }));
+  hint('Applies to this whole column. Formats only change how numbers look \u2014 the cell text stays as typed. They are kept as small tags in the header cell (e.g. {fmt:0.00}); alignment uses the table\'s --- row.');
+}
+
+// ---- Select / copy / cut / paste / fill / clear cells inside a table (v1.72.0) ----
+// "Select" in the bar (or Shift+click on desktop) starts a selection; tap or Shift+click another cell to stretch it.
+// Copy / Cut keep the cells' real text (formulas included) in tableClip, and put their values on the system clipboard as
+// tab-separated text for Excel. Paste moves formula references like Excel does (a copy of =B2*C2 one row down is
+// =B3*C3; $B$2 stays); Cut + Paste moves cells unchanged. One cell pasted onto a bigger selection fills it.
+let tableSel = null;    // {blockIdx, a:{m,c}, b:{m,c}} — a = where it started, b = the other corner
+let tableClip = null;   // {grid, origin:{m,c}, cut, blockIdx, rect, tsv}
+function selRect(){
+  const { a, b } = tableSel;
+  return { r1: Math.min(a.m, b.m), r2: Math.max(a.m, b.m), c1: Math.min(a.c, b.c), c2: Math.max(a.c, b.c) };
+}
+function selLabel(){
+  const q = selRect(), A = tfColName(q.c1) + (q.r1 + 1), B = tfColName(q.c2) + (q.r2 + 1);
+  return A === B ? A : A + ':' + B;
+}
+function paintTableSel(){
+  document.querySelectorAll('.tsel, .tsel-a').forEach(x=>x.classList.remove('tsel', 'tsel-a'));
+  if(!tableSel) return;
+  const blk = document.querySelector('.mdblock[data-idx="' + tableSel.blockIdx + '"]');
+  if(!blk) return;
+  const q = selRect();
+  blk.querySelectorAll('td[data-r], th[data-r]').forEach(x=>{
+    const r = +x.dataset.r, c = +x.dataset.c;
+    if(r >= q.r1 && r <= q.r2 && c >= q.c1 && c <= q.c2) x.classList.add('tsel');
+    if(r === tableSel.a.m && c === tableSel.a.c) x.classList.add('tsel-a');
+  });
+}
+function clearTableSel(){
+  if(!tableSel) return;
+  tableSel = null;
+  paintTableSel();
+  const b = document.getElementById('tableBar'); if(b && b.dataset.sel) b.remove();
+}
+function startTableSel(blockIdx, a, b){
+  tableSel = { blockIdx, a, b: b || a };
+  paintTableSel();
+  showTableSelBar();
+}
+function showTableSelBar(){
+  if(!tableSel) return;
+  const blk = document.querySelector('.mdblock[data-idx="' + tableSel.blockIdx + '"]');
+  const wrap = blk && blk.querySelector('.md-table-wrap');
+  if(!wrap) return;
+  removeTableBar();
+  const bar = document.createElement('div');
+  bar.id = 'tableBar'; bar.className = 'table-bar'; bar.dataset.sel = '1';
+  const lab = document.createElement('span');
+  lab.className = 'table-addr'; lab.id = 'tableSelLabel'; lab.textContent = selLabel();
+  bar.appendChild(lab);
+  const add = (label, title, fn)=>{
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; if(title) b.title = title;
+    b.onclick = (e)=>{ e.stopPropagation(); fn(b); };
+    bar.appendChild(b);
+  };
+  add('Copy', 'Copy the selected cells (Ctrl/\u2318+C)', ()=>tableSelCopy(false));
+  add('Cut', 'Cut the selected cells (Ctrl/\u2318+X)', ()=>tableSelCopy(true));
+  add('Paste', 'Paste at the top-left of the selection (Ctrl/\u2318+V)', ()=>tableSelPasteBtn());
+  add('Fill \u2193', 'Copy the top row of the selection down (formulas adjust)', ()=>tableSelFill('down'));
+  add('Fill \u2192', 'Copy the left column of the selection right (formulas adjust)', ()=>tableSelFill('right'));
+  add('Clear', 'Empty the selected cells (Delete)', ()=>tableSelClear());
+  add('\u2715 Done', 'Leave selection mode (Esc)', ()=>clearTableSel());
+  wrap.insertAdjacentElement('afterend', bar);
+}
+function tableFullMatrix(model){
+  const mx = [model.header, ...model.rows].map(r=>r.slice());
+  const w = Math.max(...mx.map(r=>r.length), model.sep.length);
+  mx.forEach(r=>{ while(r.length < w) r.push(''); });
+  return mx;
+}
+async function tableSelCopy(cut){
+  if(!tableSel) return;
+  const model = readTableModel(tableSel.blockIdx);
+  if(!model) return;
+  const full = tableFullMatrix(model), q = selRect();
+  const raw = [], vals = tfGridValues(full), out = [];
+  for(let r = q.r1; r <= q.r2; r++){
+    const a = [], v = [];
+    for(let c = q.c1; c <= q.c2; c++){ a.push((full[r] && full[r][c]) || ''); v.push((vals[r] && vals[r][c]) || ''); }
+    raw.push(a); out.push(v);
+  }
+  const tsv = tfToTSV(out);
+  tableClip = { grid: raw, origin: { m: q.r1, c: q.c1 }, cut: !!cut, blockIdx: tableSel.blockIdx, rect: q, tsv };
+  try{ await writeClipboardText(tsv); }catch(e){}
+  const lab = document.getElementById('tableSelLabel');
+  if(lab){ lab.textContent = cut ? 'Cut \u2014 now Paste' : 'Copied'; setTimeout(()=>{ const l2 = document.getElementById('tableSelLabel'); if(l2 && tableSel) l2.textContent = selLabel(); }, 1400); }
+}
+// generic write: fn(matrix, sep) edits the table in place (or returns false to cancel); afterSel = new selection
+async function tableSelOp(label, fn, afterSel){
+  const sel = tableSel;
+  if(!sel || tableBusy || tableEdit) return;
+  tableBusy = true;
+  try{
+    const model = readTableModel(sel.blockIdx);
+    if(!model){ alert("Couldn't match this table to the note text, so nothing was changed. Use the pencil button to edit it as text."); return; }
+    const matrix = tableFullMatrix(model);
+    const sep = model.sep.slice();
+    while(sep.length < matrix[0].length) sep.push('---');
+    if(fn(matrix, sep) === false) return;
+    const nw = Math.max(...matrix.map(r=>r.length), sep.length);
+    matrix.forEach(r=>{ while(r.length < nw) r.push(''); });
+    while(sep.length < nw) sep.push('---');
+    // rows that did not change keep their stored text byte-for-byte
+    const orig = [model.header, ...model.rows];
+    matrix.forEach((r, i)=>{
+      if(!orig[i]) return;
+      const o = orig[i].slice(); while(o.length < nw) o.push('');
+      if(tableArraysEqual(o, r)) matrix[i] = orig[i];
+    });
+    const newBlock = buildTableBlock(model, matrix, sep);
+    if(afterSel){ tableSel = { blockIdx: sel.blockIdx, a: afterSel.a, b: afterSel.b }; }
+    if(newBlock !== model.block){
+      model.parts[sel.blockIdx * 2] = newBlock;
+      const full = model.parts.join('');
+      try{
+        await putNoteSlice(full);
+        curNoteRaw = full;
+        await rerenderNoteView();
+        offerTableUndo(label, sel.blockIdx, model.block, newBlock);
+      }catch(err){
+        alert(isQuotaError(err) ? "Your device's storage is full, so this table change couldn't be saved." : "Couldn't save this table change \u2014 please try again.");
+      }
+    }
+  } finally {
+    tableBusy = false;
+    paintTableSel(); showTableSelBar();
+  }
+}
+function tableGrow(matrix, sep, rows, cols){
+  const nw = Math.max(cols, ...matrix.map(r=>r.length), sep.length);
+  matrix.forEach(r=>{ while(r.length < nw) r.push(''); });
+  while(sep.length < nw) sep.push('---');
+  while(matrix.length < rows) matrix.push(new Array(nw).fill(''));
+}
+function tableSelPaste(clip, ext){
+  if(!tableSel) return;
+  const q = selRect();
+  const grid = clip ? clip.grid : ext;
+  const gh = grid.length, gw = Math.max(...grid.map(r=>r.length), 1);
+  const one = gh === 1 && gw === 1;
+  const th = one ? q.r2 - q.r1 + 1 : gh, tw = one ? q.c2 - q.c1 + 1 : gw;
+  const cutHere = !!(clip && clip.cut && clip.blockIdx === tableSel.blockIdx);
+  tableSelOp(clip ? (cutHere ? 'Cells moved' : 'Pasted') : 'Pasted from spreadsheet', (matrix, sep)=>{
+    if(cutHere){ const o = clip.rect; for(let r = o.r1; r <= o.r2; r++) for(let c = o.c1; c <= o.c2; c++) if(matrix[r]) matrix[r][c] = ''; }
+    tableGrow(matrix, sep, q.r1 + th, q.c1 + tw);
+    for(let i = 0; i < th; i++) for(let j = 0; j < tw; j++){
+      const src = (grid[i % gh] && grid[i % gh][j % gw]) || '';
+      matrix[q.r1 + i][q.c1 + j] = clip
+        ? (clip.cut ? src : tfShiftFormula(src, (q.r1 + i) - (clip.origin.m + i % gh), (q.c1 + j) - (clip.origin.c + j % gw)))
+        : String(src).replace(/\r?\n/g, '<br>');
+    }
+  }, { a: { m: q.r1, c: q.c1 }, b: { m: q.r1 + th - 1, c: q.c1 + tw - 1 } });
+  if(clip && clip.cut) tableClip = null;
+}
+async function tableSelPasteBtn(){
+  if(tableClip){ tableSelPaste(tableClip); return; }
+  let t = '';
+  try{ t = await navigator.clipboard.readText(); }catch(e){}
+  if(!t){ alert('Nothing to paste yet \u2014 select cells and tap Copy first (or copy cells in Excel and press Ctrl/\u2318+V here).'); return; }
+  tableSelPaste(null, tfParseTSV(t));
+}
+function tableSelFill(dir){
+  if(!tableSel) return;
+  const q = selRect();
+  if(dir === 'down' ? q.r1 === q.r2 : q.c1 === q.c2){ alert(dir === 'down' ? 'Select two or more rows first: the top row is copied down.' : 'Select two or more columns first: the left column is copied right.'); return; }
+  tableSelOp(dir === 'down' ? 'Filled down' : 'Filled right', (matrix)=>{
+    for(let r = q.r1; r <= q.r2; r++) for(let c = q.c1; c <= q.c2; c++){
+      if(dir === 'down' && r > q.r1) matrix[r][c] = tfShiftFormula(matrix[q.r1][c], r - q.r1, 0);
+      if(dir === 'right' && c > q.c1) matrix[r][c] = tfShiftFormula(matrix[r][q.c1], 0, c - q.c1);
+    }
+  });
+}
+function tableSelClear(){
+  if(!tableSel) return;
+  const q = selRect();
+  tableSelOp('Cells cleared', (matrix)=>{ for(let r = q.r1; r <= q.r2; r++) for(let c = q.c1; c <= q.c2; c++) matrix[r][c] = ''; });
+}
+(function wireTableSelKeys(){
+  const typing = (e)=>!!(e.target && e.target.closest && e.target.closest('textarea, input, select, [contenteditable]'));
+  document.addEventListener('keydown', (e)=>{
+    if(!tableSel || tableEdit || typing(e)) return;
+    const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); clearTableSel(); }
+    else if(mod && (k === 'c' || k === 'x')){ e.preventDefault(); tableSelCopy(k === 'x'); }
+    else if(e.key === 'Delete' || e.key === 'Backspace'){ e.preventDefault(); tableSelClear(); }
+    else if(mod && k === 'd'){ e.preventDefault(); tableSelFill('down'); }
+  }, true);
+  document.addEventListener('paste', (e)=>{
+    if(!tableSel || tableEdit || typing(e)) return;
+    const t = ((e.clipboardData || window.clipboardData).getData('text') || '');
+    e.preventDefault();
+    const norm = x=>String(x).replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+    if(tableClip && (!t || norm(t) === norm(tableClip.tsv))) tableSelPaste(tableClip);
+    else if(t) tableSelPaste(null, /[\t\n]/.test(t) ? tfParseTSV(t) : [[t.trim()]]);
+  });
+})();
 function startTableCellEdit(td){
+  clearTableSel();
   if(tableEdit || tableBusy) return;
   const block = td.closest('.mdblock');
   if(!block) return;
@@ -7950,8 +8292,12 @@ function startTableCellEdit(td){
   defs.forEach(([type, label, off])=>addBtn(label, off, ()=>applyTableEdit(edit, { type })));
   // v1.71.0: formulas — \u0192x menu, cell-address labels, copy for Excel
   addBtn('\u0192x', false, ()=>toggleFxMenu(edit, model, wrap), 'Insert a formula or function');
+  addBtn('Format', false, ()=>toggleFormatMenu(edit, model), 'Number format, alignment and width (auto-fit) of this column');
+  addBtn('Sort \u2191', false, ()=>applyTableEdit(edit, { type:'sort', dir:'asc' }), 'Sort the rows by this column, A\u2192Z / small\u2192large (total rows stay put)');
+  addBtn('Sort \u2193', false, ()=>applyTableEdit(edit, { type:'sort', dir:'desc' }), 'Sort the rows by this column, Z\u2192A / large\u2192small');
+  addBtn('Select', false, ()=>applyTableEdit(edit, { type:'select' }), 'Select cells to copy, cut, paste, fill or clear (Shift+click on a computer)');
   const aBtn = addBtn('A1', false, ()=>{ tfShowAddr = !tfShowAddr; syncAddr(); }, 'Show every cell\'s address (A1, B2...) while editing');
-  addBtn('Copy', false, async (b)=>{
+  addBtn('Copy table', false, async (b)=>{
     const mdl = readTableModel(edit.blockIdx);
     if(!mdl) return;
     const mx = [mdl.header, ...mdl.rows].map(r=>r.slice());
@@ -7976,22 +8322,33 @@ function startTableCellEdit(td){
 function wireTableEdit(container){
   container.querySelectorAll('.md-table-wrap td, .md-table-wrap th').forEach(cell=>{
     cell.classList.add('tcell');
-    cell.onpointerdown = ()=>{
+    // Shift+click (v1.72.0) extends a selection: keep the open cell focused so it is saved by the click, not by a blur
+    cell.onmousedown = (e)=>{ if(e.shiftKey && (tableEdit || tableSel)) e.preventDefault(); };
+    cell.onpointerdown = (e)=>{
       // Tapping another cell while one is open: blur is about to save the open
       // one; remember where to go next.
-      if(tableEdit && tableEdit.td !== cell && !tableBarPress){
+      if(tableEdit && tableEdit.td !== cell && !tableBarPress && !(e && e.shiftKey)){
         const b = cell.closest('.mdblock');
         pendingTableEdit = { blockIdx: Number(b.dataset.idx), m: Number(cell.dataset.r), c: Number(cell.dataset.c) };
       }
     };
     cell.onclick = (e)=>{
       if(e.target.closest('a, button, input, img.md-img, .md-audio-inline, .md-note-link')) return;
-      if(tableEdit || tableBusy || !cell.isConnected) return;
+      if(tableBusy || !cell.isConnected) return;
+      const blk = cell.closest('.mdblock'), bi = blk ? Number(blk.dataset.idx) : -1;
+      const pos = { m: Number(cell.dataset.r), c: Number(cell.dataset.c) };
+      if(e.shiftKey && tableEdit && tableEdit.blockIdx === bi && tableEdit.td !== cell){ applyTableEdit(tableEdit, { type:'select', to: pos }); return; }
+      if(tableSel && !tableEdit){
+        if(tableSel.blockIdx === bi){ tableSel.b = pos; paintTableSel(); showTableSelBar(); return; }
+        clearTableSel();
+      }
+      if(tableEdit) return;
       const sel = window.getSelection();
       if(sel && sel.toString().length > 0) return; // dragging to select text to copy
       startTableCellEdit(cell);
     };
   });
+  if(tableSel){ paintTableSel(); showTableSelBar(); }
 }
 // @@TABLE-EDIT-END
 
