@@ -1491,14 +1491,14 @@ columns: 分类 | 笔记
   <div class="sheet">
     <h2>Protected copy</h2>
     <p class="alink-empty" style="padding-bottom:4px">Makes a separate file (AES-256). The PDF on your shelf is not changed, so you can keep editing it here. Everything below is optional.</p>
-    <label class="pdfsrc-row">Open password <input id="pdfProtUser" type="password" autocomplete="new-password" spellcheck="false" placeholder="needed to open the file"></label>
-    <label class="pdfsrc-row">Repeat it <input id="pdfProtUser2" type="password" autocomplete="new-password" spellcheck="false"></label>
+    <label class="pdfsrc-row">Open password <input id="pdfProtUser" data-on-input="pdfProtDirty" type="password" autocomplete="new-password" spellcheck="false" placeholder="needed to open the file"></label>
+    <label class="pdfsrc-row">Repeat it <input id="pdfProtUser2" data-on-input="pdfProtDirty" type="password" autocomplete="new-password" spellcheck="false"></label>
     <p class="pdfsrc-info" style="margin-top:8px">Other people may:</p>
-    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtPrint" checked> Print</label>
-    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtEdit" checked> Edit pages and content</label>
-    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtCopy" checked> Copy text and images</label>
-    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtNotes" checked> Add comments and fill forms</label>
-    <label class="pdfsrc-row">Owner password <input id="pdfProtOwner" type="password" autocomplete="new-password" spellcheck="false" placeholder="only to lift the limits later in Acrobat"></label>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtPrint" data-on-change="pdfProtDirty" checked> Print</label>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtEdit" data-on-change="pdfProtDirty" checked> Edit pages and content</label>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtCopy" data-on-change="pdfProtDirty" checked> Copy text and images</label>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtNotes" data-on-change="pdfProtDirty" checked> Add comments and fill forms</label>
+    <label class="pdfsrc-row">Owner password <input id="pdfProtOwner" data-on-input="pdfProtDirty" type="password" autocomplete="new-password" spellcheck="false" placeholder="only to lift the limits later in Acrobat"></label>
     <p class="pdfsrc-info" style="margin-top:6px">Limits (print / edit / copy) are only obeyed by readers that follow the rules; only the open password truly locks the content. Keep the passwords: they cannot be recovered.</p>
     <p class="pdfsrc-info" id="pdfProtMsg" style="font-weight:600"></p>
     <div class="row" style="flex-direction:column">

@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.76.1';
+const APP_VERSION = '1.76.2';
 const APP_VERSION_DATE = '2026-10-17';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -4156,6 +4156,12 @@ async function pdfProtGo(){
     pdfProtField('pdfProtGo').style.display = 'none'; pdfProtField('pdfProtSave').style.display = '';
   }catch(err){ console.error('[pdf protect]', err); pdfProtMsg("Couldn't make the copy: " + pdfErrText(err)); }
   finally{ pdfSetBusy(false); }
+}
+// Any change to a password or tick-box after the copy was made: throw that copy away, so the next save uses the NEW settings.
+function pdfProtDirty(){
+  if(!pdfProt) return;
+  pdfProt = null; pdfProtField('pdfProtGo').style.display = ''; pdfProtField('pdfProtSave').style.display = 'none';
+  pdfProtMsg('Settings changed \u2014 tap \u201cCreate protected copy\u201d again to make a new one.');
 }
 function pdfProtSave(){ if(pdfProt) downloadBlob(pdfProt.blob, pdfProt.name); }   // its own tap, so the share sheet / download is allowed
 
@@ -10561,7 +10567,7 @@ const UI_ACTIONS = Object.freeze({
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
-  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
+  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,
