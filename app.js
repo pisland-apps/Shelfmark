@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.73.0';
+const APP_VERSION = '1.74.0';
 const APP_VERSION_DATE = '2026-10-17';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3920,25 +3920,95 @@ async function confirmPdfSrc(){
 }
 
 // ---- save (overwrites this item's PDF) and undo of a save ----
+let pdfSaveChoiceResolve = null, pdfSaveAsStash = null;
+function pdfAskLinkedSave(path){
+  document.getElementById('pdfSaveAsPath').textContent = path;
+  document.getElementById('pdfSaveAsOverlay').style.display = 'flex';
+  return new Promise(res => { pdfSaveChoiceResolve = res; });
+}
+function pdfSaveChoice(c){
+  const o = document.getElementById('pdfSaveAsOverlay'); if(o) o.style.display = 'none';
+  const r = pdfSaveChoiceResolve; pdfSaveChoiceResolve = null; if(r) r(c);
+}
+function closePdfSaveAs(){ pdfSaveChoice('cancel'); }
+// Save. A PDF that comes from the linked notes folder asks every time: overwrite the original file, or save a new
+// "(edited)" file next to it (the original stays untouched). Any other PDF just replaces the copy on the shelf.
 async function pdfEditSave(){
   if(pdfBusy || !pdfEd || !pdfDirty() || !curId) return;
+  const meta = await getMeta(curId);
+  let mode = 'shelf';
+  if(meta && meta.extPath && extRoot){ mode = await pdfAskLinkedSave(meta.extPath); if(mode === 'cancel') return; }
   pdfSetBusy(true);
   try{
-    await holdAutoLock(async () => {
-      const PL = await loadPdfLib(), bytes = await pdfFlatBytes(PL);
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const prevBlob = pdfEd.blob, prevSaved = pdfEd.saved;
-      for(const S of pdfEd.undo.concat(pdfEd.redo, [pdfEd.cur, prevSaved])) await pdfBytesOf(S);   // older snapshots keep their own bytes once the stored file changes
-      await putContentOnly(curId, 'pdf', blob);
-      await putMetaOnly(curId, { updatedAt: Date.now(), progress: { page: curPdfPage } });
-      const S = { bytes, pend: {}, rev: pdfHasPend() ? ++pdfEd.revSeq : pdfEd.cur.rev };
-      pdfEd.blob = blob; pdfEd.lastSave = { blob: prevBlob, S: prevSaved };
-      if(S.rev !== pdfEd.cur.rev || pdfHasPend()){ pdfEd.undo.push(pdfEd.cur); pdfEd.redo.length = 0; }
-      pdfEd.cur = S; pdfEd.saved = S; pdfTrimUndo();
-    });
-    await pdfSyncView();
-    pdfToast('Saved \u2014 this PDF on your shelf is now the edited version.', 'Undo save', pdfUndoLastSave);
+    if(mode === 'new') await pdfSaveAsNew(meta); else await pdfSaveOverwrite(meta, mode === 'overwrite');
   }catch(err){ console.error('[pdf save]', err); pdfToast("Couldn't save: " + pdfErrText(err)); }
+  finally{ pdfSetBusy(false); }
+}
+async function pdfSaveOverwrite(meta, toDisk){
+  await holdAutoLock(async () => {
+    const PL = await loadPdfLib(), bytes = await pdfFlatBytes(PL);
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const prevBlob = pdfEd.blob, prevSaved = pdfEd.saved;
+    for(const S of pdfEd.undo.concat(pdfEd.redo, [pdfEd.cur, prevSaved])) await pdfBytesOf(S);   // older snapshots keep their own bytes once the stored file changes
+    const upd = { updatedAt: Date.now(), progress: { page: curPdfPage } };
+    if(toDisk){
+      if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
+      let live = null; try{ live = (await (await extFileHandle(meta.extPath, false)).getFile()).lastModified; }catch(e){}
+      if(live !== null && meta.extMtime != null && live !== meta.extMtime &&
+         !confirm(`"${meta.extPath}" was changed outside Shelfmark since you opened it.\n\nOverwrite that outside version?`)) throw new Error('Save cancelled: the file changed outside Shelfmark.');
+      upd.extMtime = await extWriteBytes(meta.extPath, bytes); upd.extSize = bytes.length;   // disk first: if it fails, nothing diverges
+    }
+    await putContentOnly(curId, 'pdf', blob);
+    await putMetaOnly(curId, upd);
+    const S = { bytes, pend: {}, rev: pdfHasPend() ? ++pdfEd.revSeq : pdfEd.cur.rev };
+    pdfEd.blob = blob; pdfEd.lastSave = { blob: prevBlob, S: prevSaved, disk: toDisk ? { path: meta.extPath } : null };
+    if(S.rev !== pdfEd.cur.rev || pdfHasPend()){ pdfEd.undo.push(pdfEd.cur); pdfEd.redo.length = 0; }
+    pdfEd.cur = S; pdfEd.saved = S; pdfTrimUndo();
+  });
+  await pdfSyncView();
+  pdfToast(toDisk ? 'Saved \u2014 the original file was overwritten.' : 'Saved \u2014 this PDF on your shelf is now the edited version.', 'Undo save', pdfUndoLastSave);
+}
+async function pdfSaveAsNew(meta){
+  const PL = await loadPdfLib(), bytes = await pdfFlatBytes(PL);
+  if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
+  const dir = extDirOf(meta.extPath), stem = meta.extPath.split('/').pop().replace(/\.pdf$/i, '');
+  let newPath = '', k = 1;
+  for(;; k++){
+    if(k > 99) throw new Error('There are already many \u201c(edited)\u201d copies in that folder \u2014 rename or remove some first.');
+    const nm = stem + ' (edited' + (k > 1 ? ' ' + k : '') + ').pdf';
+    newPath = dir ? dir + '/' + nm : nm;
+    if(await extIsGone(newPath)) break;
+  }
+  const fh = await extFileHandle(newPath, true);
+  const w = await fh.createWritable(); await w.write(bytes); await w.close();
+  const mtime = (await fh.getFile()).lastModified;
+  const newId = Date.now() + '-' + Math.random().toString(36).slice(2);
+  await put({ id: newId, title: extTitleOf(newPath), category: meta.category || 'Uncategorized', type: 'pdf', mime: 'application/pdf',
+    content: new Blob([bytes], { type: 'application/pdf' }), addedAt: Date.now(), updatedAt: Date.now(), progress: { page: curPdfPage },
+    extPath: newPath, extMtime: mtime, extSize: bytes.length });
+  // keep the working copy so Undo can bring it back, then show the new file
+  pdfSaveAsStash = { origId: curId, newId, newPath, ed: { cur: pdfEd.cur, undo: pdfEd.undo, redo: pdfEd.redo, revSeq: pdfEd.revSeq } };
+  pdfEd.saved = pdfEd.cur;                       // nothing left to "leave without saving"
+  await render();
+  await openReader(newId);
+  pdfToast(`Saved as \u201c${extTitleOf(newPath)}.pdf\u201d next to the original, which is untouched.`, 'Undo', pdfUndoSaveAs);
+}
+async function pdfUndoSaveAs(){
+  const st = pdfSaveAsStash; if(!st || pdfBusy) return;
+  pdfSetBusy(true);
+  try{
+    if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
+    const parts = st.newPath.split('/'); let d = extRoot;
+    for(let i = 0; i < parts.length - 1; i++) d = await d.getDirectoryHandle(parts[i]);
+    await d.removeEntry(parts[parts.length - 1]);
+    await del(st.newId);
+    pdfSaveAsStash = null;
+    await render();
+    await openReader(st.origId);
+    pdfEd.undo = st.ed.undo; pdfEd.redo = st.ed.redo; pdfEd.cur = st.ed.cur; pdfEd.revSeq = st.ed.revSeq; pdfEd.loadedRev = -1;
+    await pdfReloadDoc();
+    pdfToast('Undone \u2014 the new file is deleted and your edits are back, unsaved.');
+  }catch(err){ console.error('[pdf undo save as]', err); pdfToast("Couldn't undo: " + pdfErrText(err)); }
   finally{ pdfSetBusy(false); }
 }
 async function pdfUndoLastSave(){
@@ -3947,12 +4017,14 @@ async function pdfUndoLastSave(){
   try{
     await holdAutoLock(async () => {
       const L = pdfEd.lastSave;
+      const upd = { updatedAt: Date.now() };
+      if(L.disk){ const pb = new Uint8Array(await L.blob.arrayBuffer()); upd.extMtime = await extWriteBytes(L.disk.path, pb); upd.extSize = pb.length; }
       await putContentOnly(curId, 'pdf', L.blob);
-      await putMetaOnly(curId, { updatedAt: Date.now() });
+      await putMetaOnly(curId, upd);
       pdfEd.blob = L.blob; pdfEd.cur = L.S; pdfEd.saved = L.S; pdfEd.undo = []; pdfEd.redo = []; pdfEd.lastSave = null;
     });
     await pdfReloadDoc();
-    pdfToast('Save undone \u2014 the previous version is back on your shelf.');
+    pdfToast('Save undone \u2014 the previous version is back.');
   }catch(err){ console.error('[pdf undo save]', err); pdfToast("Couldn't undo the save: " + pdfErrText(err)); }
   finally{ pdfSetBusy(false); }
 }
@@ -3960,7 +4032,7 @@ function pdfConfirmLeave(){
   return !(curType === 'pdf' && pdfDirty()) || confirm('You have unsaved changes to this PDF. Leave without saving them?');
 }
 function pdfResetSession(){
-  pdfEd = null; pdfTool = null; pdfThumbsOpen = false; pdfSel = new Set(); pdfSelectMode = false; pdfStroke = null; pdfBoxDrag = null;
+  pdfEd = null; pdfTool = null; if(pdfSaveChoiceResolve) pdfSaveChoice('cancel'); pdfThumbsOpen = false; pdfSel = new Set(); pdfSelectMode = false; pdfStroke = null; pdfBoxDrag = null;
   pdfSearch = { open: false, q: '', cs: false, pages: null, matches: [], idx: -1, byPage: {}, token: 0 };
   pdfThumbToken++; pdfThumbQueue.length = 0; closePdfCtx();
   const t = document.getElementById('pdfToast'); if(t) t.classList.remove('show');
@@ -9757,7 +9829,7 @@ async function extPickFolder(){
 async function extUnlink(){
   if(!confirm('Unlink the notes folder?\n\nFiles on disk are not touched. Notes already imported stay on your shelf as ordinary notes.')) return;
   const all = await getAll();
-  for(const m of all){ if(m.extPath) await putMetaOnly(m.id, { extPath:null, extMtime:null }); }
+  for(const m of all){ if(m.extPath) await putMetaOnly(m.id, { extPath:null, extMtime:null, extSize:null }); }
   extRoot = null; extRootName = '';
   await extIdb('readwrite', st=>st.delete('root'));
   render();
@@ -9766,7 +9838,7 @@ async function extWalk(dir, prefix, out){
   for await (const [name, h] of dir.entries()){
     if(name.startsWith('.')) continue; // .obsidian, .git, .trash …
     if(h.kind === 'directory') await extWalk(h, prefix+name+'/', out);
-    else if(/\.md$/i.test(name)) out.push({ path: prefix+name, handle: h });
+    else if(/\.(md|pdf)$/i.test(name)) out.push({ path: prefix+name, handle: h });
   }
 }
 async function extFileHandle(path, create){
@@ -9780,6 +9852,20 @@ async function extWriteFile(path, text){
   const w = await fh.createWritable(); await w.write(text); await w.close();
   return (await fh.getFile()).lastModified;
 }
+// v1.74.0: PDFs in the linked folder. Write raw bytes to a linked file / store bytes without writing back.
+async function extWriteBytes(path, bytes){
+  if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
+  const fh = await extFileHandle(path, false);
+  const w = await fh.createWritable(); await w.write(bytes); await w.close();
+  return (await fh.getFile()).lastModified;
+}
+async function putContentOnlyRawBytes(id, buf){
+  return serialized(async ()=>{
+    const rec = await getOneRaw(id); if(!rec) return;
+    await sealItemBlob(cryptoKey, rec, 'content', buf);
+    await putRaw(rec);
+  });
+}
 async function extRefreshOne(id){
   if(!extRoot || !(await extPerm(false))) return;
   const rec = await getOneRaw(id); if(!rec) return;
@@ -9787,6 +9873,11 @@ async function extRefreshOne(id){
   if(!meta.extPath) return;
   let file; try{ file = await (await extFileHandle(meta.extPath, false)).getFile(); }catch(e){ return; }
   if(file.lastModified === meta.extMtime) return;
+  if(meta.type === 'pdf'){
+    await putContentOnlyRawBytes(id, await file.arrayBuffer());
+    await putMetaOnly(id, { extMtime: file.lastModified, extSize: file.size, updatedAt: Date.now() });
+    return;
+  }
   await putContentOnlyRaw(id, await file.text());
   await putMetaOnly(id, { extMtime: file.lastModified, updatedAt: Date.now() });
 }
@@ -9813,7 +9904,7 @@ async function putContentOnlyRaw(id, text){
 // next sync looks like "old file deleted + new file added". Guessing there
 // could overwrite the only shelf copy of a deleted note.
 function extDirOf(path){ return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''; }
-function extTitleOf(path){ return path.split('/').pop().replace(/\.md$/i,''); }
+function extTitleOf(path){ return path.split('/').pop().replace(/\.(md|pdf)$/i,''); }
 // Pure matcher (no I/O, unit-tested). orphans: [{id,path,content}] linked items
 // whose file is missing; fresh: [{path,text}] files with no linked item.
 // Returns Map(fresh.path -> orphan). Empty files never pair (nothing to compare).
@@ -9863,11 +9954,12 @@ async function extSync(interactive){
   const n = { added:0, updated:0, moved:0, adopted:0, unlinked:0 };
   let total = 0;
   try{
-    const files = []; await extWalk(extRoot, '', files);
+    const allFiles = []; await extWalk(extRoot, '', allFiles);
+    const files = allFiles.filter(f=>!/\.pdf$/i.test(f.path)), pdfFiles = allFiles.filter(f=>/\.pdf$/i.test(f.path));
     total = files.length;
     const all = await getAll();
     const byPath = new Map(all.filter(m=>m.extPath).map(m=>[m.extPath, m]));
-    const onDisk = new Set(files.map(f=>f.path));
+    const onDisk = new Set(allFiles.map(f=>f.path));
     const fresh = [];
     for(const f of files){
       const file = await f.handle.getFile(); const cur = byPath.get(f.path);
@@ -9883,6 +9975,7 @@ async function extSync(interactive){
     const orphans = [];
     if(fresh.length){ // their text is only needed to pair renames with new files
       for(const m of orphanMetas){
+        if(m.type !== 'markdown') continue;   // PDFs are matched by size / name below, never by text
         const rec = await getOneRaw(m.id); if(!rec) continue;
         orphans.push({ meta:m, id:m.id, path:m.extPath, content: await decryptContent(rec, 'markdown') });
       }
@@ -9923,6 +10016,38 @@ async function extSync(interactive){
         extPath: f.path, extMtime: f.file.lastModified
       }); n.added++;
     }
+    // ---- PDFs in the folder (v1.74.0): shown on the shelf, refreshed when the file changes, never matched by text ----
+    const pdfFresh = [];
+    for(const f of pdfFiles){
+      const file = await f.handle.getFile(), cur = byPath.get(f.path);
+      if(cur){
+        if(cur.type === 'pdf' && cur.extMtime !== file.lastModified){
+          await putContentOnlyRawBytes(cur.id, await file.arrayBuffer());
+          await putMetaOnly(cur.id, { extMtime: file.lastModified, extSize: file.size, updatedAt: Date.now() }); n.updated++;
+        }
+      } else pdfFresh.push({ path: f.path, file });
+    }
+    const pdfOrphans = orphanMetas.filter(m=>m.type === 'pdf'), pdfUsed = new Set();
+    const baseOf = p=>p.split('/').pop().toLowerCase();
+    for(const f of pdfFresh){
+      const sz = f.file.size;
+      const hit = pdfOrphans.find(o=>!pdfUsed.has(o) && o.extSize === sz && baseOf(o.extPath) === baseOf(f.path))
+               || pdfOrphans.find(o=>!pdfUsed.has(o) && o.extSize === sz && o.extMtime === f.file.lastModified);
+      if(hit){                                  // renamed or moved
+        pdfUsed.add(hit);
+        const upd = { extPath: f.path, extMtime: f.file.lastModified, extSize: sz };
+        if(hit.category === (extDirOf(hit.extPath) || 'Uncategorized')) upd.category = extDirOf(f.path) || 'Uncategorized';
+        if(hit.title === extTitleOf(hit.extPath)) upd.title = extTitleOf(f.path);
+        await putMetaOnly(hit.id, upd); claimed.add(hit.id); n.moved++;
+        continue;
+      }
+      await put({
+        id: Date.now()+'-'+Math.random().toString(36).slice(2),
+        title: extTitleOf(f.path), category: extDirOf(f.path) || 'Uncategorized', type:'pdf', mime:'application/pdf',
+        content: f.file, addedAt: f.file.lastModified, updatedAt: f.file.lastModified, progress: null,
+        extPath: f.path, extMtime: f.file.lastModified, extSize: sz
+      }); n.added++;
+    }
     // Still missing and confirmed gone: keep the note, drop the link.
     for(const m of orphanMetas){
       if(claimed.has(m.id)) continue;
@@ -9934,8 +10059,8 @@ async function extSync(interactive){
       const extra = [];
       if(n.moved) extra.push(`${n.moved} renamed/moved`);
       if(n.adopted) extra.push(`${n.adopted} matched to existing notes`);
-      if(n.unlinked) extra.push(`${n.unlinked} unlinked (file no longer on disk, note kept)`);
-      alert(`Notes folder \"${extRootName}\": ${n.added} added, ${n.updated} updated${extra.length ? ', '+extra.join(', ') : ''}, ${total} .md files in total.`);
+      if(n.unlinked) extra.push(`${n.unlinked} unlinked (file no longer on disk, item kept)`);
+      alert(`Notes folder \"${extRootName}\": ${n.added} added, ${n.updated} updated${extra.length ? ', '+extra.join(', ') : ''}, ${total} notes and ${pdfFiles.length} PDFs in total.`);
     }
   }catch(e){ if(interactive) alert('Sync failed: '+e.message); }
   finally{ extSyncing = false; }
@@ -9980,7 +10105,7 @@ const UI_ACTIONS = Object.freeze({
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
-  togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
+  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,
@@ -10085,6 +10210,7 @@ const NAV_OVERLAYS = [ // DOM order = stacking order (a later one sits on top of
   ['mdHelpOverlay', closeMarkdownHelp],
   ['moveCatOverlay', closeMoveCategory],
   ['pdfSrcOverlay', closePdfSrc],
+  ['pdfSaveAsOverlay', closePdfSaveAs],
   ['startPageOverlay', closeStartPage]
 ];
 const NAV = { depth: 0, silent: 0, timer: null, silentTimer: null };

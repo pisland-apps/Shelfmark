@@ -1452,6 +1452,19 @@ columns: 分类 | 笔记
   </div>
 </div>
 
+<div id="pdfSaveAsOverlay" class="overlay" style="display:none;">
+  <div class="sheet">
+    <h2>Save this PDF</h2>
+    <p class="alink-empty" style="padding-bottom:4px">This PDF is linked to a file in your notes folder:</p>
+    <p class="pdfsrc-info" id="pdfSaveAsPath" style="word-break:break-all;font-weight:600"></p>
+    <div class="row" style="flex-direction:column">
+      <button class="save" data-on-click="pdfSaveChoice" data-arg-click="overwrite">Overwrite the original file</button>
+      <button class="cancel" data-on-click="pdfSaveChoice" data-arg-click="new">Save as a new file (original untouched)</button>
+      <button class="cancel" data-on-click="pdfSaveChoice" data-arg-click="cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div id="pdfSrcOverlay" class="overlay" style="display:none;">
   <div class="sheet">
     <h2 id="pdfSrcTitle">Insert pages</h2>
