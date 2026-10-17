@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.74.0';
+const APP_VERSION = '1.75.0';
 const APP_VERSION_DATE = '2026-10-17';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2914,6 +2914,7 @@ async function openReader(id){
 
   if(it.type === 'pdf'){
     pdfZoomMode = 'width'; pdfTool = null; pdfThumbsOpen = false;
+    pdfSelItem = null; pdfTxtEd = null; pdfItDrag = null; pdfTap = null; pdfTxtPreset = null;
     c.classList.add('pad0');
     // Rendered page-by-page onto a <canvas> via pdf.js rather than handed to
     // an <iframe>/native PDF plugin — matches the companion Ledger and
@@ -2949,12 +2950,16 @@ async function openReader(id){
         <span class="tbsep"></span>
         <button id="pdfToolHl" data-on-click="setPdfTool" data-arg-click="highlight" title="Highlight text" aria-label="Highlight">&#9998;&#xFE0E;<small>Highlight</small></button>
         <button id="pdfToolDraw" data-on-click="setPdfTool" data-arg-click="draw" title="Draw freehand" aria-label="Draw">&#10002;&#xFE0E;<small>Draw</small></button>
+        <button id="pdfToolText" data-on-click="setPdfTool" data-arg-click="text" title="Add text: tap the page, type. Tap text again to edit, drag to move" aria-label="Add text"><b style="font-family:serif">T</b><small>Text</small></button>
+        <button id="pdfToolImg" data-on-click="setPdfTool" data-arg-click="image" title="Insert a picture, then drag to move or resize it" aria-label="Insert image">&#128444;&#xFE0E;<small>Image</small></button>
+        <button id="pdfToolSign" data-on-click="pdfOpenSig" title="Draw a signature and place it on the page" aria-label="Signature">&#9997;&#xFE0E;<small>Sign</small></button>
         <button id="pdfToolErase" data-on-click="setPdfTool" data-arg-click="erase" title="Tap a highlight or drawing to remove it" aria-label="Remove highlights or drawings">&#9003;<small>Erase</small></button>
         <span class="tbsep"></span>
         <button id="pdfUndoBtn" data-on-click="pdfEditUndo" title="Undo (Ctrl+Z)" aria-label="Undo">&#8630;</button>
         <button id="pdfRedoBtn" data-on-click="pdfEditRedo" title="Redo (Ctrl+Y)" aria-label="Redo">&#8631;</button>
         <button id="pdfSaveBtn" class="pdfsave" data-on-click="pdfEditSave" title="Save changes into this PDF (Ctrl+S)">Saved</button>
         <span id="pdfBusyNote" class="pdfbusy" style="display:none">Working&hellip;</span>
+        <input type="file" id="pdfImgPick" accept="image/*" hidden data-on-change="onPdfImgFile" data-args-change='["$el"]'>
       </div>
       <div class="pdfopts" id="pdfOpts" style="display:none"></div>
       <div class="pdffind" id="pdfFindBar" style="display:none">
@@ -3224,7 +3229,7 @@ function cycleSpeed(){
 function fmtTime(t){ t=Math.floor(t); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0'); }
 
 // ============================================================================
-// v1.73.0 — PDF reader: view tools (page box, search, one/two pages, zoom %), highlight / draw / erase,
+// v1.73.0 (+ v1.75.0 text / image / signature) — PDF reader: view tools (page box, search, one/two pages, zoom %), highlight / draw / erase,
 // and in-place page editing (delete, extract, rotate, reorder, insert, replace, blank page) with undo.
 //
 // Editing model: pdfEd.cur is the working copy {bytes, pend, rev}. `bytes` is the PDF as a Uint8Array (null =
@@ -3310,10 +3315,12 @@ async function pdfSyncView(){
   pdfUpdateEditUI();
 }
 async function pdfEditUndo(){
+  pdfTxtFlush();
   if(pdfBusy || !pdfEd || !pdfEd.undo.length) return;
   pdfEd.redo.push(pdfEd.cur); pdfEd.cur = pdfEd.undo.pop(); await pdfSyncView();
 }
 async function pdfEditRedo(){
+  pdfTxtFlush();
   if(pdfBusy || !pdfEd || !pdfEd.redo.length) return;
   pdfEd.undo.push(pdfEd.cur); pdfEd.cur = pdfEd.redo.pop(); await pdfSyncView();
 }
@@ -3335,17 +3342,32 @@ function pdfUpdateEditUI(){
   g('pdfToolHl').classList.toggle('on', pdfTool === 'highlight');
   g('pdfToolDraw').classList.toggle('on', pdfTool === 'draw');
   g('pdfToolErase').classList.toggle('on', pdfTool === 'erase');
+  g('pdfToolText').classList.toggle('on', pdfTool === 'text');
+  g('pdfToolImg').classList.toggle('on', pdfTool === 'image');
   g('pdfThumbBtn').classList.toggle('on', pdfThumbsOpen);
   g('pdfFindBtn').classList.toggle('on', pdfSearch.open);
   g('pdfView1').classList.toggle('on', pdfViewMode === 'single');
   g('pdfView2').classList.toggle('on', pdfViewMode === 'two');
   const wrap = document.querySelector('.pdfwrap');
-  if(wrap){ wrap.classList.remove('tool-highlight', 'tool-draw', 'tool-erase'); if(pdfTool) wrap.classList.add('tool-' + pdfTool); }
+  if(wrap){ wrap.classList.remove('tool-highlight', 'tool-draw', 'tool-erase', 'tool-text', 'tool-image'); if(pdfTool) wrap.classList.add('tool-' + pdfTool); }
   pdfRenderOpts();
   pdfUpdateSelUI();
 }
 function pdfRenderOpts(){
   const el = document.getElementById('pdfOpts'); if(!el) return;
+  if(pdfTool === 'text' || pdfTool === 'image'){
+    const sw = c => `<button type="button" class="pdfsw${c === pdfTxtColor ? ' on' : ''}" style="background:${c}" data-on-click="setPdfColor" data-arg-click="${c}" aria-label="colour ${c}"></button>`;
+    const chip = (v, label) => `<button type="button" class="pdfchip${pdfTxtPreset === v ? ' on' : ''}" data-on-click="setPdfTxtPreset" data-arg-click="${v}" aria-label="${label}">${label}</button>`;
+    el.innerHTML = pdfTool === 'text'
+      ? '<span class="pdfopt-l">Text</span>' + PDF_INK_COLORS.map(sw).join('') + '<span class="pdfopt-l">Size</span>'
+        + PDF_TXT_SIZES.map(n => `<button type="button" class="pdfwd${n === pdfTxtSize ? ' on' : ''}" data-on-click="setPdfTxtSize" data-arg-click="${n}" aria-label="size ${n}">${n}</button>`).join('')
+        + '<span class="pdfopt-l">Quick</span>' + chip('date', 'Date') + chip('\u2713', '\u2713') + chip('\u2717', '\u2717')
+        + '<span class="pdfopt-hint">' + (pdfTxtPreset ? 'Tap the page to place it.' : 'Tap the page and type. Drag to move, corner to resize.') + '</span>'
+      : '<span class="pdfopt-l">Image</span><button type="button" class="pdfopt-btn" style="margin-left:0" data-on-click="pdfPickImage">Choose image\u2026</button>'
+        + '<button type="button" class="pdfopt-btn" style="margin-left:0" data-on-click="pdfOpenSig">Signature\u2026</button>'
+        + '<span class="pdfopt-hint">Drag to move, drag the blue corner to resize, red \u00d7 removes it.</span>';
+    el.style.display = 'flex'; return;
+  }
   if(pdfTool !== 'highlight' && pdfTool !== 'draw'){ el.style.display = 'none'; return; }
   const hl = pdfTool === 'highlight';
   const cols = hl ? PDF_HL_COLORS : PDF_INK_COLORS, cur = hl ? pdfHlColor : pdfInkColor;
@@ -3357,11 +3379,17 @@ function pdfRenderOpts(){
           : '<span class="pdfopt-hint">Draw with a finger, pen or mouse.</span>';
   el.innerHTML = h; el.style.display = 'flex';
 }
-function setPdfColor(c){ if(pdfTool === 'highlight') pdfHlColor = c; else pdfInkColor = c; pdfRenderOpts(); }
+function setPdfColor(c){
+  if(pdfTool === 'text' || pdfTool === 'image'){ pdfTxtColor = c; if(!pdfSelUpdate({ color: c })) pdfRenderOpts(); return; }
+  if(pdfTool === 'highlight') pdfHlColor = c; else pdfInkColor = c; pdfRenderOpts();
+}
 function setPdfInkWidth(w){ pdfInkWidth = Number(w) || 2; pdfRenderOpts(); }
 function setPdfTool(t){
+  pdfTxtFlush();
   if(t === 'erase' && pdfTool === 'erase') t = null; else if(t === pdfTool) t = null;
   pdfTool = t || null;
+  if(pdfTool !== 'text' && pdfTool !== 'image') pdfSelItem = null;
+  if(pdfTool === 'image') pdfPickImage();
   try{ window.getSelection().removeAllRanges(); }catch(e){}
   pdfUpdateEditUI(); pdfRefreshOverlays();
 }
@@ -3396,6 +3424,7 @@ function pdfPagesInView(n){
 function pdfPageStep(){ return pdfViewMode === 'two' ? 2 : 1; }
 async function renderPdfPage(pageNum, keepScroll){
   if(!curPdfDoc) return;
+  pdfTxtFlush();
   const myToken = ++curPdfRenderToken;
   const pageEl = document.getElementById('pdfPage'); if(!pageEl) return;
   pageNum = Math.min(Math.max(1, Math.floor(Number(pageNum)) || 1), curPdfNumPages);
@@ -3447,7 +3476,9 @@ async function renderPdfPage(pageNum, keepScroll){
         box.classList.toggle('notext', !box._hasText);
         // saved highlights / drawings, for the eraser
         try{
-          box._saved = (await page.getAnnotations()).filter(a => a.subtype === 'Highlight' || a.subtype === 'Ink');
+          const pv = page.view, pa = Math.abs((pv[2] - pv[0]) * (pv[3] - pv[1])) || 1;
+          box._saved = (await page.getAnnotations()).filter(a => a.subtype === 'Highlight' || a.subtype === 'Ink'
+            || ((a.subtype === 'FreeText' || a.subtype === 'Stamp') && a.rect && Math.abs((a.rect[2] - a.rect[0]) * (a.rect[3] - a.rect[1])) < pa * 0.6));   // text / pictures, but never a page-sized stamp
         }catch(e){ box._saved = []; }
       })());
     });
@@ -3490,6 +3521,8 @@ function pdfDrawOverlay(box){
       ctx.globalAlpha = 0.4; ctx.fillStyle = a.color;   // alpha, not multiply: this canvas sits above the page, so the text underneath must stay visible
       for(const r of a.rects){ const [x, y, w, hh] = rectPath(r); ctx.fillRect(x, y, w, hh); }
       ctx.globalAlpha = 1;
+    } else if(pdfIsItem(a)){
+      if(!(pdfTxtEd && pdfTxtEd.item === a)) pdfDrawItem(ctx, box, pdfItDrag && pdfItDrag.item === a ? pdfItDrag.live : a);
     } else {
       ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = a.color; ctx.lineWidth = Math.max(1, a.w * pdfCurScale);
       ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
@@ -3497,6 +3530,7 @@ function pdfDrawOverlay(box){
       ctx.stroke();
     }
   }
+  pdfDrawSel(ctx, box);
   // live stroke / live box
   ctx.globalCompositeOperation = 'source-over';
   if(pdfStroke && pdfStroke.box === box && pdfStroke.pts.length){
@@ -3570,7 +3604,7 @@ function pdfWirePage(pageEl){
   pageEl.addEventListener('pointerdown', pdfOvDown);
   pageEl.addEventListener('pointermove', pdfOvMove);
   pageEl.addEventListener('pointerup', pdfOvUp);
-  pageEl.addEventListener('pointercancel', ()=>{ pdfStroke = null; pdfBoxDrag = null; pdfRefreshOverlays(); });
+  pageEl.addEventListener('pointercancel', ()=>{ pdfStroke = null; pdfBoxDrag = null; pdfItDrag = null; pdfTap = null; pdfRefreshOverlays(); });
 }
 function pdfOvDown(e){
   const ov = e.target.closest && e.target.closest('.pdfov');
@@ -3584,9 +3618,12 @@ function pdfOvDown(e){
     const p = pdfPt(e, box); pdfBoxDrag = { box, x0: p[0], y0: p[1], x1: p[0], y1: p[1], id: e.pointerId };
   } else if(pdfTool === 'erase'){
     e.preventDefault(); pdfEraseAt(box, pdfPt(e, box));
+  } else if(pdfTool === 'text' || pdfTool === 'image'){
+    e.preventDefault(); pdfSelDown(e, box, ov);
   }
 }
 function pdfOvMove(e){
+  if(pdfSelMove(e)) return;
   if(pdfStroke && e.pointerId === pdfStroke.id){
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for(const ev of (evs.length ? evs : [e])){
@@ -3599,6 +3636,7 @@ function pdfOvMove(e){
   }
 }
 function pdfOvUp(e){
+  if(pdfSelUp(e)) return;
   if(pdfStroke && e.pointerId === pdfStroke.id){
     const s = pdfStroke; pdfStroke = null;
     let pts = s.pts.slice(); if(pts.length === 1) pts.push([pts[0][0] + 0.01, pts[0][1]]);
@@ -3651,6 +3689,7 @@ function pdfSegDist(px, py, x1, y1, x2, y2){
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 }
 function pdfHitPend(a, px, py, tol){
+  if(pdfIsItem(a)) return px >= a.r[0] - tol && px <= a.r[2] + tol && py >= a.r[1] - tol && py <= a.r[3] + tol;
   if(a.t === 'hl') return a.rects.some(r => px >= r[0] - tol / 2 && px <= r[2] + tol / 2 && py >= r[1] - tol / 2 && py <= r[3] + tol / 2);
   for(let i = 1; i < a.pts.length; i++) if(pdfSegDist(px, py, a.pts[i - 1][0], a.pts[i - 1][1], a.pts[i][0], a.pts[i][1]) <= tol + a.w / 2) return true;
   return a.pts.length === 1 && Math.hypot(px - a.pts[0][0], py - a.pts[0][1]) <= tol + a.w / 2;
@@ -3710,12 +3749,309 @@ function pdfEraseAt(box, pt){
   }
 }
 
+// ---- v1.75.0: add text, insert image, signature ----
+// Text and pictures live in `pend` next to highlights / drawings (so Undo / Redo / Erase work the same) and are
+// written as real PDF annotations on Save: Latin text becomes a FreeText annotation (Helvetica, editable in Acrobat);
+// anything the standard font cannot draw (Chinese, Malay diacritics are fine, symbols such as a tick are not) is drawn
+// once to a transparent picture and becomes a Stamp annotation whose /Contents still holds the text. Pictures and
+// signatures are Stamp annotations. Every item is {t:'txt'|'img', r:[x0,y0,x1,y1] (PDF user space), rot (page
+// rotation when it was made), ...}; on screen it is always drawn upright from the viewport rectangle of `r`.
+const PDF_TXT_SIZES = [10, 12, 16, 20, 28];
+const PDF_TXT_PAD = 1, PDF_TXT_LH = 1.2, PDF_TXT_ASC = 0.9;
+const PDF_TXT_FONT = 'Helvetica, Arial, "Liberation Sans", sans-serif';
+const PDF_SIG_COLORS = ['#111111', '#1f3a93'];
+let pdfTxtSize = 12, pdfTxtColor = PDF_INK_COLORS[2], pdfTxtPreset = null;
+let pdfSelItem = null;                       // { p: page number, item }
+let pdfTxtEd = null;                         // the open text box { box, el, item, vx, vy, size, color }
+let pdfItDrag = null, pdfTap = null, pdfSigLast = null, pdfSig = null, pdfMeasureCtx = null;
+
+function pdfIsItem(a){ return !!a && (a.t === 'txt' || a.t === 'img'); }
+function pdfBoxFor(p){ return pdfBoxes().find(b => b._p === p) || null; }
+function pdfVr2R(box, v){
+  const a = box._vp.convertToPdfPoint(v[0], v[1]), b = box._vp.convertToPdfPoint(v[2], v[3]);
+  return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])].map(n => Math.round(n * 100) / 100);
+}
+function pdfR2Vr(box, r){
+  const a = box._vp.convertToViewportPoint(r[0], r[1]), b = box._vp.convertToViewportPoint(r[2], r[3]);
+  return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+}
+function pdfTxtLayout(text, size){            // size in points -> {lines, w, h} in points
+  const c = pdfMeasureCtx || (pdfMeasureCtx = document.createElement('canvas').getContext('2d'));
+  c.font = '100px ' + PDF_TXT_FONT;
+  const lines = String(text).split('\n'); let w = 0;
+  for(const l of lines) w = Math.max(w, c.measureText(l).width * size / 100);
+  return { lines, w: w + 2 * PDF_TXT_PAD, h: lines.length * size * PDF_TXT_LH };
+}
+function pdfDrawItem(ctx, box, a){
+  const vr = pdfR2Vr(box, a.r), s = pdfCurScale;
+  if(a.t === 'img'){
+    if(a.src.el && a.src.el.complete) ctx.drawImage(a.src.el, vr[0], vr[1], vr[2] - vr[0], vr[3] - vr[1]);
+    return;
+  }
+  ctx.fillStyle = a.color; ctx.font = (a.size * s) + 'px ' + PDF_TXT_FONT; ctx.textBaseline = 'alphabetic';
+  String(a.text).split('\n').forEach((l, i) => ctx.fillText(l, vr[0] + PDF_TXT_PAD * s, vr[1] + (PDF_TXT_ASC + i * PDF_TXT_LH) * a.size * s));
+}
+function pdfDrawSel(ctx, box){
+  const s = pdfSelItem; if(!s || s.p !== box._p || !pdfEd || (pdfTool !== 'text' && pdfTool !== 'image')) return;
+  if(!((pdfEd.cur.pend[box._p - 1]) || []).includes(s.item) || (pdfTxtEd && pdfTxtEd.item === s.item)) return;
+  const a = pdfItDrag && pdfItDrag.item === s.item ? pdfItDrag.live : s.item, vr = pdfR2Vr(box, a.r);
+  ctx.save(); ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = '#2f7bf5';
+  ctx.strokeRect(vr[0] - 1.5, vr[1] - 1.5, vr[2] - vr[0] + 3, vr[3] - vr[1] + 3); ctx.setLineDash([]);
+  ctx.fillStyle = '#d6453d'; ctx.beginPath(); ctx.arc(vr[2], vr[1], 9, 0, 6.2832); ctx.fill();            // delete (top right)
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath();
+  ctx.moveTo(vr[2] - 3.5, vr[1] - 3.5); ctx.lineTo(vr[2] + 3.5, vr[1] + 3.5); ctx.moveTo(vr[2] + 3.5, vr[1] - 3.5); ctx.lineTo(vr[2] - 3.5, vr[1] + 3.5); ctx.stroke();
+  ctx.fillStyle = '#2f7bf5'; ctx.fillRect(vr[2] - 6, vr[3] - 6, 12, 12);                                   // resize (bottom right)
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(vr[2] - 6, vr[3] - 6, 12, 12);
+  ctx.restore();
+}
+function pdfTxtFlush(){ if(pdfTxtEd) pdfTxtCommit(false); }
+function pdfNewText(box, text, size, color, vx, vy){
+  const lay = pdfTxtLayout(text, size), s = pdfCurScale;
+  return { t: 'txt', r: pdfVr2R(box, [vx, vy, vx + lay.w * s, vy + lay.h * s]), rot: box._vp.rotation || 0, text, size, color };
+}
+function pdfTxtOpen(box, item, vx, vy){
+  pdfTxtFlush();
+  const s = pdfCurScale, size = item ? item.size : pdfTxtSize, color = item ? item.color : pdfTxtColor;
+  const el = document.createElement('textarea'); el.className = 'pdftxted'; el.wrap = 'off'; el.spellcheck = false;
+  el.setAttribute('aria-label', 'Text to add'); el.value = item ? item.text : '';
+  Object.assign(el.style, { left: vx + 'px', top: vy + 'px', fontSize: (size * s) + 'px', color, lineHeight: String(PDF_TXT_LH), fontFamily: PDF_TXT_FONT, padding: '0 ' + (PDF_TXT_PAD * s) + 'px' });
+  const fit = () => { el.style.width = '1px'; el.style.height = '1px'; el.style.width = Math.max(el.scrollWidth + 4, size * s * 3) + 'px'; el.style.height = el.scrollHeight + 'px'; };
+  el.addEventListener('input', fit);
+  el.addEventListener('keydown', ev => {
+    if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); pdfTxtCommit(true); }
+    else if(ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)){ ev.preventDefault(); pdfTxtCommit(false); }
+  });
+  el.addEventListener('blur', () => { if(pdfTxtEd && pdfTxtEd.el === el) pdfTxtCommit(false); });
+  box.appendChild(el); pdfTxtEd = { box, el, item, vx, vy, size, color };
+  pdfDrawOverlay(box); fit(); setTimeout(() => { try{ el.focus(); }catch(_){} }, 0);
+}
+function pdfTxtCommit(cancel){
+  const ed = pdfTxtEd; if(!ed) return; pdfTxtEd = null;
+  const text = ed.el.value.replace(/\s+$/, '');
+  ed.el.remove();
+  if(cancel || !pdfEd || (ed.item && text === ed.item.text)){ if(pdfEd) pdfDrawOverlay(ed.box); return; }
+  const idx = ed.box._p - 1, list = (pdfEd.cur.pend[idx]) || [];
+  if(ed.item && !list.includes(ed.item)){ pdfDrawOverlay(ed.box); return; }
+  if(!text.trim()){
+    if(ed.item){ pdfSelItem = null; pdfPendSet(idx, list.filter(x => x !== ed.item)); } else pdfDrawOverlay(ed.box);
+    return;
+  }
+  const item = pdfNewText(ed.box, text, ed.size, ed.color, ed.vx, ed.vy);
+  pdfSelItem = { p: ed.box._p, item };
+  pdfPendSet(idx, ed.item ? list.map(x => x === ed.item ? item : x) : list.concat([item]));
+}
+function pdfPresetText(){ return pdfTxtPreset === 'date' ? new Date().toLocaleDateString(navigator.language || undefined) : pdfTxtPreset; }
+function pdfTextTap(box, p){
+  const s = pdfCurScale;
+  if(pdfTxtPreset){
+    const text = pdfPresetText(), lay = pdfTxtLayout(text, pdfTxtSize);
+    const item = pdfNewText(box, text, pdfTxtSize, pdfTxtColor, p[0] - lay.w * s / 2, p[1] - lay.h * s / 2);
+    pdfSelItem = { p: box._p, item }; pdfPendAdd(box._p - 1, item);
+  } else pdfTxtOpen(box, null, p[0], p[1] - pdfTxtSize * s * 0.6);
+}
+function setPdfTxtSize(n){
+  pdfTxtSize = Math.max(6, Math.min(96, Number(n) || 12));
+  if(!pdfSelUpdate({ size: pdfTxtSize })) pdfRenderOpts(); 
+}
+function setPdfTxtPreset(v){ pdfTxtPreset = pdfTxtPreset === v ? null : v; pdfRenderOpts(); }
+function pdfSelUpdate(patch){                  // change size / colour of the selected text
+  const s = pdfSelItem; if(!s || s.item.t !== 'txt' || !pdfEd) return false;
+  const box = pdfBoxFor(s.p), list = (pdfEd.cur.pend[s.p - 1]) || []; if(!box || !list.includes(s.item)) return false;
+  const a = s.item, n = { ...a, ...patch }, vr = pdfR2Vr(box, a.r), lay = pdfTxtLayout(n.text, n.size), sc = pdfCurScale;
+  n.r = pdfVr2R(box, [vr[0], vr[1], vr[0] + lay.w * sc, vr[1] + lay.h * sc]);
+  pdfSelItem = { p: s.p, item: n }; pdfPendSet(s.p - 1, list.map(x => x === a ? n : x)); return true;
+}
+function pdfItemMoved(box, a, mode, dx, dy){
+  const vr = pdfR2Vr(box, a.r), s = pdfCurScale;
+  if(mode === 'move') return { ...a, r: pdfVr2R(box, [vr[0] + dx, vr[1] + dy, vr[2] + dx, vr[3] + dy]) };
+  const w0 = vr[2] - vr[0], h0 = vr[3] - vr[1], w = Math.max(14, w0 + dx), k = w / Math.max(1, w0);
+  if(a.t === 'txt'){
+    const size = Math.min(96, Math.max(6, Math.round(a.size * k * 2) / 2)), lay = pdfTxtLayout(a.text, size);
+    return { ...a, size, r: pdfVr2R(box, [vr[0], vr[1], vr[0] + lay.w * s, vr[1] + lay.h * s]) };
+  }
+  return { ...a, r: pdfVr2R(box, [vr[0], vr[1], vr[0] + w, vr[1] + h0 * k]) };
+}
+// pointer down in the Text / Image tools: handles of the selected item, then items, then empty space
+function pdfSelDown(e, box, ov){
+  pdfTxtFlush();
+  const p = pdfPt(e, box), list = (pdfEd.cur.pend[box._p - 1]) || [];
+  const sel = pdfSelItem && pdfSelItem.p === box._p && list.includes(pdfSelItem.item) ? pdfSelItem.item : null;
+  const cap = () => { try{ ov.setPointerCapture(e.pointerId); }catch(_){} };
+  if(sel){
+    const vr = pdfR2Vr(box, sel.r);
+    if(Math.hypot(p[0] - vr[2], p[1] - vr[1]) <= 14){ pdfSelItem = null; pdfPendSet(box._p - 1, list.filter(x => x !== sel)); return; }
+    if(Math.hypot(p[0] - vr[2], p[1] - vr[3]) <= 14){ cap(); pdfItDrag = { box, item: sel, mode: 'resize', id: e.pointerId, p0: p, live: sel, moved: false }; return; }
+  }
+  for(let i = list.length - 1; i >= 0; i--){
+    const a = list[i]; if(!pdfIsItem(a)) continue;
+    const vr = pdfR2Vr(box, a.r);
+    if(p[0] >= vr[0] - 4 && p[0] <= vr[2] + 4 && p[1] >= vr[1] - 4 && p[1] <= vr[3] + 4){
+      cap(); pdfSelItem = { p: box._p, item: a };
+      pdfItDrag = { box, item: a, mode: 'move', id: e.pointerId, p0: p, live: a, moved: false }; pdfDrawOverlay(box); return;
+    }
+  }
+  pdfSelItem = null;
+  if(pdfTool === 'text') pdfTap = { box, p, id: e.pointerId };           // the box opens on pointer up, so the tap cannot steal its focus
+  pdfRefreshOverlays();
+}
+function pdfSelMove(e){
+  if(pdfItDrag && e.pointerId === pdfItDrag.id){
+    const d = pdfItDrag, p = pdfPt(e, d.box), dx = p[0] - d.p0[0], dy = p[1] - d.p0[1];
+    if(!d.moved && Math.hypot(dx, dy) < 4) return;
+    d.moved = true; d.live = pdfItemMoved(d.box, d.item, d.mode, dx, dy); pdfDrawOverlay(d.box); return true;
+  }
+  return false;
+}
+function pdfSelUp(e){
+  if(pdfItDrag && e.pointerId === pdfItDrag.id){
+    const d = pdfItDrag; pdfItDrag = null;
+    const idx = d.box._p - 1, list = (pdfEd && pdfEd.cur.pend[idx]) || [];
+    if(d.moved && list.includes(d.item)){ pdfSelItem = { p: d.box._p, item: d.live }; pdfPendSet(idx, list.map(x => x === d.item ? d.live : x)); }
+    else if(!d.moved && d.item.t === 'txt' && pdfTool === 'text' && d.mode === 'move'){ const vr = pdfR2Vr(d.box, d.item.r); pdfTxtOpen(d.box, d.item, vr[0], vr[1]); }
+    else pdfDrawOverlay(d.box);
+    return true;
+  }
+  if(pdfTap && e.pointerId === pdfTap.id){
+    const t = pdfTap, q = pdfPt(e, t.box); pdfTap = null;
+    if(Math.hypot(q[0] - t.p[0], q[1] - t.p[1]) < 6) pdfTextTap(t.box, t.p);
+    return true;
+  }
+  return false;
+}
+// ---- pictures ----
+function pdfPickImage(){ const i = document.getElementById('pdfImgPick'); if(i) i.click(); }
+async function onPdfImgFile(inp){
+  const f = inp.files && inp.files[0]; inp.value = ''; if(!f || !pdfEd) return;
+  try{ pdfPlaceImage(await pdfLoadImage(f), 'img'); }catch(err){ pdfToast(pdfErrText(err)); }
+}
+function pdfImgEl(blob){
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(blob), el = new Image();
+    el.onload = () => res(el); el.onerror = () => { URL.revokeObjectURL(url); rej(new Error('That image could not be read.')); }; el.src = url;
+  });
+}
+async function pdfLoadImage(file){
+  const mime = file.type || '', MAX = 2400;
+  let bytes = new Uint8Array(await file.arrayBuffer());
+  let el = await pdfImgEl(new Blob([bytes], { type: mime }));
+  let w = el.naturalWidth, h = el.naturalHeight;
+  if(!w || !h) throw new Error('That image could not be read.');
+  const direct = mime === 'image/png' || mime === 'image/jpeg';
+  if(!direct || Math.max(w, h) > MAX){                           // other formats and very large pictures are re-encoded
+    const k = Math.min(1, MAX / Math.max(w, h)), c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+    c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
+    const outMime = mime === 'image/jpeg' ? 'image/jpeg' : 'image/png';
+    const blob = await new Promise(r => c.toBlob(r, outMime, 0.9));
+    if(!blob) throw new Error('That image could not be converted.');
+    bytes = new Uint8Array(await blob.arrayBuffer()); el = await pdfImgEl(blob); w = c.width; h = c.height;
+    return { bytes, mime: outMime, w, h, el };
+  }
+  return { bytes, mime, w, h, el };
+}
+function pdfEnterTool(t){ pdfTool = t; pdfUpdateEditUI(); pdfRefreshOverlays(); }
+function pdfPlaceImage(src, kind){                            // centre of what is on screen, on the page that shows most
+  const pageEl = document.getElementById('pdfPage'), boxes = pdfBoxes(); if(!pageEl || !boxes.length || !pdfEd) return;
+  pdfTxtFlush();
+  const pr = pageEl.getBoundingClientRect(); let best = null, bestA = -1;
+  for(const b of boxes){
+    const r = b.getBoundingClientRect(), w = Math.min(r.right, pr.right) - Math.max(r.left, pr.left), h = Math.min(r.bottom, pr.bottom) - Math.max(r.top, pr.top);
+    const a = Math.max(0, w) * Math.max(0, h); if(a > bestA){ bestA = a; best = { b, r }; }
+  }
+  const box = best.b, r = best.r, vp = box._vp;
+  const cx = (Math.max(r.left, pr.left) + Math.min(r.right, pr.right)) / 2 - r.left, cy = (Math.max(r.top, pr.top) + Math.min(r.bottom, pr.bottom)) / 2 - r.top;
+  let w = vp.width * (kind === 'sig' ? 0.28 : 0.4), h = w * src.h / src.w;
+  if(h > vp.height * 0.5){ h = vp.height * 0.5; w = h * src.w / src.h; }
+  const item = { t: 'img', r: pdfVr2R(box, [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2]), rot: vp.rotation || 0, src, kind };
+  if(pdfTool !== 'image' && pdfTool !== 'text') pdfEnterTool('image');
+  pdfSelItem = { p: box._p, item }; pdfPendAdd(box._p - 1, item);
+}
+// ---- signature pad (kept in memory for this session only; nothing is stored) ----
+function pdfOpenSig(){
+  if(!pdfEd || pdfBusy) return; pdfTxtFlush();
+  const o = document.getElementById('pdfSigOverlay'), cv = document.getElementById('pdfSigCanvas'); if(!o || !cv) return;
+  if(!pdfSig){
+    pdfSig = { strokes: [], cur: null, color: PDF_SIG_COLORS[0] };
+    const pt = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
+    cv.addEventListener('pointerdown', e => { e.preventDefault(); try{ cv.setPointerCapture(e.pointerId); }catch(_){} pdfSig.cur = { color: pdfSig.color, pts: [pt(e)], id: e.pointerId }; pdfSigRedraw(); });
+    cv.addEventListener('pointermove', e => {
+      const s = pdfSig.cur; if(!s || s.id !== e.pointerId) return;
+      for(const ev of (e.getCoalescedEvents ? e.getCoalescedEvents() : [e])) s.pts.push(pt(ev));
+      pdfSigRedraw();
+    });
+    const end = e => { const s = pdfSig.cur; if(!s || s.id !== e.pointerId) return; pdfSig.cur = null; if(s.pts.length === 1) s.pts.push([s.pts[0][0] + 0.1, s.pts[0][1]]); pdfSig.strokes.push(s); pdfSigRedraw(); };
+    cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  }
+  pdfSig.strokes = []; pdfSig.cur = null; pdfSigRedraw();
+  const lb = document.getElementById('pdfSigLastBtn'); if(lb) lb.style.display = pdfSigLast ? '' : 'none';
+  pdfSigOpts(); o.style.display = 'flex';
+}
+function pdfSigOpts(){
+  const el = document.getElementById('pdfSigOpts'); if(!el || !pdfSig) return;
+  el.innerHTML = PDF_SIG_COLORS.map(c => `<button type="button" class="pdfsw${c === pdfSig.color ? ' on' : ''}" style="background:${c}" data-on-click="pdfSigColor" data-arg-click="${c}" aria-label="ink ${c}"></button>`).join('');
+}
+function pdfSigColor(c){ if(pdfSig) pdfSig.color = c; pdfSigOpts(); }
+function pdfSigRedraw(){
+  const cv = document.getElementById('pdfSigCanvas'); if(!cv || !pdfSig) return;
+  const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 5;
+  for(const s of pdfSig.strokes.concat(pdfSig.cur ? [pdfSig.cur] : [])){
+    ctx.strokeStyle = s.color; ctx.beginPath();
+    s.pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke();
+  }
+}
+function pdfSigClear(){ if(pdfSig){ pdfSig.strokes = []; pdfSig.cur = null; pdfSigRedraw(); } }
+function closePdfSig(){ const o = document.getElementById('pdfSigOverlay'); if(o) o.style.display = 'none'; }
+async function pdfSigUse(){
+  if(!pdfSig || !pdfSig.strokes.length){ pdfToast('Draw your signature first.'); return; }
+  const cv = document.getElementById('pdfSigCanvas'), pts = pdfSig.strokes.flatMap(s => s.pts), pad = 8;
+  const x0 = Math.max(0, Math.floor(Math.min(...pts.map(p => p[0])) - pad)), y0 = Math.max(0, Math.floor(Math.min(...pts.map(p => p[1])) - pad));
+  const x1 = Math.min(cv.width, Math.ceil(Math.max(...pts.map(p => p[0])) + pad)), y1 = Math.min(cv.height, Math.ceil(Math.max(...pts.map(p => p[1])) + pad));
+  const c = document.createElement('canvas'); c.width = Math.max(1, x1 - x0); c.height = Math.max(1, y1 - y0);
+  c.getContext('2d').drawImage(cv, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
+  const blob = await new Promise(r => c.toBlob(r, 'image/png')); if(!blob){ pdfToast('Could not make the signature.'); return; }
+  const src = { bytes: new Uint8Array(await blob.arrayBuffer()), mime: 'image/png', w: c.width, h: c.height, el: await pdfImgEl(blob) };
+  pdfSigLast = src; closePdfSig(); pdfPlaceImage(src, 'sig');
+}
+function pdfSigLastUse(){ if(pdfSigLast){ closePdfSig(); pdfPlaceImage(pdfSigLast, 'sig'); } }
+
+// ---- writing text / pictures into the file ----
+async function pdfItemAnnot(PL, doc, a, st){
+  const ctx = doc.context, n2 = v => Math.round(v * 1000) / 1000, r = a.r.map(n2), rot = a.rot || 0, swap = rot === 90 || rot === 270;
+  const W = n2(swap ? r[3] - r[1] : r[2] - r[0]), H = n2(swap ? r[2] - r[0] : r[3] - r[1]);
+  const mat = ({ 90: [0, 1, -1, 0, 0, 0], 180: [-1, 0, 0, -1, 0, 0], 270: [0, -1, 1, 0, 0, 0] })[rot] || [1, 0, 0, 1, 0, 0];
+  const ap = (content, res) => ctx.register(ctx.stream(content, { Type: 'XObject', Subtype: 'Form', FormType: 1, BBox: [0, 0, W, H], Matrix: mat, Resources: res }));
+  const stamp = async (bytes, jpg, label) => {
+    const key = bytes, cached = st.imgs.get(key);
+    const im = cached || (jpg ? await doc.embedJpg(bytes) : await doc.embedPng(bytes)); st.imgs.set(key, im);
+    return ctx.obj({ Type: 'Annot', Subtype: 'Stamp', Rect: r, F: 4, Border: [0, 0, 0], Contents: PL.PDFHexString.fromText(label), AP: { N: ap(`q ${W} 0 0 ${H} 0 0 cm /Im0 Do Q`, { XObject: { Im0: im.ref } }) } });
+  };
+  if(a.t === 'img') return stamp(a.src.bytes, a.src.mime === 'image/jpeg', a.kind === 'sig' ? 'Signature' : 'Image');
+  const lines = String(a.text).split('\n'), col = pdfHex(a.color).map(v => n2(v / 255));
+  if(!st.font) st.font = await doc.embedFont(PL.StandardFonts.Helvetica);
+  let latin = true; try{ for(const l of lines) st.font.encodeText(l); }catch(_){ latin = false; }
+  if(latin){
+    let c = `q ${col.join(' ')} rg BT /Helv ${a.size} Tf `;
+    lines.forEach((l, i) => { c += `1 0 0 1 ${PDF_TXT_PAD} ${n2(H - (PDF_TXT_ASC + i * PDF_TXT_LH) * a.size)} Tm ${st.font.encodeText(l).toString()} Tj `; });
+    c += 'ET Q';
+    return ctx.obj({ Type: 'Annot', Subtype: 'FreeText', Rect: r, F: 4, Border: [0, 0, 0], Contents: PL.PDFHexString.fromText(a.text), DA: PL.PDFString.of(`/Helv ${a.size} Tf ${col.join(' ')} rg`), Q: 0, AP: { N: ap(c, { Font: { Helv: st.font.ref } }) } });
+  }
+  const K = Math.min(4, 4096 / Math.max(W, H)), cv = document.createElement('canvas');   // not drawable with the standard font: draw it once as a picture
+  cv.width = Math.max(1, Math.ceil(W * K)); cv.height = Math.max(1, Math.ceil(H * K));
+  const cx = cv.getContext('2d'); cx.fillStyle = a.color; cx.font = (a.size * K) + 'px ' + PDF_TXT_FONT; cx.textBaseline = 'alphabetic';
+  lines.forEach((l, i) => cx.fillText(l, PDF_TXT_PAD * K, (PDF_TXT_ASC + i * PDF_TXT_LH) * a.size * K));
+  const blob = await new Promise(res => cv.toBlob(res, 'image/png')); if(!blob) throw new Error('Could not draw the text.');
+  const annot = await stamp(new Uint8Array(await blob.arrayBuffer()), false, a.text);
+  return annot;
+}
+
 // ---- writing highlights / drawings into the file (real PDF annotations, with appearance streams) ----
-function pdfWriteAnnots(PL, doc, pend){
-  const ctx = doc.context, n2 = v => Math.round(v * 1000) / 1000;
+async function pdfWriteAnnots(PL, doc, pend){
+  const ctx = doc.context, n2 = v => Math.round(v * 1000) / 1000, st = { font: null, imgs: new Map() };
   for(const [idx, list] of Object.entries(pend)){
     const page = doc.getPage(Number(idx));
     for(const a of list){
+      if(pdfIsItem(a)){ page.node.addAnnot(ctx.register(await pdfItemAnnot(PL, doc, a, st))); continue; }
       const c = pdfHex(a.color).map(v => n2(v / 255));
       let annot, ap;
       if(a.t === 'hl'){
@@ -3741,12 +4077,13 @@ async function pdfFlatBytes(PL){
   const S = pdfEd.cur, base = await pdfBytesOf(S);
   if(!pdfHasPend(S)) return base;
   const doc = await PL.PDFDocument.load(base, { updateMetadata: false });
-  pdfWriteAnnots(PL, doc, S.pend);
+  await pdfWriteAnnots(PL, doc, S.pend);
   return await doc.save();
 }
 // Runs one file-changing operation: builder(PL, bytesWithPendingMarksWritten) -> new bytes. The result becomes
 // the new working copy (undoable); nothing is stored until Save.
 async function pdfRunOp(builder){
+  pdfTxtFlush();
   if(pdfBusy || !pdfEd) return false;
   pdfSetBusy(true);
   try{
@@ -3934,6 +4271,7 @@ function closePdfSaveAs(){ pdfSaveChoice('cancel'); }
 // Save. A PDF that comes from the linked notes folder asks every time: overwrite the original file, or save a new
 // "(edited)" file next to it (the original stays untouched). Any other PDF just replaces the copy on the shelf.
 async function pdfEditSave(){
+  pdfTxtFlush();
   if(pdfBusy || !pdfEd || !pdfDirty() || !curId) return;
   const meta = await getMeta(curId);
   let mode = 'shelf';
@@ -4324,6 +4662,10 @@ document.addEventListener('keydown', e => {
   if(mod && k === 'z'){ e.preventDefault(); if(e.shiftKey) pdfEditRedo(); else pdfEditUndo(); return; }
   if(mod && k === 'y'){ e.preventDefault(); pdfEditRedo(); return; }
   if(mod && k === 's'){ e.preventDefault(); pdfEditSave(); return; }
+  if((e.key === 'Delete' || e.key === 'Backspace') && pdfSelItem && pdfEd && (pdfTool === 'text' || pdfTool === 'image')){
+    const sel = pdfSelItem, list = (pdfEd.cur.pend[sel.p - 1]) || [];
+    if(list.includes(sel.item)){ e.preventDefault(); pdfSelItem = null; pdfPendSet(sel.p - 1, list.filter(x => x !== sel.item)); return; }
+  }
   if((e.key === 'Delete' || e.key === 'Backspace') && pdfThumbsOpen && pdfSel.size && e.target.closest && e.target.closest('#pdfThumbs')){ e.preventDefault(); pdfPageAction('delete'); return; }
   if(mod || e.altKey) return;
   if(e.key === 'PageDown'){ e.preventDefault(); pdfNextPage(); }
@@ -10105,7 +10447,7 @@ const UI_ACTIONS = Object.freeze({
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
-  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
+  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,
@@ -10211,6 +10553,7 @@ const NAV_OVERLAYS = [ // DOM order = stacking order (a later one sits on top of
   ['moveCatOverlay', closeMoveCategory],
   ['pdfSrcOverlay', closePdfSrc],
   ['pdfSaveAsOverlay', closePdfSaveAs],
+  ['pdfSigOverlay', closePdfSig],
   ['startPageOverlay', closeStartPage]
 ];
 const NAV = { depth: 0, silent: 0, timer: null, silentTimer: null };
