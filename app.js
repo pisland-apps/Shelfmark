@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.72.0';
-const APP_VERSION_DATE = '2026-10-15';
+const APP_VERSION = '1.73.0';
+const APP_VERSION_DATE = '2026-10-17';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -718,7 +718,6 @@ let curPdfDoc = null, curPdfPage = 1, curPdfNumPages = 0, curPdfRenderToken = 0;
 // of that fit scale, so zooming still adapts to whatever width the reader
 // happens to have. Resets to 'fit' every time a (possibly different) PDF is
 // opened; not persisted — same lifetime as curPdfPage etc.
-let pdfZoomMode = 'fit';
 
 // ---- Inline shelf audio player ----
 // Audio items play directly from the shelf row (tap to play/pause, inline
@@ -2850,6 +2849,8 @@ async function saveEdit(){
 
 // ---- Reader ----
 async function openReader(id){
+  if(!pdfConfirmLeave()) return;   // unsaved PDF edits
+  pdfResetSession();
   flushDraftNow(); // opening another item while a note is mid-edit (palette jump, note link…) must not lose that edit
   stopDraftTimer();
   await extRefreshOne(id).catch(()=>{}); // linked note: pick up changes made outside (e.g. in Obsidian)
@@ -2912,7 +2913,7 @@ async function openReader(id){
   refreshIndexBtn(id).catch(()=>{}); // not awaited: the Index button must never delay opening the item
 
   if(it.type === 'pdf'){
-    pdfZoomMode = 'fit';
+    pdfZoomMode = 'width'; pdfTool = null; pdfThumbsOpen = false;
     c.classList.add('pad0');
     // Rendered page-by-page onto a <canvas> via pdf.js rather than handed to
     // an <iframe>/native PDF plugin — matches the companion Ledger and
@@ -2930,15 +2931,67 @@ async function openReader(id){
       coverImg.src = it.cover;
       c.appendChild(coverImg);
     }
+    const zopts = PDF_ZOOMS.map(z => `<option value="${z}">${z}%</option>`).join('');
     pdfWrap.innerHTML = `
-      <div class="pdfpage" id="pdfPage"><p style="font-size:0.85rem;color:var(--ink-soft);">Loading PDF…</p></div>
+      <div class="pdftb" id="pdfTb">
+        <button id="pdfThumbBtn" data-on-click="togglePdfThumbs" title="Pages: thumbnails, delete, extract, rotate, reorder, insert, replace" aria-label="Pages panel">&#9638;</button>
+        <span class="tbsep"></span>
+        <input id="pdfPageInput" class="pgin" inputmode="numeric" autocomplete="off" aria-label="Page number" data-on-keydown="onPdfPageKey" data-args-keydown='["$ev"]' data-on-change="onPdfPageChange" data-args-change='["$el"]'><span id="pdfOfN" class="ofn"></span>
+        <button id="pdfFindBtn" data-on-click="togglePdfFind" title="Find text (Ctrl+F)" aria-label="Find text">&#128269;&#xFE0E;</button>
+        <span class="tbsep"></span>
+        <button id="pdfView1" data-on-click="setPdfView" data-arg-click="single" title="One page" aria-label="One page view">&#9647;</button>
+        <button id="pdfView2" data-on-click="setPdfView" data-arg-click="two" title="Two pages side by side" aria-label="Two page view">&#9647;&#9647;</button>
+        <span class="tbsep"></span>
+        <button id="pdfZoomOut" data-on-click="pdfZoomStep" data-arg-click="-1" title="Zoom out" aria-label="Zoom out">&minus;</button>
+        <select id="pdfZoomSel" data-on-change="onPdfZoomSelect" data-args-change='["$el"]' aria-label="Zoom"><option value="width">Fit width</option><option value="page">Fit page</option>${zopts}</select>
+        <button id="pdfZoomIn" data-on-click="pdfZoomStep" data-arg-click="1" title="Zoom in" aria-label="Zoom in">+</button>
+        <button id="pdfFitBtn" data-on-click="cyclePdfZoom" aria-label="Fit width or fit page">&#10530;</button>
+        <span class="tbsep"></span>
+        <button id="pdfToolHl" data-on-click="setPdfTool" data-arg-click="highlight" title="Highlight text" aria-label="Highlight">&#9998;&#xFE0E;<small>Highlight</small></button>
+        <button id="pdfToolDraw" data-on-click="setPdfTool" data-arg-click="draw" title="Draw freehand" aria-label="Draw">&#10002;&#xFE0E;<small>Draw</small></button>
+        <button id="pdfToolErase" data-on-click="setPdfTool" data-arg-click="erase" title="Tap a highlight or drawing to remove it" aria-label="Remove highlights or drawings">&#9003;<small>Erase</small></button>
+        <span class="tbsep"></span>
+        <button id="pdfUndoBtn" data-on-click="pdfEditUndo" title="Undo (Ctrl+Z)" aria-label="Undo">&#8630;</button>
+        <button id="pdfRedoBtn" data-on-click="pdfEditRedo" title="Redo (Ctrl+Y)" aria-label="Redo">&#8631;</button>
+        <button id="pdfSaveBtn" class="pdfsave" data-on-click="pdfEditSave" title="Save changes into this PDF (Ctrl+S)">Saved</button>
+        <span id="pdfBusyNote" class="pdfbusy" style="display:none">Working&hellip;</span>
+      </div>
+      <div class="pdfopts" id="pdfOpts" style="display:none"></div>
+      <div class="pdffind" id="pdfFindBar" style="display:none">
+        <input id="pdfFindInput" type="search" placeholder="Find in this PDF" autocomplete="off" aria-label="Find in this PDF" data-on-input="onPdfFindInput" data-on-keydown="onPdfFindKey" data-args-keydown='["$ev"]'>
+        <button data-on-click="pdfFindStep" data-arg-click="-1" aria-label="Previous match">&#8593;</button>
+        <button data-on-click="pdfFindStep" data-arg-click="1" aria-label="Next match">&#8595;</button>
+        <button id="pdfFindCaseBtn" data-on-click="pdfFindCase" title="Match case" aria-label="Match case">Aa</button>
+        <span id="pdfFindCount" class="fcount"></span>
+        <button data-on-click="closePdfFind" aria-label="Close find">&times;</button>
+      </div>
+      <div class="pdfbody">
+        <div class="pdfthumbs" id="pdfThumbs" style="display:none">
+          <div class="pthead">
+            <div class="ptactions">
+              <button id="pdfSelModeBtn" data-on-click="togglePdfSelectMode" title="Select several pages by tapping">Select</button>
+              <button data-on-click="pdfPageAction" data-arg-click="insert">Insert</button>
+              <button data-on-click="pdfPageAction" data-arg-click="extract">Extract</button>
+              <button data-on-click="pdfPageAction" data-arg-click="replace">Replace</button>
+              <button data-on-click="pdfPageAction" data-arg-click="delete">Delete</button>
+              <button data-on-click="pdfPageAction" data-arg-click="rotL" aria-label="Rotate left">&#8634;</button>
+              <button data-on-click="pdfPageAction" data-arg-click="rotR" aria-label="Rotate right">&#8635;</button>
+              <button data-on-click="openPdfMenu" data-args-click='["$el"]' aria-label="More page actions">&#8943;</button>
+            </div>
+            <div id="pdfSelInfo" class="selinfo"></div>
+          </div>
+          <div class="ptlist" id="pdfThumbList"></div>
+        </div>
+        <div class="pdfpage" id="pdfPage"><p class="pdfmsg">Loading PDF\u2026</p></div>
+      </div>
       <div class="pdfnav">
         <button id="pdfPrev" data-on-click="pdfPrevPage" title="Previous page">&#8249;</button>
         <span class="pnum" id="pdfPnum"></span>
         <button id="pdfNext" data-on-click="pdfNextPage" title="Next page">&#8250;</button>
-        <button id="pdfZoomBtn" class="zoombtn" data-on-click="cyclePdfZoom" title="Fit width">Fit</button>
-      </div>`;
+      </div>
+      <div class="pdftoast" id="pdfToast" role="status" aria-live="polite"></div>`;
     c.appendChild(pdfWrap);
+    pdfWirePage(document.getElementById('pdfPage')); pdfWireThumbs(); pdfEdInit(it.content); pdfUpdateEditUI();
     try{
       const buf = await it.content.arrayBuffer();
       if(openToken !== curPdfRenderToken) return; // superseded while reading the file — bail before touching anything
@@ -2956,7 +3009,7 @@ async function openReader(id){
       // the plain-JavaScript *_nowasm_fallback.js next to it, which pdf.js loads by itself. The folder must
       // come from the SAME pdfjs-dist version.
       const wasmUrl = new URL('lib/wasm/', document.baseURI).href;
-      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, wasmUrl }).promise;
+      const doc = await pdfOpenDocBytes(new Uint8Array(buf));
       if(openToken !== curPdfRenderToken){
         // The reader was closed or moved on to a different item while this
         // document was parsing. Destroy this orphaned doc immediately rather
@@ -2970,8 +3023,10 @@ async function openReader(id){
       }
       curPdfDoc = doc;
       curPdfNumPages = curPdfDoc.numPages;
+      pdfEd.loadedRev = 0;
       const startPage = (it.progress && it.progress.page) ? Math.min(Math.max(1, it.progress.page), curPdfNumPages) : 1;
       await renderPdfPage(startPage);
+      pdfBuildThumbs(); pdfUpdateEditUI();
     } catch(pdfErr){
       if(openToken !== curPdfRenderToken) return; // reader moved on; nowhere to report this error
       const pageEl = document.getElementById('pdfPage');
@@ -3168,80 +3223,1050 @@ function cycleSpeed(){
 }
 function fmtTime(t){ t=Math.floor(t); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0'); }
 
-// Renders one page of the currently-open PDF onto a fresh canvas (pdf.js
-// canvases can't be resized/reused across renders) and updates the nav bar.
-// Saves {page: n} as this item's reading progress so reopening it resumes
-// here — mirrors how the markdown reader saves scroll position and the
-// audio reader saves playback time.
-async function renderPdfPage(pageNum){
+// ============================================================================
+// v1.73.0 — PDF reader: view tools (page box, search, one/two pages, zoom %), highlight / draw / erase,
+// and in-place page editing (delete, extract, rotate, reorder, insert, replace, blank page) with undo.
+//
+// Editing model: pdfEd.cur is the working copy {bytes, pend, rev}. `bytes` is the PDF as a Uint8Array (null =
+// the stored original, read lazily), `pend` holds highlights / drawings not yet written into the file, `rev`
+// changes whenever the bytes change (so undo knows when the viewer must reload). Every change makes a NEW
+// snapshot, so Undo / Redo just swap snapshots. Nothing is stored until Save, which overwrites this item's
+// PDF (the stored copy is encrypted like every other item). pdf-lib (lib/pdf-lib.min.js) is loaded only when
+// something is actually edited.
+// Page edits rebuild the file from only the pages that remain (so a deleted page's content really leaves the
+// file); bookmarks / outline and form fields are not carried over by such a rebuild.
+// ============================================================================
+const PDF_CSS_DPI = 96 / 72;                       // 100% zoom = 96 dpi, like Acrobat
+const PDF_ZOOMS = [50, 75, 100, 125, 150, 200, 300, 400];
+const PDF_HL_COLORS = ['#ffea00', '#7bd88f', '#ff9ecb', '#7cc4ff', '#ffb066'];
+const PDF_INK_COLORS = ['#d6453d', '#1f5fd6', '#111111', '#1f9d55', '#e08a00'];
+const PDF_INK_WIDTHS = [1, 2, 4, 8];
+const PDF_UNDO_MAX = 20, PDF_UNDO_BYTES = 300 * 1024 * 1024;
+let pdfZoomMode = 'width';                          // 'width' | 'page' | a percent number
+let pdfViewMode = 'single';                         // 'single' | 'two'
+let pdfTool = null;                                 // null | 'highlight' | 'draw' | 'erase'
+let pdfHlColor = PDF_HL_COLORS[0], pdfInkColor = PDF_INK_COLORS[0], pdfInkWidth = 2;
+let pdfEd = null;                                   // editing session of the open PDF (null when none)
+let pdfSel = new Set(), pdfSelAnchor = 0, pdfSelectMode = false;
+let pdfThumbsOpen = false, pdfBusy = false, pdfCurScale = 1;
+let pdfThumbToken = 0, pdfLibPromise = null, pdfSrc = null, pdfCtxEl = null, pdfToastTimer = null;
+let pdfSearch = { open: false, q: '', cs: false, pages: null, matches: [], idx: -1, byPage: {}, token: 0 };
+let pdfStroke = null, pdfBoxDrag = null, pdfSelTimer = null;
+
+function pdfPdfActive(){ return curType === 'pdf' && !!document.getElementById('pdfPage'); }
+function pdfDirty(){ return !!pdfEd && pdfEd.cur !== pdfEd.saved; }
+function pdfHasPend(S){ return Object.values((S || pdfEd.cur).pend).some(a => a && a.length); }
+function pdfToast(text, actionLabel, action){
+  const el = document.getElementById('pdfToast'); if(!el) return;
+  el.innerHTML = '';
+  const span = document.createElement('span'); span.textContent = text; el.appendChild(span);
+  if(actionLabel){ const b = document.createElement('button'); b.type = 'button'; b.textContent = actionLabel; b.onclick = ()=>{ el.classList.remove('show'); action(); }; el.appendChild(b); }
+  el.classList.add('show'); clearTimeout(pdfToastTimer);
+  pdfToastTimer = setTimeout(()=>el.classList.remove('show'), actionLabel ? 9000 : 4500);
+}
+function loadPdfLib(){
+  if(window.PDFLib) return Promise.resolve(window.PDFLib);
+  if(!pdfLibPromise) pdfLibPromise = new Promise((res, rej)=>{
+    const s = document.createElement('script'); s.src = 'lib/pdf-lib.min.js';
+    s.onload = ()=> window.PDFLib ? res(window.PDFLib) : rej(new Error('The PDF editor library did not start.'));
+    s.onerror = ()=>{ pdfLibPromise = null; rej(new Error('Could not load the PDF editor library (lib/pdf-lib.min.js).')); };
+    document.head.appendChild(s);
+  });
+  return pdfLibPromise;
+}
+function pdfErrText(err){
+  const m = (err && (err.message || String(err))) || 'unknown error';
+  if(/encrypt|password/i.test(m)) return "This PDF is password-protected, so it can't be edited here.";
+  if(isQuotaError(err)) return "Your device's storage is full, so this couldn't be saved.";
+  return m;
+}
+
+// ---- editing session ----
+function pdfEdInit(blob){
+  const s0 = { bytes: null, pend: {}, rev: 0 };
+  pdfEd = { blob, cur: s0, saved: s0, undo: [], redo: [], revSeq: 0, loadedRev: 0, lastSave: null };
+  pdfSel = new Set(); pdfSelAnchor = 0; pdfSelectMode = false;
+  pdfSearch = { open: false, q: '', cs: false, pages: null, matches: [], idx: -1, byPage: {}, token: 0 };
+}
+async function pdfBytesOf(S){
+  if(!S.bytes) S.bytes = new Uint8Array(await pdfEd.blob.arrayBuffer());
+  return S.bytes;
+}
+function pdfTrimUndo(){
+  const seen = new Set(); let total = 0;
+  for(const S of pdfEd.undo.concat(pdfEd.redo, [pdfEd.cur])) if(S.bytes && !seen.has(S.bytes)){ seen.add(S.bytes); total += S.bytes.length; }
+  while(pdfEd.undo.length > PDF_UNDO_MAX || (total > PDF_UNDO_BYTES && pdfEd.undo.length > 1)){
+    const d = pdfEd.undo.shift();
+    if(d.bytes && !pdfEd.undo.concat(pdfEd.redo, [pdfEd.cur]).some(S => S.bytes === d.bytes)) total -= d.bytes.length;
+  }
+}
+async function pdfCommit(S){
+  pdfEd.undo.push(pdfEd.cur); pdfEd.redo.length = 0; pdfEd.cur = S; pdfTrimUndo();
+  await pdfSyncView();
+}
+async function pdfSyncView(){
+  if(!pdfEd) return;
+  if(pdfEd.cur.rev !== pdfEd.loadedRev) await pdfReloadDoc(); else pdfRefreshOverlays();
+  pdfUpdateEditUI();
+}
+async function pdfEditUndo(){
+  if(pdfBusy || !pdfEd || !pdfEd.undo.length) return;
+  pdfEd.redo.push(pdfEd.cur); pdfEd.cur = pdfEd.undo.pop(); await pdfSyncView();
+}
+async function pdfEditRedo(){
+  if(pdfBusy || !pdfEd || !pdfEd.redo.length) return;
+  pdfEd.undo.push(pdfEd.cur); pdfEd.cur = pdfEd.redo.pop(); await pdfSyncView();
+}
+function pdfSetBusy(on){
+  pdfBusy = on;
+  const w = document.querySelector('.pdfwrap'); if(w) w.classList.toggle('busy', on);
+  const el = document.getElementById('pdfBusyNote'); if(el) el.style.display = on ? '' : 'none';
+  pdfUpdateEditUI();
+}
+function pdfUpdateEditUI(){
+  const g = id => document.getElementById(id); if(!g('pdfTb')) return;
+  const has = !!pdfEd;
+  g('pdfUndoBtn').disabled = pdfBusy || !has || !pdfEd.undo.length;
+  g('pdfRedoBtn').disabled = pdfBusy || !has || !pdfEd.redo.length;
+  const dirty = pdfDirty();
+  const sb = g('pdfSaveBtn'); sb.disabled = pdfBusy || !dirty; sb.classList.toggle('dirty', dirty);
+  sb.textContent = dirty ? 'Save \u2022' : 'Saved';
+  g('pdfTb').classList.toggle('is-dirty', dirty);
+  g('pdfToolHl').classList.toggle('on', pdfTool === 'highlight');
+  g('pdfToolDraw').classList.toggle('on', pdfTool === 'draw');
+  g('pdfToolErase').classList.toggle('on', pdfTool === 'erase');
+  g('pdfThumbBtn').classList.toggle('on', pdfThumbsOpen);
+  g('pdfFindBtn').classList.toggle('on', pdfSearch.open);
+  g('pdfView1').classList.toggle('on', pdfViewMode === 'single');
+  g('pdfView2').classList.toggle('on', pdfViewMode === 'two');
+  const wrap = document.querySelector('.pdfwrap');
+  if(wrap){ wrap.classList.remove('tool-highlight', 'tool-draw', 'tool-erase'); if(pdfTool) wrap.classList.add('tool-' + pdfTool); }
+  pdfRenderOpts();
+  pdfUpdateSelUI();
+}
+function pdfRenderOpts(){
+  const el = document.getElementById('pdfOpts'); if(!el) return;
+  if(pdfTool !== 'highlight' && pdfTool !== 'draw'){ el.style.display = 'none'; return; }
+  const hl = pdfTool === 'highlight';
+  const cols = hl ? PDF_HL_COLORS : PDF_INK_COLORS, cur = hl ? pdfHlColor : pdfInkColor;
+  let h = `<span class="pdfopt-l">${hl ? 'Highlight' : 'Pen'}</span>` + cols.map(c =>
+    `<button type="button" class="pdfsw${c === cur ? ' on' : ''}" style="background:${c}" data-on-click="setPdfColor" data-arg-click="${c}" aria-label="colour ${c}"></button>`).join('');
+  if(!hl) h += '<span class="pdfopt-l">Width</span>' + PDF_INK_WIDTHS.map(w =>
+    `<button type="button" class="pdfwd${w === pdfInkWidth ? ' on' : ''}" data-on-click="setPdfInkWidth" data-arg-click="${w}" aria-label="width ${w}"><i style="height:${Math.min(w, 8)}px"></i></button>`).join('');
+  h += hl ? '<span class="pdfopt-hint">Select text to highlight it. On scanned pages, drag a box.</span><button type="button" id="pdfHlApply" class="pdfopt-btn" data-on-click="pdfApplySelectionHighlight" style="display:none">Highlight selection</button>'
+          : '<span class="pdfopt-hint">Draw with a finger, pen or mouse.</span>';
+  el.innerHTML = h; el.style.display = 'flex';
+}
+function setPdfColor(c){ if(pdfTool === 'highlight') pdfHlColor = c; else pdfInkColor = c; pdfRenderOpts(); }
+function setPdfInkWidth(w){ pdfInkWidth = Number(w) || 2; pdfRenderOpts(); }
+function setPdfTool(t){
+  if(t === 'erase' && pdfTool === 'erase') t = null; else if(t === pdfTool) t = null;
+  pdfTool = t || null;
+  try{ window.getSelection().removeAllRanges(); }catch(e){}
+  pdfUpdateEditUI(); pdfRefreshOverlays();
+}
+
+// ---- opening / loading the document ----
+async function pdfOpenDocBytes(u8){
+  const pdfjsLib = await pdfjsLibPromise;
+  const wasmUrl = new URL('lib/wasm/', document.baseURI).href;
+  // a COPY goes to pdf.js: it may take ownership of the buffer, and the editor needs its own bytes intact
+  return pdfjsLib.getDocument({ data: u8.slice(), isEvalSupported: false, wasmUrl }).promise;
+}
+async function pdfReloadDoc(){
+  const S = pdfEd.cur;
+  const bytes = await pdfBytesOf(S);
+  const doc = await pdfOpenDocBytes(bytes);
+  if(!pdfEd || pdfEd.cur !== S){ doc.loadingTask.destroy(); return; }
+  if(curPdfDoc) curPdfDoc.loadingTask.destroy();
+  curPdfDoc = doc; curPdfNumPages = doc.numPages; pdfEd.loadedRev = S.rev;
+  pdfSearch.pages = null; pdfSearch.matches = []; pdfSearch.idx = -1; pdfSearch.byPage = {};
+  curPdfPage = Math.min(Math.max(1, curPdfPage), curPdfNumPages);
+  pdfSel = new Set([...pdfSel].filter(p => p <= curPdfNumPages));
+  await renderPdfPage(curPdfPage);
+  pdfBuildThumbs();
+  pdfUpdateEditUI();
+}
+
+// ---- page view: one / two pages, zoom, text layer, overlay ----
+function pdfPagesInView(n){
+  if(pdfViewMode === 'two'){ const a = n % 2 === 1 ? n : n - 1; return [a, a + 1].filter(p => p >= 1 && p <= curPdfNumPages); }
+  return [n];
+}
+function pdfPageStep(){ return pdfViewMode === 'two' ? 2 : 1; }
+async function renderPdfPage(pageNum, keepScroll){
   if(!curPdfDoc) return;
   const myToken = ++curPdfRenderToken;
-  const pageEl = document.getElementById('pdfPage');
-  if(!pageEl) return;
-  pageEl.innerHTML = '<p style="font-size:0.85rem;color:var(--ink-soft);">Loading page…</p>';
+  const pageEl = document.getElementById('pdfPage'); if(!pageEl) return;
+  pageNum = Math.min(Math.max(1, Math.floor(Number(pageNum)) || 1), curPdfNumPages);
+  const nums = pdfPagesInView(pageNum);
+  const prevScroll = keepScroll ? { x: pageEl.scrollLeft / Math.max(1, pageEl.scrollWidth), y: pageEl.scrollTop / Math.max(1, pageEl.scrollHeight) } : null;
+  if(!pageEl.firstElementChild) pageEl.innerHTML = '<p class="pdfmsg">Loading page\u2026</p>';
   try{
-    const page = await curPdfDoc.getPage(pageNum);
-    if(myToken !== curPdfRenderToken) return; // reader moved on while we awaited
-    const unscaledViewport = page.getViewport({ scale: 1 });
-    const containerWidth = pageEl.clientWidth || 320;
-    const fitScale = Math.max(0.1, (containerWidth - 16) / unscaledViewport.width);
-    // 'fit' uses the width-fitted scale as-is; a zoom level multiplies on
-    // top of it, so 1.5x/2x still means "1.5x/2x bigger than fit", not an
-    // absolute PDF scale — consistent across pages of different sizes.
-    const scale = pdfZoomMode === 'fit' ? fitScale : fitScale * pdfZoomMode;
-    const viewport = page.getViewport({ scale });
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    canvas.style.display = 'block';
-    canvas.style.margin = '12px auto';
-    canvas.style.boxShadow = '0 1px 4px rgba(0,0,0,0.15)';
-    // The stylesheet caps canvas width to the container (max-width:calc(100%
-    // - 24px)) so the fit case always looks right; zooming past fit needs
-    // that cap lifted, or the canvas would just get squeezed back down to
-    // the same on-screen size and "zoom" would do nothing. #pdfPage already
-    // scrolls (overflow:auto), so an over-width canvas is just pannable.
-    canvas.style.maxWidth = pdfZoomMode === 'fit' ? '' : 'none';
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    const pages = await Promise.all(nums.map(n => curPdfDoc.getPage(n)));
     if(myToken !== curPdfRenderToken) return;
-    pageEl.innerHTML = '';
-    pageEl.appendChild(canvas);
-    curPdfPage = pageNum;
-    updatePdfNavUI();
-    updatePdfZoomUI();
-    saveProgress({ page: pageNum });
-  } catch(pdfErr){
+    const base = pages.map(p => p.getViewport({ scale: 1 }));
+    const GAP = 12, PAD = 12;
+    const availW = Math.max(120, pageEl.clientWidth - PAD * 2 - GAP * (nums.length - 1));
+    const availH = Math.max(120, pageEl.clientHeight - PAD * 2);
+    const fitW = availW / base.reduce((a, v) => a + v.width, 0);
+    const fitP = Math.min(fitW, availH / Math.max(...base.map(v => v.height)));
+    const scale = Math.max(0.05, pdfZoomMode === 'width' ? fitW : pdfZoomMode === 'page' ? fitP : pdfZoomMode / 100 * PDF_CSS_DPI);
+    pdfCurScale = scale;
+    const spread = document.createElement('div'); spread.className = 'pdfspread'; spread.id = 'pdfSpread';
+    const jobs = [];
+    pages.forEach((page, k) => {
+      const vp = page.getViewport({ scale });
+      let dpr = Math.min(window.devicePixelRatio || 1, 2);
+      while(dpr > 1 && vp.width * vp.height * dpr * dpr > 16e6) dpr = Math.max(1, dpr - 0.25);
+      const box = document.createElement('div'); box.className = 'pgbox';
+      box.style.width = vp.width + 'px'; box.style.height = vp.height + 'px';
+      box._p = nums[k]; box._vp = vp; box._page = page; box._hasText = true; box._dpr = dpr;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(vp.width * dpr)); canvas.height = Math.max(1, Math.floor(vp.height * dpr));
+      canvas.style.width = vp.width + 'px'; canvas.style.height = vp.height + 'px';
+      const tl = document.createElement('div'); tl.className = 'textLayer';
+      tl.style.setProperty('--scale-factor', String(scale)); tl.style.setProperty('--user-unit', '1');
+      tl.style.setProperty('--total-scale-factor', 'calc(var(--scale-factor) * var(--user-unit))');
+      tl.style.setProperty('--scale-round-x', '1px'); tl.style.setProperty('--scale-round-y', '1px');
+      const ov = document.createElement('canvas'); ov.className = 'pdfov';
+      ov.width = canvas.width; ov.height = canvas.height; ov.style.width = vp.width + 'px'; ov.style.height = vp.height + 'px';
+      box.append(canvas, tl, ov); spread.appendChild(box);
+      jobs.push((async ()=>{
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined }).promise;
+        if(myToken !== curPdfRenderToken) return;
+        try{
+          const pdfjsLib = await pdfjsLibPromise;
+          const tc = await page.getTextContent();
+          box._hasText = tc.items.some(it => it.str && it.str.trim());
+          if(box._hasText){
+            await new pdfjsLib.TextLayer({ textContentSource: tc, container: tl, viewport: vp }).render();
+            tl.style.width = vp.width + 'px'; tl.style.height = vp.height + 'px';
+          }
+        }catch(e){ box._hasText = false; }
+        box.classList.toggle('notext', !box._hasText);
+        // saved highlights / drawings, for the eraser
+        try{
+          box._saved = (await page.getAnnotations()).filter(a => a.subtype === 'Highlight' || a.subtype === 'Ink');
+        }catch(e){ box._saved = []; }
+      })());
+    });
+    await Promise.all(jobs);
     if(myToken !== curPdfRenderToken) return;
-    pageEl.innerHTML = `<p style="color:var(--pdf);">Could not render this page: ${escapeHtml(pdfErr.message)}</p>`;
+    pageEl.replaceChildren(spread);
+    if(prevScroll){ pageEl.scrollLeft = prevScroll.x * pageEl.scrollWidth; pageEl.scrollTop = prevScroll.y * pageEl.scrollHeight; }
+    else { pageEl.scrollTop = 0; pageEl.scrollLeft = 0; }
+    curPdfPage = nums[0];
+    pdfRefreshOverlays();
+    updatePdfNavUI(); updatePdfZoomUI();
+    pdfMarkThumbCurrent();
+    saveProgress({ page: curPdfPage });
+    if(pdfSearch.idx >= 0) pdfScrollToMatch();
+  }catch(pdfErr){
+    if(myToken !== curPdfRenderToken) return;
+    pageEl.innerHTML = `<p class="pdfmsg" style="color:var(--pdf);">Could not render this page: ${escapeHtml(pdfErr.message)}</p>`;
   }
 }
+function pdfBoxes(){ return [...document.querySelectorAll('#pdfSpread .pgbox')]; }
+function pdfRefreshOverlays(){ pdfBoxes().forEach(pdfDrawOverlay); }
+function pdfHex(c){ const n = parseInt(c.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function pdfDrawOverlay(box){
+  const ov = box.querySelector('.pdfov'); if(!ov) return;
+  const ctx = ov.getContext('2d'), vp = box._vp, d = box._dpr;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, ov.width, ov.height); ctx.setTransform(d, 0, 0, d, 0, 0);
+  const rectPath = r => { const a = vp.convertToViewportPoint(r[0], r[1]), b = vp.convertToViewportPoint(r[2], r[3]); return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])]; };
+  // search hits
+  const hits = pdfSearch.byPage[box._p];
+  if(hits){
+    for(const h of hits){
+      ctx.globalAlpha = h.cur ? 0.5 : 0.45; ctx.fillStyle = h.cur ? '#ff8a1f' : '#ffe14d';
+      for(const r of h.rects){ const [x, y, w, hh] = rectPath(r); ctx.fillRect(x, y, w, hh); }
+      ctx.globalAlpha = 1;
+    }
+  }
+  // pending highlights / drawings
+  for(const a of (pdfEd && pdfEd.cur.pend[box._p - 1]) || []){
+    if(a.t === 'hl'){
+      ctx.globalAlpha = 0.4; ctx.fillStyle = a.color;   // alpha, not multiply: this canvas sits above the page, so the text underneath must stay visible
+      for(const r of a.rects){ const [x, y, w, hh] = rectPath(r); ctx.fillRect(x, y, w, hh); }
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = a.color; ctx.lineWidth = Math.max(1, a.w * pdfCurScale);
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
+      a.pts.forEach((p, i) => { const q = vp.convertToViewportPoint(p[0], p[1]); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+      ctx.stroke();
+    }
+  }
+  // live stroke / live box
+  ctx.globalCompositeOperation = 'source-over';
+  if(pdfStroke && pdfStroke.box === box && pdfStroke.pts.length){
+    ctx.strokeStyle = pdfInkColor; ctx.lineWidth = Math.max(1, pdfInkWidth * pdfCurScale); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
+    pdfStroke.pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke();
+  }
+  if(pdfBoxDrag && pdfBoxDrag.box === box){
+    const g = pdfBoxDrag; ctx.globalAlpha = 0.4; ctx.fillStyle = pdfHlColor;
+    ctx.fillRect(Math.min(g.x0, g.x1), Math.min(g.y0, g.y1), Math.abs(g.x1 - g.x0), Math.abs(g.y1 - g.y0)); ctx.globalAlpha = 1;
+  }
+}
+
+// ---- toolbar: page box, zoom, view mode ----
 function updatePdfZoomUI(){
-  const btn = document.getElementById('pdfZoomBtn');
-  if(!btn) return;
-  if(pdfZoomMode === 'fit'){
-    btn.textContent = 'Fit';
-    btn.title = 'Fitted to width — tap to zoom in';
-  } else {
-    btn.textContent = pdfZoomMode + '\u00d7';
-    btn.title = 'Zoomed ' + pdfZoomMode + '\u00d7 — tap to cycle';
-  }
+  const sel = document.getElementById('pdfZoomSel'); if(!sel) return;
+  const eff = Math.round(pdfCurScale / PDF_CSS_DPI * 100);
+  sel.options[0].textContent = 'Fit width' + (pdfZoomMode === 'width' ? ' (' + eff + '%)' : '');
+  sel.options[1].textContent = 'Fit page' + (pdfZoomMode === 'page' ? ' (' + eff + '%)' : '');
+  sel.value = String(pdfZoomMode);
+  const fb = document.getElementById('pdfFitBtn');
+  if(fb) fb.title = pdfZoomMode === 'width' ? 'Fitted to width \u2014 tap for fit page' : pdfZoomMode === 'page' ? 'Fitted to page \u2014 tap for fit width' : 'Tap for fit width';
 }
-function cyclePdfZoom(){
-  const steps = ['fit', 1.5, 2];
-  pdfZoomMode = steps[(steps.indexOf(pdfZoomMode) + 1) % steps.length];
-  updatePdfZoomUI();
-  if(curPdfDoc) renderPdfPage(curPdfPage);
+function pdfSetZoom(mode){
+  pdfZoomMode = (mode === 'width' || mode === 'page') ? mode : Math.min(400, Math.max(25, Number(mode) || 100));
+  updatePdfZoomUI(); if(curPdfDoc) renderPdfPage(curPdfPage, true);
+}
+function onPdfZoomSelect(el){ pdfSetZoom(el.value); }
+function pdfZoomStep(dir){
+  dir = Number(dir) || 1;
+  const eff = pdfCurScale / PDF_CSS_DPI * 100;
+  const next = dir > 0 ? PDF_ZOOMS.find(z => z > eff + 1) : [...PDF_ZOOMS].reverse().find(z => z < eff - 1);
+  pdfSetZoom(next || (dir > 0 ? 400 : 50));
+}
+function cyclePdfZoom(){ pdfSetZoom(pdfZoomMode === 'width' ? 'page' : 'width'); }
+function setPdfView(m){
+  pdfViewMode = m === 'two' ? 'two' : 'single';
+  pdfUpdateEditUI(); if(curPdfDoc) renderPdfPage(curPdfPage);
 }
 function updatePdfNavUI(){
+  const nums = pdfPagesInView(curPdfPage);
   const pnum = document.getElementById('pdfPnum');
-  if(pnum) pnum.textContent = curPdfPage + ' / ' + curPdfNumPages;
-  const prev = document.getElementById('pdfPrev');
-  const next = document.getElementById('pdfNext');
-  if(prev) prev.disabled = curPdfPage <= 1;
-  if(next) next.disabled = curPdfPage >= curPdfNumPages;
+  if(pnum) pnum.textContent = (nums.length > 1 ? nums[0] + '\u2013' + nums[1] : nums[0]) + ' / ' + curPdfNumPages;
+  const inp = document.getElementById('pdfPageInput');
+  if(inp && document.activeElement !== inp) inp.value = String(nums[0]);
+  const of = document.getElementById('pdfOfN'); if(of) of.textContent = '/ ' + curPdfNumPages;
+  const prev = document.getElementById('pdfPrev'), next = document.getElementById('pdfNext');
+  if(prev) prev.disabled = nums[0] <= 1;
+  if(next) next.disabled = nums[nums.length - 1] >= curPdfNumPages;
 }
-function pdfPrevPage(){ if(curPdfPage > 1) renderPdfPage(curPdfPage - 1); }
-function pdfNextPage(){ if(curPdfPage < curPdfNumPages) renderPdfPage(curPdfPage + 1); }
+function pdfPrevPage(){ if(curPdfPage > 1) renderPdfPage(Math.max(1, curPdfPage - pdfPageStep())); }
+function pdfNextPage(){ const last = pdfPagesInView(curPdfPage).slice(-1)[0]; if(last < curPdfNumPages) renderPdfPage(last + 1); }
+function onPdfPageKey(e){
+  if(e.key === 'Enter'){ e.preventDefault(); onPdfPageChange(e.target); e.target.blur(); }
+  else if(e.key === 'Escape'){ e.target.value = String(curPdfPage); e.target.blur(); }
+}
+function onPdfPageChange(el){
+  const n = Math.floor(Number(String(el.value).replace(/[^\d]/g, '')));
+  if(n >= 1 && curPdfDoc) renderPdfPage(Math.min(n, curPdfNumPages)); else el.value = String(curPdfPage);
+}
+function pdfGoto(n){ if(curPdfDoc) renderPdfPage(n); }
+
+// ---- highlight / draw / erase on the page ----
+function pdfPt(e, box){ const r = box.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+function pdfPendSet(pageIdx, list){
+  const S = pdfEd.cur, pend = { ...S.pend };
+  if(list.length) pend[pageIdx] = list; else delete pend[pageIdx];
+  pdfCommit({ bytes: S.bytes, pend, rev: S.rev }).catch(()=>{});
+}
+function pdfPendAdd(pageIdx, ann){ pdfPendSet(pageIdx, ((pdfEd.cur.pend[pageIdx]) || []).concat([ann])); }
+function pdfWirePage(pageEl){
+  pageEl.addEventListener('pointerdown', pdfOvDown);
+  pageEl.addEventListener('pointermove', pdfOvMove);
+  pageEl.addEventListener('pointerup', pdfOvUp);
+  pageEl.addEventListener('pointercancel', ()=>{ pdfStroke = null; pdfBoxDrag = null; pdfRefreshOverlays(); });
+}
+function pdfOvDown(e){
+  const ov = e.target.closest && e.target.closest('.pdfov');
+  if(!ov || !pdfTool || !pdfEd || pdfBusy || (e.pointerType === 'mouse' && e.button > 0)) return;
+  const box = ov.parentElement;
+  if(pdfTool === 'draw'){
+    e.preventDefault(); try{ ov.setPointerCapture(e.pointerId); }catch(_){}
+    pdfStroke = { box, pts: [pdfPt(e, box)], id: e.pointerId }; pdfDrawOverlay(box);
+  } else if(pdfTool === 'highlight' && !box._hasText){
+    e.preventDefault(); try{ ov.setPointerCapture(e.pointerId); }catch(_){}
+    const p = pdfPt(e, box); pdfBoxDrag = { box, x0: p[0], y0: p[1], x1: p[0], y1: p[1], id: e.pointerId };
+  } else if(pdfTool === 'erase'){
+    e.preventDefault(); pdfEraseAt(box, pdfPt(e, box));
+  }
+}
+function pdfOvMove(e){
+  if(pdfStroke && e.pointerId === pdfStroke.id){
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for(const ev of (evs.length ? evs : [e])){
+      const p = pdfPt(ev, pdfStroke.box), l = pdfStroke.pts[pdfStroke.pts.length - 1];
+      if(Math.hypot(p[0] - l[0], p[1] - l[1]) >= 1.2) pdfStroke.pts.push(p);
+    }
+    pdfDrawOverlay(pdfStroke.box);
+  } else if(pdfBoxDrag && e.pointerId === pdfBoxDrag.id){
+    const p = pdfPt(e, pdfBoxDrag.box); pdfBoxDrag.x1 = p[0]; pdfBoxDrag.y1 = p[1]; pdfDrawOverlay(pdfBoxDrag.box);
+  }
+}
+function pdfOvUp(e){
+  if(pdfStroke && e.pointerId === pdfStroke.id){
+    const s = pdfStroke; pdfStroke = null;
+    let pts = s.pts.slice(); if(pts.length === 1) pts.push([pts[0][0] + 0.01, pts[0][1]]);
+    const pp = pts.map(p => s.box._vp.convertToPdfPoint(p[0], p[1]).map(v => Math.round(v * 100) / 100));
+    pdfPendAdd(s.box._p - 1, { t: 'ink', pts: pp, color: pdfInkColor, w: pdfInkWidth });
+  } else if(pdfBoxDrag && e.pointerId === pdfBoxDrag.id){
+    const g = pdfBoxDrag; pdfBoxDrag = null;
+    if(Math.abs(g.x1 - g.x0) > 3 && Math.abs(g.y1 - g.y0) > 3){
+      const a = g.box._vp.convertToPdfPoint(g.x0, g.y0), b = g.box._vp.convertToPdfPoint(g.x1, g.y1);
+      pdfPendAdd(g.box._p - 1, { t: 'hl', rects: [[Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]], color: pdfHlColor });
+    } else pdfDrawOverlay(g.box);
+  }
+}
+function pdfSelectionInText(){
+  const sel = window.getSelection(); if(!sel || sel.isCollapsed || !sel.rangeCount) return false;
+  const n = sel.anchorNode, el = n && (n.nodeType === 1 ? n : n.parentElement);
+  return !!(el && el.closest && el.closest('#pdfPage .textLayer'));
+}
+function pdfApplySelectionHighlight(){
+  if(!pdfEd || pdfBusy || !pdfSelectionInText()) return false;
+  const sel = window.getSelection(), boxes = pdfBoxes(), per = new Map();
+  for(let r = 0; r < sel.rangeCount; r++){
+    for(const cr of sel.getRangeAt(r).getClientRects()){
+      if(cr.width < 1 || cr.height < 1) continue;
+      const cx = cr.left + cr.width / 2, cy = cr.top + cr.height / 2;
+      const box = boxes.find(b => { const bb = b.getBoundingClientRect(); return cx >= bb.left && cx <= bb.right && cy >= bb.top && cy <= bb.bottom; });
+      if(!box) continue;
+      const bb = box.getBoundingClientRect();
+      if(cr.width * cr.height > bb.width * bb.height * 0.4) continue;        // a container's box, not a line of text
+      if(!per.has(box)) per.set(box, []);
+      per.get(box).push([cr.left - bb.left, cr.top - bb.top, cr.right - bb.left, cr.bottom - bb.top]);
+    }
+  }
+  let added = 0;
+  for(const [box, rs0] of per){
+    const rs = rs0.filter((a, i) => !rs0.some((b, j) => j !== i && b[0] <= a[0] + 0.5 && b[1] <= a[1] + 0.5 && b[2] >= a[2] - 0.5 && b[3] >= a[3] - 0.5 && (b[2] - b[0]) * (b[3] - b[1]) > (a[2] - a[0]) * (a[3] - a[1]) + 0.01));
+    const rects = rs.map(r => {
+      const a = box._vp.convertToPdfPoint(r[0], r[1]), b = box._vp.convertToPdfPoint(r[2], r[3]);
+      return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])].map(v => Math.round(v * 100) / 100);
+    });
+    if(rects.length){ pdfPendAdd(box._p - 1, { t: 'hl', rects, color: pdfHlColor }); added++; }
+  }
+  try{ sel.removeAllRanges(); }catch(e){}
+  const b = document.getElementById('pdfHlApply'); if(b) b.style.display = 'none';
+  return added > 0;
+}
+function pdfSegDist(px, py, x1, y1, x2, y2){
+  const dx = x2 - x1, dy = y2 - y1, l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / l2)) : 0;
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+function pdfHitPend(a, px, py, tol){
+  if(a.t === 'hl') return a.rects.some(r => px >= r[0] - tol / 2 && px <= r[2] + tol / 2 && py >= r[1] - tol / 2 && py <= r[3] + tol / 2);
+  for(let i = 1; i < a.pts.length; i++) if(pdfSegDist(px, py, a.pts[i - 1][0], a.pts[i - 1][1], a.pts[i][0], a.pts[i][1]) <= tol + a.w / 2) return true;
+  return a.pts.length === 1 && Math.hypot(px - a.pts[0][0], py - a.pts[0][1]) <= tol + a.w / 2;
+}
+function pdfNumList(v){      // pdf.js hands coordinates as flat numbers or as {x,y} points, depending on the build
+  const out = []; (function walk(x){ if(Array.isArray(x)) x.forEach(walk); else if(x && typeof x === 'object' && 'x' in x) out.push(x.x, x.y); else if(typeof x === 'number') out.push(x); })(v);
+  return out;
+}
+function pdfHitSaved(a, px, py, tol){
+  const r = a.rect;
+  if(!r || px < r[0] - tol || px > r[2] + tol || py < r[1] - tol || py > r[3] + tol) return false;
+  if(a.subtype === 'Highlight'){
+    const q = pdfNumList(a.quadPoints);
+    if(q.length >= 8 && q.length % 8 === 0){
+      for(let i = 0; i < q.length; i += 8){
+        const xs = [q[i], q[i + 2], q[i + 4], q[i + 6]], ys = [q[i + 1], q[i + 3], q[i + 5], q[i + 7]];
+        if(px >= Math.min(...xs) - tol / 2 && px <= Math.max(...xs) + tol / 2 && py >= Math.min(...ys) - tol / 2 && py <= Math.max(...ys) + tol / 2) return true;
+      }
+      return false;
+    }
+    return true;
+  }
+  const lists = Array.isArray(a.inkLists) ? a.inkLists : [];
+  const w = (a.borderStyle && a.borderStyle.width) || 1;
+  for(const l of lists){
+    const n = pdfNumList(l);
+    for(let i = 2; i < n.length; i += 2) if(pdfSegDist(px, py, n[i - 2], n[i - 1], n[i], n[i + 1]) <= tol + w / 2) return true;
+  }
+  return !lists.length;
+}
+function pdfEraseAt(box, pt){
+  if(!pdfEd || pdfBusy) return;
+  const pp = box._vp.convertToPdfPoint(pt[0], pt[1]), tol = 8 / Math.max(0.2, pdfCurScale);
+  const list = (pdfEd.cur.pend[box._p - 1]) || [];
+  for(let i = list.length - 1; i >= 0; i--){
+    if(pdfHitPend(list[i], pp[0], pp[1], tol)){ pdfPendSet(box._p - 1, list.filter((_, j) => j !== i)); return; }
+  }
+  for(const a of box._saved || []){
+    if(pdfHitSaved(a, pp[0], pp[1], tol)){
+      const m = /^(\d+)R(\d*)$/.exec(String(a.id));
+      if(!m) return;
+      const num = Number(m[1]), gen = m[2] ? Number(m[2]) : 0, pageIdx = box._p - 1;
+      pdfRunOp(async (PL, base) => {
+        const doc = await PL.PDFDocument.load(base, { updateMetadata: false });
+        const page = doc.getPage(pageIdx), annots = page.node.Annots(), ref = PL.PDFRef.of(num, gen);
+        const at = annots ? annots.indexOf(ref) : -1;
+        if(at < 0) throw new Error("That mark can't be removed (it is not a plain highlight or drawing).");
+        try{
+          const d = doc.context.lookup(ref), ap = d && d.get && d.get(PL.PDFName.of('AP')), n = ap && ap.get && ap.get(PL.PDFName.of('N'));
+          if(n && n.constructor && n.constructor.name === 'PDFRef') doc.context.delete(n);
+        }catch(_){}
+        annots.remove(at); doc.context.delete(ref);
+        return await doc.save();
+      });
+      return;
+    }
+  }
+}
+
+// ---- writing highlights / drawings into the file (real PDF annotations, with appearance streams) ----
+function pdfWriteAnnots(PL, doc, pend){
+  const ctx = doc.context, n2 = v => Math.round(v * 1000) / 1000;
+  for(const [idx, list] of Object.entries(pend)){
+    const page = doc.getPage(Number(idx));
+    for(const a of list){
+      const c = pdfHex(a.color).map(v => n2(v / 255));
+      let annot, ap;
+      if(a.t === 'hl'){
+        const xs = a.rects.flatMap(r => [r[0], r[2]]), ys = a.rects.flatMap(r => [r[1], r[3]]);
+        const bb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map(n2);
+        const quads = a.rects.flatMap(r => [r[0], r[3], r[2], r[3], r[0], r[1], r[2], r[1]].map(n2));
+        const content = 'q /GS1 gs ' + c.join(' ') + ' rg ' + a.rects.map(r => `${n2(r[0])} ${n2(r[1])} ${n2(r[2] - r[0])} ${n2(r[3] - r[1])} re f`).join(' ') + ' Q';
+        ap = ctx.register(ctx.stream(content, { Type: 'XObject', Subtype: 'Form', FormType: 1, BBox: bb, Resources: { ExtGState: { GS1: { Type: 'ExtGState', BM: 'Multiply' } } } }));
+        annot = ctx.obj({ Type: 'Annot', Subtype: 'Highlight', Rect: bb, QuadPoints: quads, C: c, F: 4, Border: [0, 0, 0], AP: { N: ap } });
+      } else {
+        const xs = a.pts.map(p => p[0]), ys = a.pts.map(p => p[1]), pad = a.w + 1;
+        const bb = [Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) + pad, Math.max(...ys) + pad].map(n2);
+        const path = a.pts.map((p, i) => `${n2(p[0])} ${n2(p[1])} ${i ? 'l' : 'm'}`).join(' ');
+        const content = `q 1 J 1 j ${c.join(' ')} RG ${a.w} w ${path} S Q`;
+        ap = ctx.register(ctx.stream(content, { Type: 'XObject', Subtype: 'Form', FormType: 1, BBox: bb }));
+        annot = ctx.obj({ Type: 'Annot', Subtype: 'Ink', Rect: bb, InkList: [a.pts.flatMap(p => [n2(p[0]), n2(p[1])])], C: c, F: 4, BS: { W: a.w }, Border: [0, 0, a.w], AP: { N: ap } });
+      }
+      page.node.addAnnot(ctx.register(annot));
+    }
+  }
+}
+async function pdfFlatBytes(PL){
+  const S = pdfEd.cur, base = await pdfBytesOf(S);
+  if(!pdfHasPend(S)) return base;
+  const doc = await PL.PDFDocument.load(base, { updateMetadata: false });
+  pdfWriteAnnots(PL, doc, S.pend);
+  return await doc.save();
+}
+// Runs one file-changing operation: builder(PL, bytesWithPendingMarksWritten) -> new bytes. The result becomes
+// the new working copy (undoable); nothing is stored until Save.
+async function pdfRunOp(builder){
+  if(pdfBusy || !pdfEd) return false;
+  pdfSetBusy(true);
+  try{
+    const PL = await loadPdfLib();
+    const base = await pdfFlatBytes(PL);
+    const out = await builder(PL, base);
+    await pdfCommit({ bytes: out, pend: {}, rev: ++pdfEd.revSeq });
+    return true;
+  }catch(err){ console.error('[pdf edit]', err); pdfToast(pdfErrText(err)); return false; }
+  finally{ pdfSetBusy(false); }
+}
+
+// ---- page edits (rebuild the file from a plan) ----
+async function pdfBuildFromPlan(PL, base, plan, ext){
+  const { PDFDocument, degrees } = PL;
+  const src = await PDFDocument.load(base, { updateMetadata: false });
+  const out = await PDFDocument.create();
+  try{ const t = src.getTitle(), a = src.getAuthor(); if(t) out.setTitle(t); if(a) out.setAuthor(a); }catch(_){}
+  out.setProducer('Shelfmark'); out.setCreator('Shelfmark');
+  const ci = plan.filter(x => x.d === 'cur').map(x => x.i), ei = plan.filter(x => x.d === 'ext').map(x => x.i);
+  const cp = ci.length ? await out.copyPages(src, ci) : [], ep = ei.length ? await out.copyPages(ext.doc, ei) : [];
+  let a = 0, b = 0;
+  for(const it of plan){
+    let pg;
+    if(it.d === 'blank'){ const s = src.getPage(Math.min(Math.max(0, it.like), src.getPageCount() - 1)).getSize(); pg = out.addPage([s.width, s.height]); }
+    else { pg = it.d === 'cur' ? cp[a++] : ep[b++]; out.addPage(pg); }
+    if(it.r){ const ang = (((pg.getRotation().angle + it.r) % 360) + 360) % 360; pg.setRotation(degrees(ang)); }
+  }
+  return await out.save();
+}
+function pdfSelPages(){ return pdfSel.size ? [...pdfSel].sort((x, y) => x - y) : [curPdfPage]; }
+function pdfCurPlan(){ return Array.from({ length: curPdfNumPages }, (_, i) => ({ d: 'cur', i, r: 0 })); }
+function pdfRangeLabel(pages){
+  const out = []; let s = pages[0], p = s;
+  for(let i = 1; i <= pages.length; i++){
+    if(pages[i] === p + 1){ p = pages[i]; continue; }
+    out.push(s === p ? String(s) : s + '-' + p); s = pages[i]; p = s;
+  }
+  return out.join(', ');
+}
+async function pdfPageAction(name){
+  closePdfCtx();
+  if(pdfBusy || !pdfEd || !curPdfDoc) return;
+  const sel = pdfSelPages(), N = curPdfNumPages;
+  const keepSel = () => { /* selection is page numbers; keep it unless the pages changed */ };
+  switch(name){
+    case 'selectAll': pdfSel = new Set(Array.from({ length: N }, (_, i) => i + 1)); pdfUpdateSelUI(); return;
+    case 'delete': {
+      if(sel.length >= N){ pdfToast('A PDF needs at least one page.'); return; }
+      if(!confirm(`Delete ${sel.length === 1 ? 'page ' + sel[0] : sel.length + ' pages (' + pdfRangeLabel(sel) + ')'}?\n\nYou can undo this until you leave the PDF.`)) return;
+      const del = new Set(sel);
+      const ok = await pdfRunOp((PL, base) => pdfBuildFromPlan(PL, base, pdfCurPlan().filter(x => !del.has(x.i + 1))));
+      if(ok){ pdfSel = new Set(); curPdfPage = Math.min(sel[0], curPdfNumPages); await renderPdfPage(curPdfPage); pdfUpdateSelUI(); }
+      return;
+    }
+    case 'rotL': case 'rotR': {
+      const d = name === 'rotL' ? -90 : 90, set = new Set(sel);
+      const ok = await pdfRunOp((PL, base) => pdfBuildFromPlan(PL, base, pdfCurPlan().map(x => set.has(x.i + 1) ? { ...x, r: d } : x)));
+      return ok;
+    }
+    case 'earlier': case 'later': {
+      const plan = pdfCurPlan(), set = new Set(sel);
+      const order = plan.slice();
+      if(name === 'earlier'){ if(sel[0] <= 1) return; for(let i = 1; i < order.length; i++) if(set.has(order[i].i + 1) && !set.has(order[i - 1].i + 1)){ const t = order[i - 1]; order[i - 1] = order[i]; order[i] = t; } }
+      else { if(sel[sel.length - 1] >= N) return; for(let i = order.length - 2; i >= 0; i--) if(set.has(order[i].i + 1) && !set.has(order[i + 1].i + 1)){ const t = order[i + 1]; order[i + 1] = order[i]; order[i] = t; } }
+      const newSel = new Set(); order.forEach((x, k) => { if(set.has(x.i + 1)) newSel.add(k + 1); });
+      const ok = await pdfRunOp((PL, base) => pdfBuildFromPlan(PL, base, order));
+      if(ok){ pdfSel = newSel; pdfUpdateSelUI(); const first = Math.min(...newSel); await renderPdfPage(first); }
+      return;
+    }
+    case 'blank': {
+      const at = sel[sel.length - 1], plan = pdfCurPlan();
+      plan.splice(at, 0, { d: 'blank', like: at - 1, r: 0 });
+      const ok = await pdfRunOp((PL, base) => pdfBuildFromPlan(PL, base, plan));
+      if(ok){ pdfSel = new Set([at + 1]); curPdfPage = at + 1; await renderPdfPage(curPdfPage); pdfUpdateSelUI(); }
+      return;
+    }
+    case 'extract': return pdfExtractPages(sel);
+    case 'insert': case 'replace': return pdfOpenSource(name);
+  }
+}
+async function pdfExtractPages(sel){
+  if(pdfBusy || !pdfEd) return;
+  pdfSetBusy(true);
+  try{
+    const PL = await loadPdfLib(), base = await pdfFlatBytes(PL);
+    const bytes = await pdfBuildFromPlan(PL, base, sel.map(i => ({ d: 'cur', i: i - 1, r: 0 })));
+    const meta = await getMeta(curId);
+    const title = `${(meta && meta.title) || 'PDF'} (p. ${pdfRangeLabel(sel)})`;
+    const item = { id: Date.now() + '-' + Math.random().toString(36).slice(2), title, category: (meta && meta.category) || 'Uncategorized',
+      type: 'pdf', content: new Blob([bytes], { type: 'application/pdf' }), mime: 'application/pdf', addedAt: Date.now(), updatedAt: Date.now(), progress: null };
+    await put(item);
+    pdfToast(`Extracted ${sel.length === 1 ? '1 page' : sel.length + ' pages'} to a new PDF on your shelf: \u201c${title}\u201d`);
+  }catch(err){ console.error('[pdf extract]', err); pdfToast(pdfErrText(err)); }
+  finally{ pdfSetBusy(false); }
+}
+
+// ---- insert / replace from another PDF ----
+function pdfParseRange(str, max){
+  str = (str || '').trim().toLowerCase();
+  if(!str || str === 'all') return Array.from({ length: max }, (_, i) => i + 1);
+  const out = [];
+  for(const part of str.split(/[,;\s]+/).filter(Boolean)){
+    const m = /^(\d*)-(\d*)$/.exec(part);
+    if(m && (m[1] || m[2])){
+      let a = m[1] ? Number(m[1]) : 1, b = m[2] ? Number(m[2]) : max; if(a > b) [a, b] = [b, a];
+      if(a < 1 || b > max) return null; for(let i = a; i <= b; i++) out.push(i);
+    } else if(/^\d+$/.test(part)){ const n = Number(part); if(n < 1 || n > max) return null; out.push(n); }
+    else return null;
+  }
+  return out.length ? out : null;
+}
+async function pdfOpenSource(kind){
+  const sel = pdfSelPages();
+  pdfSrc = { kind, doc: null, count: 0, name: '' };
+  document.getElementById('pdfSrcTitle').textContent = kind === 'replace' ? `Replace ${sel.length === 1 ? 'page ' + sel[0] : sel.length + ' pages'}` : 'Insert pages';
+  document.getElementById('pdfSrcGo').textContent = kind === 'replace' ? 'Replace' : 'Insert';
+  document.getElementById('pdfSrcPosRow').style.display = kind === 'insert' ? '' : 'none';
+  document.getElementById('pdfSrcHint').textContent = kind === 'replace'
+    ? `The selected page${sel.length === 1 ? '' : 's'} (${pdfRangeLabel(sel)}) will be swapped for the pages you choose below.`
+    : 'Pick a PDF from your shelf or from this device.';
+  document.getElementById('pdfSrcInfo').textContent = ''; document.getElementById('pdfSrcRange').value = '';
+  const go = document.getElementById('pdfSrcGo'); go.disabled = true;
+  const list = document.getElementById('pdfSrcList');
+  const items = (await getAll()).filter(it => it.type === 'pdf' && it.id !== curId)
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }));
+  list.innerHTML = items.length ? items.map(it => `<button type="button" class="alink-row" data-id="${escapeHtml(it.id)}" data-title="${escapeHtml(it.title)}"><span class="alink-title">${escapeHtml(it.title)}</span><span class="alink-cat">${escapeHtml(it.category || 'Uncategorized')}</span></button>`).join('')
+    : '<div class="alink-empty">No other PDFs on your shelf \u2014 use \u201cChoose a PDF from this device\u201d.</div>';
+  list.querySelectorAll('.alink-row').forEach(b => { b.onclick = () => pdfPickShelfSource(b.dataset.id, b.dataset.title); });
+  document.getElementById('pdfSrcOverlay').style.display = 'flex';
+}
+function closePdfSrc(){ const o = document.getElementById('pdfSrcOverlay'); if(o) o.style.display = 'none'; pdfSrc = null; }
+async function pdfSetSrc(bytes, name){
+  const info = document.getElementById('pdfSrcInfo'), go = document.getElementById('pdfSrcGo');
+  info.textContent = 'Reading\u2026'; go.disabled = true;
+  try{
+    const PL = await loadPdfLib();
+    const doc = await PL.PDFDocument.load(bytes, { updateMetadata: false });
+    if(!pdfSrc) return;
+    pdfSrc.doc = doc; pdfSrc.count = doc.getPageCount(); pdfSrc.name = name;
+    info.textContent = `\u201c${name}\u201d \u2014 ${pdfSrc.count} page${pdfSrc.count === 1 ? '' : 's'}`;
+    go.disabled = false;
+  }catch(err){ info.textContent = pdfErrText(err); }
+}
+async function pdfPickShelfSource(id, title){
+  const it = await getOne(id); if(!it || !it.content) return;
+  await pdfSetSrc(new Uint8Array(await it.content.arrayBuffer()), title);
+}
+async function onPdfSrcFile(e){
+  const f = e.target.files && e.target.files[0]; e.target.value = '';
+  if(!f) return;
+  await pdfSetSrc(new Uint8Array(await f.arrayBuffer()), f.name);
+}
+async function confirmPdfSrc(){
+  if(!pdfSrc || !pdfSrc.doc || pdfBusy) return;
+  const pages = pdfParseRange(document.getElementById('pdfSrcRange').value, pdfSrc.count);
+  const info = document.getElementById('pdfSrcInfo');
+  if(!pages){ info.textContent = `Use page numbers between 1 and ${pdfSrc.count}, like \u201c1-3, 5\u201d, or leave empty for all pages.`; return; }
+  const kind = pdfSrc.kind, ext = { doc: pdfSrc.doc }, sel = pdfSelPages(), N = curPdfNumPages;
+  const posSel = document.getElementById('pdfSrcPos').value;
+  const extItems = pages.map(i => ({ d: 'ext', i: i - 1, r: 0 }));
+  let plan = pdfCurPlan(), at;
+  if(kind === 'replace'){
+    const set = new Set(sel); at = plan.findIndex(x => set.has(x.i + 1));
+    plan = plan.filter(x => !set.has(x.i + 1));
+  } else at = posSel === 'before' ? sel[0] - 1 : posSel === 'start' ? 0 : posSel === 'end' ? N : sel[sel.length - 1];
+  plan.splice(at, 0, ...extItems);
+  closePdfSrc();
+  const ok = await pdfRunOp((PL, base) => pdfBuildFromPlan(PL, base, plan, ext));
+  if(ok){ pdfSel = new Set(extItems.map((_, k) => at + k + 1)); curPdfPage = at + 1; await renderPdfPage(curPdfPage); pdfUpdateSelUI(); }
+}
+
+// ---- save (overwrites this item's PDF) and undo of a save ----
+async function pdfEditSave(){
+  if(pdfBusy || !pdfEd || !pdfDirty() || !curId) return;
+  pdfSetBusy(true);
+  try{
+    await holdAutoLock(async () => {
+      const PL = await loadPdfLib(), bytes = await pdfFlatBytes(PL);
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      const prevBlob = pdfEd.blob, prevSaved = pdfEd.saved;
+      for(const S of pdfEd.undo.concat(pdfEd.redo, [pdfEd.cur, prevSaved])) await pdfBytesOf(S);   // older snapshots keep their own bytes once the stored file changes
+      await putContentOnly(curId, 'pdf', blob);
+      await putMetaOnly(curId, { updatedAt: Date.now(), progress: { page: curPdfPage } });
+      const S = { bytes, pend: {}, rev: pdfHasPend() ? ++pdfEd.revSeq : pdfEd.cur.rev };
+      pdfEd.blob = blob; pdfEd.lastSave = { blob: prevBlob, S: prevSaved };
+      if(S.rev !== pdfEd.cur.rev || pdfHasPend()){ pdfEd.undo.push(pdfEd.cur); pdfEd.redo.length = 0; }
+      pdfEd.cur = S; pdfEd.saved = S; pdfTrimUndo();
+    });
+    await pdfSyncView();
+    pdfToast('Saved \u2014 this PDF on your shelf is now the edited version.', 'Undo save', pdfUndoLastSave);
+  }catch(err){ console.error('[pdf save]', err); pdfToast("Couldn't save: " + pdfErrText(err)); }
+  finally{ pdfSetBusy(false); }
+}
+async function pdfUndoLastSave(){
+  if(pdfBusy || !pdfEd || !pdfEd.lastSave || !curId) return;
+  pdfSetBusy(true);
+  try{
+    await holdAutoLock(async () => {
+      const L = pdfEd.lastSave;
+      await putContentOnly(curId, 'pdf', L.blob);
+      await putMetaOnly(curId, { updatedAt: Date.now() });
+      pdfEd.blob = L.blob; pdfEd.cur = L.S; pdfEd.saved = L.S; pdfEd.undo = []; pdfEd.redo = []; pdfEd.lastSave = null;
+    });
+    await pdfReloadDoc();
+    pdfToast('Save undone \u2014 the previous version is back on your shelf.');
+  }catch(err){ console.error('[pdf undo save]', err); pdfToast("Couldn't undo the save: " + pdfErrText(err)); }
+  finally{ pdfSetBusy(false); }
+}
+function pdfConfirmLeave(){
+  return !(curType === 'pdf' && pdfDirty()) || confirm('You have unsaved changes to this PDF. Leave without saving them?');
+}
+function pdfResetSession(){
+  pdfEd = null; pdfTool = null; pdfThumbsOpen = false; pdfSel = new Set(); pdfSelectMode = false; pdfStroke = null; pdfBoxDrag = null;
+  pdfSearch = { open: false, q: '', cs: false, pages: null, matches: [], idx: -1, byPage: {}, token: 0 };
+  pdfThumbToken++; pdfThumbQueue.length = 0; closePdfCtx();
+  const t = document.getElementById('pdfToast'); if(t) t.classList.remove('show');
+}
+window.addEventListener('beforeunload', e => { if(pdfDirty()){ e.preventDefault(); e.returnValue = ''; } });
+
+// ---- find text in the PDF ----
+async function pdfSearchPrepare(){
+  if(pdfSearch.pages) return;
+  const doc = curPdfDoc, pages = [];
+  for(let n = 1; n <= doc.numPages; n++){
+    const page = await doc.getPage(n), tc = await page.getTextContent();
+    let text = ''; const spans = [];
+    for(const it of tc.items){
+      if(it.str === undefined) continue;
+      const s = text.length; text += it.str; spans.push({ s, e: text.length, it });
+      if(it.hasEOL) text += '\n';
+    }
+    pages.push({ text, spans });
+    if(n % 8 === 0) await new Promise(r => setTimeout(r, 0));
+    if(doc !== curPdfDoc) return;
+  }
+  pdfSearch.pages = pages;
+}
+function pdfMatchRects(pg, ms, me){
+  const out = [];
+  for(const sp of pg.spans){
+    if(sp.e <= ms || sp.s >= me || sp.e === sp.s) continue;
+    const len = sp.e - sp.s, a = Math.max(ms, sp.s) - sp.s, b = Math.min(me, sp.e) - sp.s, t = sp.it.transform, w = sp.it.width || 0, h = Math.abs(sp.it.height || t[3] || 10);
+    out.push([t[4] + w * a / len, t[5] - h * 0.2, t[4] + w * b / len, t[5] + h * 0.85]);
+  }
+  return out;
+}
+async function pdfSearchRun(){
+  const input = document.getElementById('pdfFindInput'), count = document.getElementById('pdfFindCount');
+  if(!input || !curPdfDoc) return;
+  const q = input.value, token = ++pdfSearch.token;
+  pdfSearch.q = q;
+  const clear = () => { pdfSearch.matches = []; pdfSearch.idx = -1; pdfSearch.byPage = {}; pdfRefreshOverlays(); };
+  if(!q){ clear(); count.textContent = ''; return; }
+  count.textContent = 'Searching\u2026';
+  await pdfSearchPrepare();
+  if(token !== pdfSearch.token || !pdfSearch.pages) return;
+  const cs = pdfSearch.cs, needle = cs ? q : q.toLowerCase(), matches = [];
+  let totalChars = 0;
+  pdfSearch.pages.forEach((pg, k) => {
+    totalChars += pg.text.length;
+    const hay = cs ? pg.text : pg.text.toLowerCase();
+    if(hay.length !== pg.text.length) return;
+    let at = 0;
+    while(matches.length < 2000 && (at = hay.indexOf(needle, at)) >= 0){
+      const rects = pdfMatchRects(pg, at, at + needle.length);
+      if(rects.length) matches.push({ p: k + 1, rects, cur: false });
+      at += Math.max(1, needle.length);
+    }
+  });
+  pdfSearch.matches = matches; pdfSearch.byPage = {};
+  matches.forEach(m => (pdfSearch.byPage[m.p] = pdfSearch.byPage[m.p] || []).push(m));
+  if(!matches.length){
+    pdfSearch.idx = -1; pdfRefreshOverlays();
+    count.textContent = totalChars < 1 ? 'No searchable text (scanned pages?)' : 'No matches';
+    return;
+  }
+  const first = matches.findIndex(m => m.p >= curPdfPage);
+  pdfSearch.idx = -1; pdfFindStepTo(first < 0 ? 0 : first);
+}
+function pdfFindStepTo(i){
+  const ms = pdfSearch.matches; if(!ms.length) return;
+  i = ((i % ms.length) + ms.length) % ms.length;
+  ms.forEach(m => { m.cur = false; }); ms[i].cur = true; pdfSearch.idx = i;
+  const c = document.getElementById('pdfFindCount'); if(c) c.textContent = (i + 1) + ' of ' + ms.length + (ms.length >= 2000 ? '+' : '');
+  if(pdfPagesInView(curPdfPage).includes(ms[i].p)){ pdfRefreshOverlays(); pdfScrollToMatch(); }
+  else renderPdfPage(ms[i].p);
+}
+function pdfFindStep(dir){ if(pdfSearch.matches.length) pdfFindStepTo(pdfSearch.idx + (Number(dir) || 1)); else pdfSearchRun(); }
+function pdfScrollToMatch(){
+  const m = pdfSearch.matches[pdfSearch.idx], pageEl = document.getElementById('pdfPage'); if(!m || !pageEl) return;
+  const box = pdfBoxes().find(b => b._p === m.p); if(!box) return;
+  const r = m.rects[0], a = box._vp.convertToViewportPoint(r[0], r[1]), b = box._vp.convertToViewportPoint(r[2], r[3]);
+  const top = box.offsetTop + Math.min(a[1], b[1]), left = box.offsetLeft + Math.min(a[0], b[0]);
+  if(top < pageEl.scrollTop + 24 || top > pageEl.scrollTop + pageEl.clientHeight - 70) pageEl.scrollTop = Math.max(0, top - pageEl.clientHeight / 3);
+  if(left < pageEl.scrollLeft + 24 || left > pageEl.scrollLeft + pageEl.clientWidth - 70) pageEl.scrollLeft = Math.max(0, left - pageEl.clientWidth / 3);
+}
+let pdfFindTimer = null;
+function togglePdfFind(force){
+  pdfSearch.open = force === true ? true : !pdfSearch.open;
+  const bar = document.getElementById('pdfFindBar'); if(!bar) return;
+  bar.style.display = pdfSearch.open ? 'flex' : 'none';
+  if(pdfSearch.open){ const i = document.getElementById('pdfFindInput'); i.focus(); i.select(); if(i.value && !pdfSearch.matches.length) pdfSearchRun(); }
+  else { pdfSearch.matches = []; pdfSearch.idx = -1; pdfSearch.byPage = {}; pdfSearch.token++; pdfRefreshOverlays(); }
+  pdfUpdateEditUI();
+}
+function closePdfFind(){ if(pdfSearch.open) togglePdfFind(false); }
+function onPdfFindInput(){ clearTimeout(pdfFindTimer); pdfFindTimer = setTimeout(pdfSearchRun, 250); }
+function onPdfFindKey(e){
+  if(e.key === 'Enter'){ e.preventDefault(); pdfFindStep(e.shiftKey ? -1 : 1); }
+  else if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); closePdfFind(); }
+}
+function pdfFindCase(){
+  pdfSearch.cs = !pdfSearch.cs;
+  const b = document.getElementById('pdfFindCaseBtn'); if(b) b.classList.toggle('on', pdfSearch.cs);
+  pdfSearchRun();
+}
+
+// ---- page thumbnails panel ----
+let pdfThumbObserver = null, pdfThumbQueue = [], pdfThumbRunning = false, pdfDrag = null, pdfDragEndedAt = 0;
+function pdfNarrow(){ return window.matchMedia('(max-width: 699px)').matches; }
+function togglePdfThumbs(){
+  pdfThumbsOpen = !pdfThumbsOpen;
+  const p = document.getElementById('pdfThumbs'); if(!p) return;
+  p.style.display = pdfThumbsOpen ? 'flex' : 'none';
+  document.querySelector('.pdfwrap').classList.toggle('thumbs-open', pdfThumbsOpen);
+  pdfUpdateEditUI();
+  if(pdfThumbsOpen) pdfMarkThumbCurrent(true);
+  if(!pdfNarrow() && curPdfDoc) setTimeout(() => renderPdfPage(curPdfPage, true), 0);
+}
+function pdfBuildThumbs(){
+  const list = document.getElementById('pdfThumbList'); if(!list) return;
+  const tok = ++pdfThumbToken; pdfThumbQueue.length = 0; list.innerHTML = '';
+  for(let n = 1; n <= curPdfNumPages; n++){
+    const d = document.createElement('div'); d.className = 'pthumb'; d.dataset.p = String(n); d.tabIndex = 0;
+    d.innerHTML = '<canvas></canvas><span class="pt-n">' + n + '</span><span class="pt-ck">\u2713</span>';
+    list.appendChild(d);
+  }
+  if(pdfThumbObserver) pdfThumbObserver.disconnect();
+  pdfThumbObserver = new IntersectionObserver(entries => {
+    for(const en of entries) if(en.isIntersecting){ pdfThumbObserver.unobserve(en.target); pdfThumbQueue.push(en.target); }
+    pdfThumbPump(tok);
+  }, { root: list, rootMargin: '400px' });
+  list.querySelectorAll('.pthumb').forEach(t => pdfThumbObserver.observe(t));
+  pdfMarkThumbCurrent(); pdfUpdateSelUI();
+}
+async function pdfThumbPump(tok){
+  if(pdfThumbRunning) return;
+  pdfThumbRunning = true;
+  try{
+    while(pdfThumbQueue.length){
+      const el = pdfThumbQueue.shift();
+      if(tok !== pdfThumbToken || !el.isConnected || !curPdfDoc) continue;
+      try{
+        const page = await curPdfDoc.getPage(Number(el.dataset.p));
+        if(tok !== pdfThumbToken) continue;
+        const b = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: 110 / b.width });
+        const dpr = Math.min(window.devicePixelRatio || 1, 2), c = el.querySelector('canvas');
+        c.width = Math.floor(vp.width * dpr); c.height = Math.floor(vp.height * dpr);
+        c.style.width = vp.width + 'px'; c.style.height = vp.height + 'px';
+        await page.render({ canvasContext: c.getContext('2d'), viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined }).promise;
+      }catch(e){ /* a thumbnail that fails stays blank */ }
+    }
+  } finally { pdfThumbRunning = false; }
+}
+function pdfMarkThumbCurrent(scroll){
+  const list = document.getElementById('pdfThumbList'); if(!list) return;
+  const inView = new Set(pdfPagesInView(curPdfPage));
+  list.querySelectorAll('.pthumb').forEach(t => t.classList.toggle('cur', inView.has(Number(t.dataset.p))));
+  if(scroll || pdfThumbsOpen){ const c = list.querySelector('.pthumb.cur'); if(c && c.scrollIntoView) c.scrollIntoView({ block: 'nearest' }); }
+}
+function pdfUpdateSelUI(){
+  const list = document.getElementById('pdfThumbList'); if(!list) return;
+  list.querySelectorAll('.pthumb').forEach(t => t.classList.toggle('sel', pdfSel.has(Number(t.dataset.p))));
+  const info = document.getElementById('pdfSelInfo');
+  if(info) info.textContent = pdfSel.size ? pdfSel.size + ' selected' : 'Tap a page to select it';
+  const sb = document.getElementById('pdfSelModeBtn'); if(sb) sb.classList.toggle('on', pdfSelectMode);
+}
+function togglePdfSelectMode(){ pdfSelectMode = !pdfSelectMode; pdfUpdateSelUI(); }
+function pdfThumbClick(e){
+  if(Date.now() - pdfDragEndedAt < 400) return;
+  const t = e.target.closest('.pthumb'); if(!t) return;
+  const p = Number(t.dataset.p);
+  if(e.shiftKey && pdfSelAnchor){
+    const a = Math.min(pdfSelAnchor, p), b = Math.max(pdfSelAnchor, p);
+    pdfSel = new Set(); for(let i = a; i <= b; i++) pdfSel.add(i);
+  } else if(e.ctrlKey || e.metaKey || pdfSelectMode){
+    if(pdfSel.has(p)) pdfSel.delete(p); else pdfSel.add(p);
+    pdfSelAnchor = p;
+  } else {
+    pdfSel = new Set([p]); pdfSelAnchor = p; pdfGoto(p);
+    if(pdfNarrow()) togglePdfThumbs();
+  }
+  pdfUpdateSelUI();
+}
+function pdfWireThumbs(){
+  const list = document.getElementById('pdfThumbList'); if(!list) return;
+  list.addEventListener('click', pdfThumbClick);
+  list.addEventListener('contextmenu', e => {
+    const t = e.target.closest('.pthumb'); if(!t) return;
+    e.preventDefault();
+    const p = Number(t.dataset.p); if(!pdfSel.has(p)){ pdfSel = new Set([p]); pdfSelAnchor = p; pdfUpdateSelUI(); }
+    openPdfCtx(e.clientX, e.clientY);
+  });
+  list.addEventListener('pointerdown', pdfThumbDown);
+  list.addEventListener('pointermove', pdfThumbMove);
+  list.addEventListener('pointerup', pdfThumbUp);
+  list.addEventListener('pointercancel', pdfThumbCancel);
+  list.addEventListener('touchmove', e => { if(pdfDrag && pdfDrag.active && e.cancelable) e.preventDefault(); }, { passive: false });
+}
+// Reordering: drag a thumbnail (mouse: just drag; touch: press and hold ~0.35 s, then drag). A dragged page that
+// is part of the selection moves the whole selection. "Move earlier / later" in the page menu does the same
+// without dragging.
+function pdfThumbDown(e){
+  const t = e.target.closest('.pthumb');
+  if(!t || pdfBusy || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  pdfDrag = { p: Number(t.dataset.p), x: e.clientX, y: e.clientY, id: e.pointerId, touch: e.pointerType !== 'mouse', active: false, timer: null, over: 0, after: false };
+  if(pdfDrag.touch) pdfDrag.timer = setTimeout(pdfDragBegin, 350);
+}
+function pdfDragBegin(){
+  const d = pdfDrag, list = document.getElementById('pdfThumbList'); if(!d || d.active || !list) return;
+  d.active = true;
+  try{ list.setPointerCapture(d.id); }catch(_){}
+  if(!pdfSel.has(d.p)){ pdfSel = new Set([d.p]); pdfSelAnchor = d.p; pdfUpdateSelUI(); }
+  list.classList.add('dragging');
+  const ind = document.createElement('div'); ind.className = 'pdrop'; ind.style.display = 'none'; list.appendChild(ind); d.ind = ind;
+}
+function pdfThumbMove(e){
+  const d = pdfDrag; if(!d || e.pointerId !== d.id) return;
+  const dist = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+  if(!d.active){
+    if(d.touch){ if(dist > 10){ clearTimeout(d.timer); pdfDrag = null; } }
+    else if(dist > 6) pdfDragBegin();
+    if(!d.active) return;
+  }
+  e.preventDefault();
+  const list = document.getElementById('pdfThumbList'), lr = list.getBoundingClientRect();
+  if(e.clientY < lr.top + 36) list.scrollTop -= 14; else if(e.clientY > lr.bottom - 36) list.scrollTop += 14;
+  const t = document.elementFromPoint(e.clientX, e.clientY), th = t && t.closest && t.closest('.pthumb');
+  if(!th) return;
+  const r = th.getBoundingClientRect(), thumbs = list.querySelectorAll('.pthumb');
+  const grid = thumbs.length > 1 && thumbs[0].offsetTop === thumbs[1].offsetTop;
+  d.over = Number(th.dataset.p); d.after = grid ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2;
+  const s = d.ind.style; s.display = 'block';
+  if(grid){ s.left = (th.offsetLeft + (d.after ? th.offsetWidth : 0) - 2) + 'px'; s.top = th.offsetTop + 'px'; s.width = '4px'; s.height = th.offsetHeight + 'px'; }
+  else { s.left = th.offsetLeft + 'px'; s.top = (th.offsetTop + (d.after ? th.offsetHeight : 0) - 2) + 'px'; s.width = th.offsetWidth + 'px'; s.height = '4px'; }
+}
+function pdfThumbCancel(){
+  const d = pdfDrag; if(!d) return;
+  clearTimeout(d.timer);
+  const list = document.getElementById('pdfThumbList'); if(list){ list.classList.remove('dragging'); }
+  if(d.ind) d.ind.remove();
+  pdfDrag = null;
+}
+function pdfThumbUp(e){
+  const d = pdfDrag; if(!d || e.pointerId !== d.id) return;
+  clearTimeout(d.timer);
+  if(!d.active){ pdfDrag = null; return; }
+  pdfDragEndedAt = Date.now();
+  const over = d.over, after = d.after, grabbed = d.p;
+  pdfThumbCancel();
+  if(!over) return;
+  const N = curPdfNumPages, moved = pdfSel.has(grabbed) ? [...pdfSel].sort((a, b) => a - b) : [grabbed], set = new Set(moved);
+  const rest = []; for(let n = 1; n <= N; n++) if(!set.has(n)) rest.push(n);
+  const idx = set.has(over) ? rest.filter(n => n < over).length : rest.indexOf(over) + (after ? 1 : 0);
+  const order = [...rest.slice(0, idx), ...moved, ...rest.slice(idx)];
+  if(order.every((n, i) => n === i + 1)) return;
+  const newSel = new Set(); order.forEach((n, k) => { if(set.has(n)) newSel.add(k + 1); });
+  pdfRunOp((PL, base) => pdfBuildFromPlan(PL, base, order.map(n => ({ d: 'cur', i: n - 1, r: 0 })))).then(ok => {
+    if(ok){ pdfSel = newSel; pdfUpdateSelUI(); renderPdfPage(Math.min(...newSel)); }
+  });
+}
+
+// ---- right-click / "more" menu for pages ----
+function openPdfCtx(x, y){
+  closePdfCtx();
+  const n = pdfSelPages().length, one = n === 1, b = (label, act) => `<button type="button" data-on-click="pdfPageAction" data-arg-click="${act}">${label}</button>`;
+  const el = document.createElement('div'); el.className = 'pdfctx';
+  el.innerHTML = b('Insert pages\u2026', 'insert') + b('Insert blank page', 'blank') + b(one ? 'Extract page\u2026' : 'Extract pages\u2026', 'extract')
+    + b(one ? 'Replace page\u2026' : 'Replace pages\u2026', 'replace') + b(one ? 'Delete page' : 'Delete pages', 'delete') + '<hr>'
+    + b('Rotate left', 'rotL') + b('Rotate right', 'rotR') + '<hr>' + b('Move earlier', 'earlier') + b('Move later', 'later') + '<hr>' + b('Select all pages', 'selectAll');
+  document.body.appendChild(el);
+  el.style.left = Math.max(6, Math.min(x, window.innerWidth - el.offsetWidth - 6)) + 'px';
+  el.style.top = Math.max(6, Math.min(y, window.innerHeight - el.offsetHeight - 6)) + 'px';
+  pdfCtxEl = el;
+  setTimeout(() => document.addEventListener('pointerdown', pdfCtxOutside, true), 0);
+}
+function pdfCtxOutside(e){ if(pdfCtxEl && !pdfCtxEl.contains(e.target)) closePdfCtx(); }
+function closePdfCtx(){
+  if(pdfCtxEl){ pdfCtxEl.remove(); pdfCtxEl = null; }
+  document.removeEventListener('pointerdown', pdfCtxOutside, true);
+}
+function openPdfMenu(btn){ const r = btn.getBoundingClientRect(); openPdfCtx(r.left, r.bottom + 4); }
+
+// ---- keyboard + selection plumbing ----
+document.addEventListener('keydown', e => {
+  const rd = document.getElementById('reader');
+  if(!pdfPdfActive() || !rd || !rd.classList.contains('open')) return;
+  const tag = e.target && e.target.tagName, inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable);
+  const mod = e.ctrlKey || e.metaKey, k = (e.key || '').toLowerCase();
+  if(mod && k === 'f'){ e.preventDefault(); togglePdfFind(true); return; }
+  if(inField) return;
+  if(mod && k === 'z'){ e.preventDefault(); if(e.shiftKey) pdfEditRedo(); else pdfEditUndo(); return; }
+  if(mod && k === 'y'){ e.preventDefault(); pdfEditRedo(); return; }
+  if(mod && k === 's'){ e.preventDefault(); pdfEditSave(); return; }
+  if((e.key === 'Delete' || e.key === 'Backspace') && pdfThumbsOpen && pdfSel.size && e.target.closest && e.target.closest('#pdfThumbs')){ e.preventDefault(); pdfPageAction('delete'); return; }
+  if(mod || e.altKey) return;
+  if(e.key === 'PageDown'){ e.preventDefault(); pdfNextPage(); }
+  else if(e.key === 'PageUp'){ e.preventDefault(); pdfPrevPage(); }
+  else if((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && (pdfZoomMode === 'width' || pdfZoomMode === 'page') && !pdfSearch.open){ e.preventDefault(); if(e.key === 'ArrowRight') pdfNextPage(); else pdfPrevPage(); }
+});
+document.addEventListener('pointerup', e => {
+  if(pdfTool !== 'highlight' || !pdfPdfActive() || e.pointerType !== 'mouse') return;
+  setTimeout(pdfApplySelectionHighlight, 0);
+});
+document.addEventListener('selectionchange', () => {
+  if(pdfTool !== 'highlight' || !pdfPdfActive()) return;
+  clearTimeout(pdfSelTimer);
+  pdfSelTimer = setTimeout(() => { const b = document.getElementById('pdfHlApply'); if(b) b.style.display = pdfSelectionInText() ? '' : 'none'; }, 120);
+});
 
 async function saveProgress(p){
   if(!curId) return;
@@ -5780,6 +6805,8 @@ function wireHeadingFold(container){
 
 
 function closeReader(){
+  if(!pdfConfirmLeave()) return;   // unsaved PDF edits: stay open if the user says no
+  pdfResetSession();
   dropTableUndo();
   flushDraftNow(); // leaving mid-edit keeps the draft (offered back next time this note is opened)
   stopDraftTimer();
@@ -8953,6 +9980,7 @@ const UI_ACTIONS = Object.freeze({
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
+  togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,
@@ -9056,6 +10084,7 @@ const NAV_OVERLAYS = [ // DOM order = stacking order (a later one sits on top of
   ['audioLinkOverlay', closeAudioLinkPicker],
   ['mdHelpOverlay', closeMarkdownHelp],
   ['moveCatOverlay', closeMoveCategory],
+  ['pdfSrcOverlay', closePdfSrc],
   ['startPageOverlay', closeStartPage]
 ];
 const NAV = { depth: 0, silent: 0, timer: null, silentTimer: null };
@@ -9071,6 +10100,8 @@ function navLayers(){
   }
   if(anyTopBarPanelOpen()) out.push(closeTopBarPanels);
   if(findOpen) out.push(closeFindBar);
+  if(pdfCtxEl) out.push(closePdfCtx);
+  if(pdfSearch.open && pdfPdfActive()) out.push(closePdfFind);
   const rd = document.getElementById('reader'), tg = document.getElementById('tagsPage');
   if(tg && tg.classList.contains('open')) out.push(closeTagsPage);
   if(rd && rd.classList.contains('open')){

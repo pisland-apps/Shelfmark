@@ -888,6 +888,82 @@
   }
   .pdfnav button:disabled{opacity:0.35;}
   .pdfnav .pnum{font-size:13px;color:var(--ink-soft);min-width:64px;text-align:center;}
+
+  /* ===== v1.73.0: PDF reader toolbar, page panel, highlight / draw, find ===== */
+  .pdfwrap{position:relative;}
+  .pdftb{display:flex;align-items:center;gap:4px;padding:6px 8px;border-bottom:1px solid var(--line);background:var(--paper);overflow-x:auto;white-space:nowrap;flex:0 0 auto;-webkit-overflow-scrolling:touch;}
+  .pdftb button{flex:0 0 auto;min-width:34px;height:34px;padding:0 8px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--ink);font-size:16px;display:inline-flex;align-items:center;justify-content:center;gap:4px;font-family:inherit;}
+  .pdftb button small{font-size:11px;font-weight:600;}
+  .pdftb button.on{background:var(--ink);color:var(--paper);}
+  .pdftb button:disabled{opacity:.35;}
+  .pdftb .tbsep{flex:0 0 1px;align-self:stretch;margin:4px 4px;background:var(--line);}
+  .pdftb .pgin{width:46px;height:32px;text-align:center;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-size:14px;font-family:inherit;}
+  .pdftb .ofn{font-size:13px;color:var(--ink-soft);margin:0 4px 0 2px;}
+  .pdftb select{height:34px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-size:13px;padding:0 6px;font-family:inherit;}
+  .pdftb .pdfsave{margin-left:auto;background:var(--card);border-color:var(--line);font-size:13px;font-weight:600;}
+  .pdftb .pdfsave.dirty{background:var(--ink);color:var(--paper);}
+  .pdfbusy{font-size:12px;color:var(--ink-soft);margin-left:6px;}
+  .pdfopts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--card);font-size:12.5px;color:var(--ink-soft);}
+  .pdfopts .pdfopt-l{font-weight:600;color:var(--ink);margin-right:2px;}
+  .pdfopts .pdfsw{width:26px;height:26px;border-radius:50%;border:2px solid transparent;box-shadow:0 0 0 1px var(--line);}
+  .pdfopts .pdfsw.on{border-color:var(--ink);}
+  .pdfopts .pdfwd{width:34px;height:26px;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:inline-flex;align-items:center;justify-content:center;}
+  .pdfopts .pdfwd i{display:block;width:20px;background:var(--ink);border-radius:4px;}
+  .pdfopts .pdfwd.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink);}
+  .pdfopts .pdfopt-btn{margin-left:auto;padding:6px 12px;border-radius:8px;border:none;background:var(--ink);color:var(--paper);font-size:13px;font-weight:600;}
+  .pdfopts .pdfopt-hint{margin-left:6px;}
+  .pdffind{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--card);}
+  .pdffind input{flex:1;min-width:0;height:32px;border:1px solid var(--line);border-radius:8px;padding:0 10px;background:var(--paper);color:var(--ink);font-size:14px;font-family:inherit;}
+  .pdffind button{min-width:32px;height:32px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);font-size:15px;}
+  .pdffind button.on{background:var(--ink);color:var(--paper);}
+  .pdffind .fcount{font-size:12.5px;color:var(--ink-soft);min-width:70px;}
+  .pdfbody{flex:1;min-height:0;display:flex;position:relative;}
+  .pdfwrap .pdfpage{position:relative;flex:1;min-width:0;}
+  .pdfwrap .pdfpage canvas{margin:0;max-width:none;height:auto;}
+  .pdfmsg{font-size:.85rem;color:var(--ink-soft);padding:12px;}
+  .pdfspread{display:flex;gap:12px;justify-content:center;align-items:flex-start;padding:12px;width:max-content;min-width:100%;box-sizing:border-box;}
+  .pgbox{position:relative;flex:0 0 auto;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.28);}
+  .pgbox canvas{display:block;}
+  .pgbox .pdfov{position:absolute;left:0;top:0;pointer-events:none;z-index:3;}
+  .tool-draw .pgbox .pdfov,.tool-erase .pgbox .pdfov,.tool-highlight .pgbox.notext .pdfov{pointer-events:auto;touch-action:none;cursor:crosshair;}
+  .tool-erase .pgbox .pdfov{cursor:pointer;}
+  .tool-highlight .pgbox:not(.notext) .textLayer{cursor:text;}
+  .textLayer{position:absolute;inset:0;overflow:clip;line-height:1;text-align:initial;transform-origin:0 0;z-index:2;-webkit-text-size-adjust:none;text-size-adjust:none;forced-color-adjust:none;}
+  .textLayer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0;}
+  .textLayer > :not(.markedContent),.textLayer .markedContent span:not(.markedContent){z-index:1;--font-height:0;font-size:calc(var(--total-scale-factor) * var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x));}
+  .textLayer ::selection{background:rgba(40,110,255,.3);}
+  .textLayer .markedContent{display:contents;}
+  .pdfthumbs{flex:0 0 164px;display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--paper);min-height:0;}
+  .pdfthumbs .pthead{padding:6px;border-bottom:1px solid var(--line);}
+  .pdfthumbs .ptactions{display:flex;flex-wrap:wrap;gap:4px;}
+  .pdfthumbs .ptactions button{flex:1 1 auto;min-width:38px;height:30px;padding:0 6px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);font-size:12px;font-family:inherit;}
+  .pdfthumbs .ptactions button.on{background:var(--ink);color:var(--paper);}
+  .pdfthumbs .selinfo{font-size:11.5px;color:var(--ink-soft);margin-top:6px;}
+  .ptlist{position:relative;flex:1;min-height:0;overflow-y:auto;padding:8px;display:flex;flex-direction:column;align-items:center;gap:10px;touch-action:pan-y;-webkit-user-select:none;user-select:none;}
+  .pthumb{position:relative;flex:0 0 auto;min-width:60px;min-height:80px;border:2px solid transparent;border-radius:6px;padding:3px;background:var(--card);cursor:pointer;display:flex;flex-direction:column;align-items:center;}
+  .pthumb canvas{display:block;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);}
+  .pthumb .pt-n{font-size:11.5px;color:var(--ink-soft);margin-top:3px;}
+  .pthumb .pt-ck{position:absolute;top:5px;right:5px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--paper);font-size:12px;display:none;align-items:center;justify-content:center;}
+  .pthumb.cur{border-color:var(--line);box-shadow:0 0 0 1px var(--ink-soft);}
+  .pthumb.sel{border-color:var(--ink);background:var(--paper2);}
+  .pthumb.sel .pt-ck{display:flex;}
+  .ptlist.dragging{touch-action:none;cursor:grabbing;}
+  .pdrop{position:absolute;background:#2f7bff;border-radius:2px;pointer-events:none;z-index:5;}
+  @media (max-width:699px){
+    .pdfthumbs{position:absolute;inset:0;z-index:6;flex:none;width:auto;border-right:none;}
+    .ptlist{flex-direction:row;flex-wrap:wrap;align-content:flex-start;justify-content:flex-start;gap:10px;}
+    .pdftb button small{display:none;}
+  }
+  .pdfctx{position:fixed;z-index:400;min-width:190px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.3);padding:4px;display:flex;flex-direction:column;}
+  .pdfctx button{text-align:left;border:none;background:none;color:var(--ink);font-size:14px;padding:9px 12px;border-radius:6px;font-family:inherit;}
+  .pdfctx button:hover,.pdfctx button:active{background:var(--paper2);}
+  .pdfctx hr{border:none;border-top:1px solid var(--line);margin:4px 2px;}
+  .pdftoast{position:absolute;left:50%;transform:translateX(-50%);bottom:64px;z-index:20;background:var(--ink);color:var(--paper);border-radius:10px;padding:11px 12px 11px 16px;display:none;align-items:center;gap:14px;font-size:13.5px;box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:calc(100% - 24px);}
+  .pdftoast.show{display:flex;}
+  .pdftoast button{background:none;border:none;color:var(--paper);font-weight:700;font-size:13.5px;padding:4px 8px;text-decoration:underline;}
+  .pdfsrc-row{display:flex;flex-direction:column;gap:4px;margin-top:12px;font-size:13px;color:var(--ink-soft);}
+  .pdfsrc-row input,.pdfsrc-row select{height:38px;border:1px solid var(--line);border-radius:8px;padding:0 10px;background:var(--card);color:var(--ink);font-size:14px;font-family:inherit;}
+  .pdfsrc-info{font-size:13px;color:var(--ink);margin-top:10px;min-height:1.2em;}
   .pdfnav .zoombtn{
     width:auto;height:32px;border-radius:16px;padding:0 14px;
     font-size:13px;font-weight:600;font-family:'Inter',system-ui,sans-serif;
@@ -1372,6 +1448,25 @@ columns: 分类 | 笔记
     <div id="audioLinkList" class="alink-list"></div>
     <div class="row">
       <button class="cancel" data-on-click="closeAudioLinkPicker">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="pdfSrcOverlay" class="overlay" style="display:none;">
+  <div class="sheet">
+    <h2 id="pdfSrcTitle">Insert pages</h2>
+    <p id="pdfSrcHint" class="alink-empty" style="padding-bottom:6px"></p>
+    <div id="pdfSrcList" class="alink-list"></div>
+    <button type="button" class="filebtn" style="margin-top:8px" data-click-target="pdfSrcFile">Choose a PDF from this device&hellip;</button>
+    <input type="file" id="pdfSrcFile" accept="application/pdf,.pdf" style="display:none" data-on-change="onPdfSrcFile" data-args-change='["$ev"]'>
+    <div id="pdfSrcInfo" class="pdfsrc-info"></div>
+    <label class="pdfsrc-row">Pages to use <input id="pdfSrcRange" placeholder="all, or e.g. 1-3, 5" autocomplete="off"></label>
+    <label class="pdfsrc-row" id="pdfSrcPosRow">Put them
+      <select id="pdfSrcPos"><option value="after">after the selected page</option><option value="before">before the selected page</option><option value="start">at the start</option><option value="end">at the end</option></select>
+    </label>
+    <div class="row">
+      <button class="cancel" data-on-click="closePdfSrc">Cancel</button>
+      <button class="save" id="pdfSrcGo" data-on-click="confirmPdfSrc" disabled>Insert</button>
     </div>
   </div>
 </div>

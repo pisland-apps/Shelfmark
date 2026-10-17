@@ -8,7 +8,7 @@
 // the badge (and your GitHub repo) shows a newer number. See APP_VERSION's
 // comment in app.js, and the deploy checklist in README.md.
 // ============================================================================
-const CACHE_VERSION = 'shelfmark-v1.72.0';
+const CACHE_VERSION = 'shelfmark-v1.73.0';
 
 const PRECACHE_URLS = [
   './',
@@ -20,6 +20,7 @@ const PRECACHE_URLS = [
   'icons/icon-maskable-512.png',
   'icons/apple-touch-icon.png',
   'lib/pdf.min.mjs',
+  'lib/pdf-lib.min.js',
   'lib/pdf.worker.min.mjs',
   'lib/wasm/jbig2.wasm',
   'lib/wasm/openjpeg.wasm',
