@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.75.0';
+const APP_VERSION = '1.76.0';
 const APP_VERSION_DATE = '2026-10-17';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2957,6 +2957,7 @@ async function openReader(id){
         <span class="tbsep"></span>
         <button id="pdfUndoBtn" data-on-click="pdfEditUndo" title="Undo (Ctrl+Z)" aria-label="Undo">&#8630;</button>
         <button id="pdfRedoBtn" data-on-click="pdfEditRedo" title="Redo (Ctrl+Y)" aria-label="Redo">&#8631;</button>
+        <button id="pdfProtBtn" data-on-click="pdfOpenProt" title="Make a password-protected copy (open password, no editing, no copying)" aria-label="Protected copy">&#128274;&#xFE0E;</button>
         <button id="pdfSaveBtn" class="pdfsave" data-on-click="pdfEditSave" title="Save changes into this PDF (Ctrl+S)">Saved</button>
         <span id="pdfBusyNote" class="pdfbusy" style="display:none">Working&hellip;</span>
         <input type="file" id="pdfImgPick" accept="image/*" hidden data-on-change="onPdfImgFile" data-args-change='["$el"]'>
@@ -3484,6 +3485,7 @@ async function renderPdfPage(pageNum, keepScroll){
     });
     await Promise.all(jobs);
     if(myToken !== curPdfRenderToken) return;
+    pdfTxtFlush();                                     // a text box opened while this page was still drawing is kept, not thrown away with the old page
     pageEl.replaceChildren(spread);
     if(prevScroll){ pageEl.scrollLeft = prevScroll.x * pageEl.scrollWidth; pageEl.scrollTop = prevScroll.y * pageEl.scrollHeight; }
     else { pageEl.scrollTop = 0; pageEl.scrollLeft = 0; }
@@ -3823,7 +3825,9 @@ function pdfTxtOpen(box, item, vx, vy){
   });
   el.addEventListener('blur', () => { if(pdfTxtEd && pdfTxtEd.el === el) pdfTxtCommit(false); });
   box.appendChild(el); pdfTxtEd = { box, el, item, vx, vy, size, color };
-  pdfDrawOverlay(box); fit(); setTimeout(() => { try{ el.focus(); }catch(_){} }, 0);
+  pdfDrawOverlay(box); fit();
+  try{ el.focus({ preventScroll: true }); }catch(_){}        // inside the tap itself, so a phone raises its keyboard; the timer below only repairs a stolen focus
+  setTimeout(() => { if(pdfTxtEd && pdfTxtEd.el === el && document.activeElement !== el){ try{ el.focus({ preventScroll: true }); }catch(_){} } }, 0);
 }
 function pdfTxtCommit(cancel){
   const ed = pdfTxtEd; if(!ed) return; pdfTxtEd = null;
@@ -4044,6 +4048,114 @@ async function pdfItemAnnot(PL, doc, a, st){
   const annot = await stamp(new Uint8Array(await blob.arrayBuffer()), false, a.text);
   return annot;
 }
+
+// ---- v1.76.0: password-protected copy ----
+// "Protected copy" makes a SEPARATE file (the PDF on the shelf is never changed, so it stays editable here) with the
+// standard PDF 2.0 security handler: AES-256 (V5 / R6), an optional open password, an owner password and permission
+// flags (print / edit / copy / comments). Written in plain JavaScript with WebCrypto, so the strict CSP (no WebAssembly)
+// is untouched. Honest limits: the open password really encrypts the content; the permission flags are only honoured by
+// well-behaved readers (Acrobat, Preview, browsers) and can be removed by tools that ignore them.
+const PDF_PERM_BASE = 0xFFFFF0C0;                          // every permission off (bits 7-8 and 13-32 are reserved ones)
+const PDF_PERM_BITS = { print: 0x4 | 0x800, edit: 0x8 | 0x400, copy: 0x10, notes: 0x20 | 0x100 };
+const PDF_PERM_ALWAYS = 0x200;                              // text extraction for screen readers stays allowed
+let pdfProt = null;                                         // { blob, name } of the copy that is ready to save
+function pdfCat(...a){ const o = new Uint8Array(a.reduce((n, x) => n + x.length, 0)); let p = 0; for(const x of a){ o.set(x, p); p += x.length; } return o; }
+async function pdfSha(bits, u8){ return new Uint8Array(await crypto.subtle.digest('SHA-' + bits, u8)); }
+async function pdfAesCbcRaw(key, iv, data){                 // AES-CBC without padding (data is a multiple of 16 bytes)
+  const k = await crypto.subtle.importKey('raw', key, 'AES-CBC', false, ['encrypt']);
+  return new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, k, data)).subarray(0, data.length);
+}
+async function pdfHashR6(pw, salt, udata){                  // ISO 32000-2, algorithm 2.B
+  let K = await pdfSha(256, pdfCat(pw, salt, udata)), E = new Uint8Array(1), i = 0;
+  while(i < 64 || E[E.length - 1] > i - 32){
+    const one = pdfCat(pw, K, udata), K1 = new Uint8Array(one.length * 64);
+    for(let j = 0; j < 64; j++) K1.set(one, j * one.length);
+    E = await pdfAesCbcRaw(K.subarray(0, 16), K.subarray(16, 32), K1);
+    let m = 0; for(let j = 0; j < 16; j++) m += E[j];
+    K = await pdfSha([256, 384, 512][m % 3], E); i++;
+  }
+  return K.subarray(0, 32);
+}
+function pdfPermFlags(allow){                                // allow = {print, edit, copy, notes}; returns the signed 32-bit /P value
+  let f = PDF_PERM_BASE | PDF_PERM_ALWAYS;
+  for(const k of Object.keys(PDF_PERM_BITS)) if(allow[k]) f |= PDF_PERM_BITS[k];
+  return f | 0;
+}
+async function pdfEncryptBytes(PL, bytes, o){               // o = { user, owner, allow }
+  const { PDFDocument, PDFName, PDFHexString, PDFString, PDFDict, PDFArray, PDFRawStream } = PL;
+  let doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  doc = await PDFDocument.load(await doc.save({ useObjectStreams: false }), { updateMetadata: false });   // every object plain: no object / xref streams
+  const ctx = doc.context, rnd = n => crypto.getRandomValues(new Uint8Array(n)), none = new Uint8Array(0), zero = new Uint8Array(16);
+  const fileKey = rnd(32), aesKey = await crypto.subtle.importKey('raw', fileKey, 'AES-CBC', false, ['encrypt']);
+  const enc = async u8 => { const iv = rnd(16); return pdfCat(iv, new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, aesKey, u8))); };
+  const hex = u8 => PDFHexString.of(Array.from(u8, b => b.toString(16).padStart(2, '0')).join(''));
+  const isStr = v => v instanceof PDFString || v instanceof PDFHexString;
+  const walk = async node => {
+    if(node instanceof PDFDict){ for(const [k, v] of node.entries()){ if(isStr(v)) node.set(k, hex(await enc(v.asBytes()))); else await walk(v); } }
+    else if(node instanceof PDFArray){ for(let i = 0; i < node.size(); i++){ const v = node.get(i); if(isStr(v)) node.set(i, hex(await enc(v.asBytes()))); else await walk(v); } }
+  };
+  for(const [ref, obj] of ctx.enumerateIndirectObjects()){
+    if(obj instanceof PDFRawStream){
+      await walk(obj.dict); ctx.assign(ref, PDFRawStream.of(obj.dict, await enc(obj.contents)));
+    } else if(isStr(obj)) ctx.assign(ref, hex(await enc(obj.asBytes())));
+    else await walk(obj);
+  }
+  const pw = s => new TextEncoder().encode(String(s || '').normalize('NFKC')).subarray(0, 127);
+  const uPw = pw(o.user), oPw = pw(o.owner), P = pdfPermFlags(o.allow);
+  const vs = rnd(8), ks = rnd(8), U = pdfCat(await pdfHashR6(uPw, vs, none), vs, ks);
+  const UE = await pdfAesCbcRaw(await pdfHashR6(uPw, ks, none), zero, fileKey);
+  const vs2 = rnd(8), ks2 = rnd(8), O = pdfCat(await pdfHashR6(oPw, vs2, U), vs2, ks2);
+  const OE = await pdfAesCbcRaw(await pdfHashR6(oPw, ks2, U), zero, fileKey);
+  const perms = new Uint8Array(16); new DataView(perms.buffer).setUint32(0, P >>> 0, true);
+  perms.set([255, 255, 255, 255], 4); perms[8] = 0x54; perms.set([0x61, 0x64, 0x62], 9); perms.set(rnd(4), 12);
+  const Perms = await pdfAesCbcRaw(fileKey, zero, perms);    // one block: CBC with a zero IV is the same as ECB
+  const encRef = ctx.register(ctx.obj({
+    Filter: 'Standard', V: 5, R: 6, Length: 256, P, O: hex(O), U: hex(U), OE: hex(OE), UE: hex(UE), Perms: hex(Perms),
+    CF: { StdCF: { AuthEvent: 'DocOpen', CFM: 'AESV3', Length: 32 } }, StmF: 'StdCF', StrF: 'StdCF'
+  }));
+  const id = hex(rnd(16)); ctx.trailerInfo.Encrypt = encRef; ctx.trailerInfo.ID = ctx.obj([id, id]);
+  return doc.save({ useObjectStreams: false });
+}
+function pdfProtField(id){ return document.getElementById(id); }
+function pdfProtMsg(t){ const m = pdfProtField('pdfProtMsg'); if(m) m.textContent = t || ''; }
+function pdfOpenProt(){
+  if(!pdfEd || pdfBusy) return; pdfTxtFlush();
+  for(const id of ['pdfProtUser', 'pdfProtUser2', 'pdfProtOwner']) pdfProtField(id).value = '';
+  for(const id of ['pdfProtPrint', 'pdfProtEdit', 'pdfProtCopy', 'pdfProtNotes']) pdfProtField(id).checked = true;
+  pdfProt = null; pdfProtMsg(''); pdfProtField('pdfProtGo').style.display = ''; pdfProtField('pdfProtSave').style.display = 'none';
+  pdfProtField('pdfProtOverlay').style.display = 'flex';
+}
+function closePdfProt(){
+  const o = pdfProtField('pdfProtOverlay'); if(o) o.style.display = 'none';
+  for(const id of ['pdfProtUser', 'pdfProtUser2', 'pdfProtOwner']){ const f = pdfProtField(id); if(f) f.value = ''; }
+  pdfProt = null;
+}
+function pdfRandomPassword(){
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789', r = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(r, b => abc[b % abc.length]).join('');
+}
+async function pdfProtGo(){
+  if(pdfBusy || !pdfEd) return;
+  const user = pdfProtField('pdfProtUser').value, user2 = pdfProtField('pdfProtUser2').value; let owner = pdfProtField('pdfProtOwner').value;
+  const allow = { print: pdfProtField('pdfProtPrint').checked, edit: pdfProtField('pdfProtEdit').checked, copy: pdfProtField('pdfProtCopy').checked, notes: pdfProtField('pdfProtNotes').checked };
+  const limited = !(allow.print && allow.edit && allow.copy && allow.notes);
+  if(user !== user2){ pdfProtMsg('The two open passwords are not the same.'); return; }
+  if(!user && !limited){ pdfProtMsg('Nothing to protect yet: type an open password, or untick something that others may do.'); return; }
+  if(owner && owner === user && limited){ pdfProtMsg('The owner password must be different from the open password, or the limits would not apply.'); return; }
+  if(!owner) owner = pdfRandomPassword();                    // not shown: it is only needed to lift the limits later
+  pdfProtMsg('Working\u2026'); pdfSetBusy(true);
+  try{
+    const PL = await loadPdfLib(), base = await pdfFlatBytes(PL);
+    const bytes = await pdfEncryptBytes(PL, base, { user, owner, allow });
+    const meta = await getMeta(curId), title = ((meta && meta.title) || 'PDF').replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'PDF';
+    pdfProt = { blob: new Blob([bytes], { type: 'application/pdf' }), name: title + ' (protected).pdf' };
+    pdfProtMsg('Ready (' + (bytes.length / 1048576).toFixed(1) + ' MB). ' + (user ? 'It asks for the open password. ' : 'It opens without a password. ')
+      + (limited ? 'Readers that follow the rules will block the things you unticked. ' : '') + 'The PDF on your shelf is unchanged.');
+    pdfProtField('pdfProtGo').style.display = 'none'; pdfProtField('pdfProtSave').style.display = '';
+  }catch(err){ console.error('[pdf protect]', err); pdfProtMsg("Couldn't make the copy: " + pdfErrText(err)); }
+  finally{ pdfSetBusy(false); }
+}
+function pdfProtSave(){ if(pdfProt) downloadBlob(pdfProt.blob, pdfProt.name); }   // its own tap, so the share sheet / download is allowed
 
 // ---- writing highlights / drawings into the file (real PDF annotations, with appearance streams) ----
 async function pdfWriteAnnots(PL, doc, pend){
@@ -10447,7 +10559,7 @@ const UI_ACTIONS = Object.freeze({
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
-  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
+  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,
@@ -10554,6 +10666,7 @@ const NAV_OVERLAYS = [ // DOM order = stacking order (a later one sits on top of
   ['pdfSrcOverlay', closePdfSrc],
   ['pdfSaveAsOverlay', closePdfSaveAs],
   ['pdfSigOverlay', closePdfSig],
+  ['pdfProtOverlay', closePdfProt],
   ['startPageOverlay', closeStartPage]
 ];
 const NAV = { depth: 0, silent: 0, timer: null, silentTimer: null };

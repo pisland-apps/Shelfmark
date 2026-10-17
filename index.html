@@ -936,6 +936,7 @@
   .pdfopts .pdfwd{font-size:12px;color:var(--ink);}
   .pdfsigcv{display:block;width:100%;height:auto;margin:8px 0;background:#fff;border:1px solid var(--line);border-radius:8px;touch-action:none;cursor:crosshair;}
   #pdfSigOpts{display:flex;gap:8px;margin-bottom:6px;}
+  .pdfprot-chk{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:14px;}
   .textLayer{position:absolute;inset:0;overflow:clip;line-height:1;text-align:initial;transform-origin:0 0;z-index:2;-webkit-text-size-adjust:none;text-size-adjust:none;forced-color-adjust:none;}
   .textLayer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0;}
   .textLayer > :not(.markedContent),.textLayer .markedContent span:not(.markedContent){z-index:1;--font-height:0;font-size:calc(var(--total-scale-factor) * var(--font-height));--scale-x:1;--rotate:0deg;transform:rotate(var(--rotate)) scaleX(var(--scale-x));}
@@ -1483,6 +1484,27 @@ columns: 分类 | 笔记
       <button class="cancel" id="pdfSigLastBtn" data-on-click="pdfSigLastUse" style="display:none">Use the last one</button>
       <button class="cancel" data-on-click="pdfSigClear">Clear</button>
       <button class="cancel" data-on-click="closePdfSig">Cancel</button>
+    </div>
+  </div>
+</div>
+<div id="pdfProtOverlay" class="overlay" style="display:none;">
+  <div class="sheet">
+    <h2>Protected copy</h2>
+    <p class="alink-empty" style="padding-bottom:4px">Makes a separate file (AES-256). The PDF on your shelf is not changed, so you can keep editing it here. Everything below is optional.</p>
+    <label class="pdfsrc-row">Open password <input id="pdfProtUser" type="password" autocomplete="new-password" spellcheck="false" placeholder="needed to open the file"></label>
+    <label class="pdfsrc-row">Repeat it <input id="pdfProtUser2" type="password" autocomplete="new-password" spellcheck="false"></label>
+    <p class="pdfsrc-info" style="margin-top:8px">Other people may:</p>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtPrint" checked> Print</label>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtEdit" checked> Edit pages and content</label>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtCopy" checked> Copy text and images</label>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtNotes" checked> Add comments and fill forms</label>
+    <label class="pdfsrc-row">Owner password <input id="pdfProtOwner" type="password" autocomplete="new-password" spellcheck="false" placeholder="only to lift the limits later in Acrobat"></label>
+    <p class="pdfsrc-info" style="margin-top:6px">Limits (print / edit / copy) are only obeyed by readers that follow the rules; only the open password truly locks the content. Keep the passwords: they cannot be recovered.</p>
+    <p class="pdfsrc-info" id="pdfProtMsg" style="font-weight:600"></p>
+    <div class="row" style="flex-direction:column">
+      <button class="save" id="pdfProtGo" data-on-click="pdfProtGo">Create protected copy</button>
+      <button class="save" id="pdfProtSave" data-on-click="pdfProtSave" style="display:none">Save / share the copy&hellip;</button>
+      <button class="cancel" data-on-click="closePdfProt">Close</button>
     </div>
   </div>
 </div>
