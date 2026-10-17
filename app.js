@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.76.2';
+const APP_VERSION = '1.76.3';
 const APP_VERSION_DATE = '2026-10-17';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -4118,12 +4118,41 @@ async function pdfEncryptBytes(PL, bytes, o){               // o = { user, owner
   const id = hex(rnd(16)); ctx.trailerInfo.Encrypt = encRef; ctx.trailerInfo.ID = ctx.obj([id, id]);
   return doc.save({ useObjectStreams: false });
 }
+// Flatten: every page becomes one sharp picture (about 250 dpi, JPEG 92%), so a signature or stamp can no longer be selected,
+// lifted or moved as a separate object. The text is no longer selectable either, and the file gets bigger.
+async function pdfFlattenBytes(PL, bytes, onPage){
+  const src = await pdfOpenDocBytes(bytes);
+  try{
+    const out = await PL.PDFDocument.create();
+    try{
+      const t = (await src.getMetadata()).info || {};
+      if(t.Title) out.setTitle(String(t.Title)); if(t.Author) out.setAuthor(String(t.Author));
+    }catch(_){}
+    out.setProducer('Shelfmark'); out.setCreator('Shelfmark');
+    const DPI = 250, MAX_PX = 24e6;
+    for(let n = 1; n <= src.numPages; n++){
+      if(onPage) onPage(n, src.numPages);
+      const page = await src.getPage(n), v1 = page.getViewport({ scale: 1 });
+      let sc = DPI / 72; if(v1.width * v1.height * sc * sc > MAX_PX) sc = Math.sqrt(MAX_PX / (v1.width * v1.height));
+      const vp = page.getViewport({ scale: sc }), cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(vp.width)); cv.height = Math.max(1, Math.round(vp.height));
+      const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+      await page.render({ canvasContext: cx, viewport: vp }).promise;
+      const blob = await new Promise((res, rej) => cv.toBlob(b => b ? res(b) : rej(new Error('Could not make the page picture')), 'image/jpeg', 0.92));
+      const img = await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
+      cv.width = cv.height = 0; page.cleanup();
+      const pg = out.addPage([v1.width, v1.height]); pg.drawImage(img, { x: 0, y: 0, width: v1.width, height: v1.height });
+    }
+    return await out.save({ useObjectStreams: false });
+  } finally { try{ await src.destroy(); }catch(_){} }
+}
 function pdfProtField(id){ return document.getElementById(id); }
 function pdfProtMsg(t){ const m = pdfProtField('pdfProtMsg'); if(m) m.textContent = t || ''; }
 function pdfOpenProt(){
   if(!pdfEd || pdfBusy) return; pdfTxtFlush();
   for(const id of ['pdfProtUser', 'pdfProtUser2', 'pdfProtOwner']) pdfProtField(id).value = '';
   for(const id of ['pdfProtPrint', 'pdfProtEdit', 'pdfProtCopy', 'pdfProtNotes']) pdfProtField(id).checked = true;
+  pdfProtField('pdfProtFlat').checked = false;
   pdfProt = null; pdfProtMsg(''); pdfProtField('pdfProtGo').style.display = ''; pdfProtField('pdfProtSave').style.display = 'none';
   pdfProtField('pdfProtOverlay').style.display = 'flex';
 }
@@ -4141,18 +4170,20 @@ async function pdfProtGo(){
   const user = pdfProtField('pdfProtUser').value, user2 = pdfProtField('pdfProtUser2').value; let owner = pdfProtField('pdfProtOwner').value;
   const allow = { print: pdfProtField('pdfProtPrint').checked, edit: pdfProtField('pdfProtEdit').checked, copy: pdfProtField('pdfProtCopy').checked, notes: pdfProtField('pdfProtNotes').checked };
   const limited = !(allow.print && allow.edit && allow.copy && allow.notes);
+  const flat = pdfProtField('pdfProtFlat').checked;
   if(user !== user2){ pdfProtMsg('The two open passwords are not the same.'); return; }
-  if(!user && !limited){ pdfProtMsg('Nothing to protect yet: type an open password, or untick something that others may do.'); return; }
+  if(!user && !limited && !flat){ pdfProtMsg('Nothing to protect yet: type an open password, untick something that others may do, or tick "Flatten pages".'); return; }
   if(owner && owner === user && limited){ pdfProtMsg('The owner password must be different from the open password, or the limits would not apply.'); return; }
   if(!owner) owner = pdfRandomPassword();                    // not shown: it is only needed to lift the limits later
   pdfProtMsg('Working\u2026'); pdfSetBusy(true);
   try{
-    const PL = await loadPdfLib(), base = await pdfFlatBytes(PL);
-    const bytes = await pdfEncryptBytes(PL, base, { user, owner, allow });
+    const PL = await loadPdfLib(); let base = await pdfFlatBytes(PL);
+    if(flat) base = await pdfFlattenBytes(PL, base, (n, t) => pdfProtMsg('Flattening page ' + n + ' of ' + t + '\u2026'));
+    const bytes = (user || limited) ? await pdfEncryptBytes(PL, base, { user, owner, allow }) : base;   // flatten only: nothing to encrypt
     const meta = await getMeta(curId), title = ((meta && meta.title) || 'PDF').replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'PDF';
     pdfProt = { blob: new Blob([bytes], { type: 'application/pdf' }), name: title + ' (protected).pdf' };
     pdfProtMsg('Ready (' + (bytes.length / 1048576).toFixed(1) + ' MB). ' + (user ? 'It asks for the open password. ' : 'It opens without a password. ')
-      + (limited ? 'Readers that follow the rules will block the things you unticked. ' : '') + 'The PDF on your shelf is unchanged.');
+      + (limited ? 'Readers that follow the rules will block the things you unticked. ' : '') + (flat ? 'Pages are flattened: the signature is part of the page picture. ' : '') + 'The PDF on your shelf is unchanged.');
     pdfProtField('pdfProtGo').style.display = 'none'; pdfProtField('pdfProtSave').style.display = '';
   }catch(err){ console.error('[pdf protect]', err); pdfProtMsg("Couldn't make the copy: " + pdfErrText(err)); }
   finally{ pdfSetBusy(false); }

@@ -1498,6 +1498,7 @@ columns: 分类 | 笔记
     <label class="pdfprot-chk"><input type="checkbox" id="pdfProtEdit" data-on-change="pdfProtDirty" checked> Edit pages and content</label>
     <label class="pdfprot-chk"><input type="checkbox" id="pdfProtCopy" data-on-change="pdfProtDirty" checked> Copy text and images</label>
     <label class="pdfprot-chk"><input type="checkbox" id="pdfProtNotes" data-on-change="pdfProtDirty" checked> Add comments and fill forms</label>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfProtFlat" data-on-change="pdfProtDirty"> Flatten pages (signature becomes part of the page picture; text not selectable; bigger file)</label>
     <label class="pdfsrc-row">Owner password <input id="pdfProtOwner" data-on-input="pdfProtDirty" type="password" autocomplete="new-password" spellcheck="false" placeholder="only to lift the limits later in Acrobat"></label>
     <p class="pdfsrc-info" style="margin-top:6px">Limits (print / edit / copy) are only obeyed by readers that follow the rules; only the open password truly locks the content. Keep the passwords: they cannot be recovered.</p>
     <p class="pdfsrc-info" id="pdfProtMsg" style="font-weight:600"></p>
