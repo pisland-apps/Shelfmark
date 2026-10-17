@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.76.3';
+const APP_VERSION = '1.76.4';
 const APP_VERSION_DATE = '2026-10-17';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -3972,7 +3972,7 @@ function pdfPlaceImage(src, kind){                            // centre of what 
   if(pdfTool !== 'image' && pdfTool !== 'text') pdfEnterTool('image');
   pdfSelItem = { p: box._p, item }; pdfPendAdd(box._p - 1, item);
 }
-// ---- signature pad (kept in memory for this session only; nothing is stored) ----
+// ---- signature pad (kept in memory for this session; stored only if "Remember" is ticked: v1.76.4, in the encrypted prefs, never in backups) ----
 function pdfOpenSig(){
   if(!pdfEd || pdfBusy) return; pdfTxtFlush();
   const o = document.getElementById('pdfSigOverlay'), cv = document.getElementById('pdfSigCanvas'); if(!o || !cv) return;
@@ -3989,7 +3989,10 @@ function pdfOpenSig(){
     cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
   }
   pdfSig.strokes = []; pdfSig.cur = null; pdfSigRedraw();
-  const lb = document.getElementById('pdfSigLastBtn'); if(lb) lb.style.display = pdfSigLast ? '' : 'none';
+  const hasSaved = !!(prefs.savedSig && prefs.savedSig.png), lb = document.getElementById('pdfSigLastBtn'), fb = document.getElementById('pdfSigForgetBtn'), rm = document.getElementById('pdfSigRemember');
+  if(lb){ lb.style.display = (pdfSigLast || hasSaved) ? '' : 'none'; lb.textContent = hasSaved ? 'Use my saved signature' : 'Use the last one'; }
+  if(fb) fb.style.display = hasSaved ? '' : 'none';
+  if(rm) rm.checked = false;
   pdfSigOpts(); o.style.display = 'flex';
 }
 function pdfSigOpts(){
@@ -4017,9 +4020,33 @@ async function pdfSigUse(){
   c.getContext('2d').drawImage(cv, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
   const blob = await new Promise(r => c.toBlob(r, 'image/png')); if(!blob){ pdfToast('Could not make the signature.'); return; }
   const src = { bytes: new Uint8Array(await blob.arrayBuffer()), mime: 'image/png', w: c.width, h: c.height, el: await pdfImgEl(blob) };
-  pdfSigLast = src; closePdfSig(); pdfPlaceImage(src, 'sig');
+  pdfSigLast = src;
+  const rm = document.getElementById('pdfSigRemember');
+  if(rm && rm.checked){                                       // keep it on this device: encrypted with the shelf, left out of backups
+    prefs.savedSig = { png: pdfBytesToB64(src.bytes), w: src.w, h: src.h };
+    try{ await putPrefs(prefs); pdfToast('Signature saved on this device.'); }catch(e){ delete prefs.savedSig; pdfToast('Could not save the signature here.'); }
+  }
+  closePdfSig(); pdfPlaceImage(src, 'sig');
 }
-function pdfSigLastUse(){ if(pdfSigLast){ closePdfSig(); pdfPlaceImage(pdfSigLast, 'sig'); } }
+function pdfBytesToB64(u8){ let s = ''; for(let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s); }
+async function pdfSigLastUse(){
+  if(!pdfSigLast && prefs.savedSig && prefs.savedSig.png){
+    try{
+      const bytes = Uint8Array.from(atob(prefs.savedSig.png), c => c.charCodeAt(0));
+      pdfSigLast = { bytes, mime: 'image/png', w: prefs.savedSig.w, h: prefs.savedSig.h, el: await pdfImgEl(new Blob([bytes], { type: 'image/png' })) };
+    }catch(e){ pdfToast('The saved signature could not be read.'); return; }
+  }
+  if(pdfSigLast){ closePdfSig(); pdfPlaceImage(pdfSigLast, 'sig'); }
+}
+async function pdfSigForget(){
+  if(!(prefs.savedSig && prefs.savedSig.png)) return;
+  if(!confirm('Delete the signature saved on this device?')) return;
+  delete prefs.savedSig; pdfSigLast = null;
+  try{ await putPrefs(prefs); }catch(e){}
+  const lb = document.getElementById('pdfSigLastBtn'), fb = document.getElementById('pdfSigForgetBtn');
+  if(lb) lb.style.display = 'none'; if(fb) fb.style.display = 'none';
+  pdfToast('Saved signature deleted.');
+}
 
 // ---- writing text / pictures into the file ----
 async function pdfItemAnnot(PL, doc, a, st){
@@ -10598,7 +10625,7 @@ const UI_ACTIONS = Object.freeze({
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
-  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
+  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigForget, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,

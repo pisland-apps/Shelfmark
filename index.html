@@ -1476,13 +1476,15 @@ columns: 分类 | 笔记
 <div id="pdfSigOverlay" class="overlay" style="display:none;">
   <div class="sheet">
     <h2>Your signature</h2>
-    <p class="alink-empty" style="padding-bottom:4px">Draw with a finger, pen or mouse. It stays in memory only while the app is open; nothing is stored.</p>
+    <p class="alink-empty" style="padding-bottom:4px">Draw with a finger, pen or mouse. It stays in memory only while the app is open, unless you tick "Remember" below.</p>
     <canvas id="pdfSigCanvas" class="pdfsigcv" width="900" height="330" aria-label="Signature pad"></canvas>
     <div id="pdfSigOpts"></div>
+    <label class="pdfprot-chk"><input type="checkbox" id="pdfSigRemember"> Remember this signature on this device (encrypted with your shelf, not included in backups)</label>
     <div class="row" style="flex-direction:column">
       <button class="save" data-on-click="pdfSigUse">Use this signature</button>
       <button class="cancel" id="pdfSigLastBtn" data-on-click="pdfSigLastUse" style="display:none">Use the last one</button>
       <button class="cancel" data-on-click="pdfSigClear">Clear</button>
+      <button class="cancel" id="pdfSigForgetBtn" data-on-click="pdfSigForget" style="display:none">Delete saved signature</button>
       <button class="cancel" data-on-click="closePdfSig">Cancel</button>
     </div>
   </div>
