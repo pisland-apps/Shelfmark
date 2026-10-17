@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.76.0';
+const APP_VERSION = '1.76.1';
 const APP_VERSION_DATE = '2026-10-17';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -1391,7 +1391,9 @@ async function downloadBlob(blob, filename){
   // only fall back to the old anchor-click for browsers/tabs that don't
   // support sharing files.
   const file = new File([blob], filename, {type: blob.type || 'application/octet-stream'});
-  if(navigator.canShare && navigator.canShare({files:[file]})){
+  // Desktop PCs/Macs: skip the share sheet (Windows' one has no "save to Downloads"); a plain download goes to the Downloads folder.
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if(isMobile && navigator.canShare && navigator.canShare({files:[file]})){
     try{
       await navigator.share({files:[file], title: filename});
       return;
