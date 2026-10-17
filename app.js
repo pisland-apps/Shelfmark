@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.76.4';
+const APP_VERSION = '1.77.0';
 const APP_VERSION_DATE = '2026-10-17';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -763,9 +763,14 @@ const SHELF_BAR_MIN = 15;    // below this the Compact / Collapse-all / Recent r
 const RECENT_KEEP = 12;      // ids remembered (some may be deleted later)
 const RECENT_SHOW = 8;       // chips drawn
 let lastRenderedCats = [];   // categories drawn by the last render() (for Collapse all / Expand all)
-function shelfViewMode(){ return prefs.shelfView === 'compact' ? 'compact' : 'cards'; }
-function toggleShelfView(){
+function shelfViewMode(){ return prefs.shelfView === 'compact' ? 'compact' : prefs.shelfView === 'thumbs' ? 'thumbs' : 'cards'; }
+function toggleShelfView(){   // Cards <-> Compact (from Thumbnails it goes to Compact)
   prefs.shelfView = shelfViewMode() === 'compact' ? 'cards' : 'compact';
+  putPrefs(prefs).catch(()=>{});
+  render();
+}
+function toggleThumbsView(){  // v1.77.0: Cards <-> Thumbnails
+  prefs.shelfView = shelfViewMode() === 'thumbs' ? 'cards' : 'thumbs';
   putPrefs(prefs).catch(()=>{});
   render();
 }
@@ -794,18 +799,21 @@ function rememberRecent(id){
 function renderShelfBar(allItems, cats){
   const bar = document.getElementById('shelfBar');
   if(!bar) return;
-  const show = allItems.length >= SHELF_BAR_MIN && !selectMode;
+  // v1.77.0: a small shelf that holds PDFs or pictures also gets the bar (view buttons only), so Thumbnails can be chosen.
+  const small = allItems.length < SHELF_BAR_MIN, hasPics = allItems.some(it => it.type === 'pdf' || it.type === 'image');
+  const show = (!small || hasPics) && !selectMode;
   bar.style.display = show ? '' : 'none';
   if(!show) return;
   const searching = !!searchQuery;
   document.getElementById('viewToggleBtn').textContent = shelfViewMode() === 'compact' ? 'Cards view' : 'Compact view';
-  document.getElementById('foldAllBtn').style.display = (searching || cats.length < 2) ? 'none' : '';
+  const tb = document.getElementById('thumbsToggleBtn'); if(tb) tb.classList.toggle('on', shelfViewMode() === 'thumbs');
+  document.getElementById('foldAllBtn').style.display = (small || searching || cats.length < 2) ? 'none' : '';
   updateFoldBtn();
   const strip = document.getElementById('recentStrip');
   strip.innerHTML = '';
   const byId = new Map(allItems.map(it => [it.id, it]));
   const recent = (Array.isArray(prefs.recentIds) ? prefs.recentIds : []).map(id => byId.get(id)).filter(Boolean).slice(0, RECENT_SHOW);
-  if(searching || !recent.length){ strip.style.display = 'none'; return; }
+  if(small || searching || !recent.length){ strip.style.display = 'none'; return; }
   strip.style.display = '';
   const lab = document.createElement('span');
   lab.className = 'rlabel'; lab.textContent = 'Recent';
@@ -822,7 +830,7 @@ function renderShelfBar(allItems, cats){
 
 // Called once at unlock, after the saved prefs are merged in.
 function restoreShelfViewPrefs(){
-  prefs.shelfView = prefs.shelfView === 'compact' ? 'compact' : 'cards';
+  prefs.shelfView = (prefs.shelfView === 'compact' || prefs.shelfView === 'thumbs') ? prefs.shelfView : 'cards';
   prefs.recentIds = Array.isArray(prefs.recentIds) ? prefs.recentIds.filter(x => typeof x === 'string').slice(0, RECENT_KEEP) : [];
   itemSortMode = prefs.itemSortMode === 'title' ? 'title' : 'newest';
   collapsedCats.clear();
@@ -1193,7 +1201,7 @@ async function putContentOnly(id, type, contentValue){
         // Obsidian) since this note was opened — writing blind here used to
         // silently discard those outside changes with no warning at all.
         let liveMtime = null;
-        try{ liveMtime = (await (await extFileHandle(meta.extPath, false)).getFile()).lastModified; }catch(e){ /* file missing/unreadable: fall through and let extWriteFile surface it */ }
+        try{ liveMtime = (await (await extFileHandle(meta.extPath, false, meta.extRoot)).getFile()).lastModified; }catch(e){ /* file missing/unreadable: fall through and let extWriteFile surface it */ }
         if(liveMtime !== null && meta.extMtime !== null && liveMtime !== meta.extMtime){
           const overwrite = confirm(
             `"${meta.extPath}" was changed outside Shelfmark since you opened this note (e.g. edited in Obsidian).\n\n`+
@@ -1201,7 +1209,7 @@ async function putContentOnly(id, type, contentValue){
           );
           if(!overwrite) throw new ExtConflictError('Save cancelled: the linked file changed outside Shelfmark.');
         }
-        const mtime = await extWriteFile(meta.extPath, contentValue);
+        const mtime = await extWriteFile(meta.extPath, contentValue, meta.extRoot);
         meta.extMtime = mtime;
       }
       meta.updatedAt = Date.now();
@@ -2506,6 +2514,89 @@ function onSearchInput(){
   render();
 }
 
+// ---- Thumbnail view (v1.77.0) ------------------------------------------------------------------------
+// Shelf view 'thumbs': a grid of tiles. A tile shows the item's own cover if it has one; otherwise a PDF's FIRST PAGE
+// (or a picture, shrunk). That small JPEG is made once, only for tiles that scroll into view, and kept in the item's
+// encrypted metadata as thumb + thumbAt (thumbAt = the item's updatedAt when it was made, so an edited PDF gets a new
+// one). A file that cannot be drawn (e.g. a PDF that needs an open password) is remembered as thumbFail and not retried
+// until the file changes. thumb / thumbAt / thumbFail are never exported or imported: they are rebuilt on demand.
+const THUMB_W = 300;
+let thumbIO = null, thumbQ = [], thumbRunning = false;
+function thumbStamp(it){ return it.updatedAt || it.addedAt || 0; }
+function thumbSrcOf(it){
+  if(it.cover) return it.cover;
+  return (typeof it.thumb === 'string' && it.thumb.startsWith('data:image/') && it.thumbAt === thumbStamp(it)) ? it.thumb : '';
+}
+function rowCoverHTML(it){
+  if(shelfViewMode() !== 'thumbs') return it.cover ? `<img class="cover-thumb" src="${escapeHtml(it.cover)}">` : '';
+  const src = thumbSrcOf(it);
+  if(src) return `<div class="tbox" data-tid="${escapeHtml(it.id)}"><img src="${escapeHtml(src)}" alt=""></div>`;
+  const need = (it.type === 'pdf' || it.type === 'image') && it.thumbFail !== thumbStamp(it);
+  const glyph = it.type === 'audio' ? '&#9835;' : escapeHtml(TYPE_LABEL[it.type] || '').toUpperCase();
+  return `<div class="tbox"${need ? ' data-need="1"' : ''} data-tid="${escapeHtml(it.id)}"><span class="tph">${glyph}</span></div>`;
+}
+async function thumbFromPdf(blob){
+  const doc = await pdfOpenDocBytes(new Uint8Array(await blob.arrayBuffer()));
+  try{
+    const page = await doc.getPage(1), b = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: THUMB_W / b.width });
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(vp.width)); cv.height = Math.max(1, Math.round(Math.min(vp.height, vp.width * 4 / 3)));   // a very tall page keeps its top part
+    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+    await page.render({ canvasContext: cx, viewport: vp }).promise;
+    const url = cv.toDataURL('image/jpeg', 0.78); cv.width = cv.height = 0; page.cleanup();
+    return url;
+  } finally { try{ await doc.destroy(); }catch(e){} }
+}
+async function thumbFromImage(blob){
+  let bmp = null;
+  try{ bmp = await createImageBitmap(blob); }catch(e){}
+  const el = bmp || await pdfImgEl(blob), w0 = el.width || el.naturalWidth, h0 = el.height || el.naturalHeight;
+  const k = Math.min(1, THUMB_W / Math.max(w0, h0)), cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(w0 * k)); cv.height = Math.max(1, Math.round(h0 * k));
+  const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(el, 0, 0, cv.width, cv.height);
+  const url = cv.toDataURL('image/jpeg', 0.8); cv.width = cv.height = 0; if(bmp && bmp.close) bmp.close();
+  return url;
+}
+// Makes (and stores) one item's thumbnail. Resolves to the data URL, or '' when it could not be drawn.
+async function thumbMake(id){
+  const full = await getOne(id);
+  if(!full || !(full.content instanceof Blob)) return '';
+  const stamp = thumbStamp(full);
+  let url = '';
+  try{ url = full.type === 'pdf' ? await thumbFromPdf(full.content) : full.type === 'image' ? await thumbFromImage(full.content) : ''; }catch(e){ url = ''; }
+  try{ await putMetaOnly(id, url ? { thumb: url, thumbAt: stamp, thumbFail: null } : { thumbFail: stamp }); }catch(e){ /* quota etc.: the tile still shows it this time */ }
+  return url;
+}
+async function thumbPump(){
+  if(thumbRunning) return;
+  thumbRunning = true;
+  try{
+    while(thumbQ.length){
+      const el = thumbQ.shift();
+      if(!el.isConnected || !cryptoKey) continue;
+      el.removeAttribute('data-need');
+      try{
+        const url = await thumbMake(el.dataset.tid);
+        if(url && el.isConnected){ el.textContent = ''; const im = new Image(); im.alt = ''; im.src = url; el.appendChild(im); }
+      }catch(e){ /* a tile that fails keeps its label */ }
+      await new Promise(r => setTimeout(r, 20));   // let the page breathe between thumbnails
+    }
+  } finally { thumbRunning = false; }
+}
+// Called at the end of every render(): watch the tiles that still need a thumbnail; make each when it scrolls into view.
+function thumbWatch(){
+  if(thumbIO){ thumbIO.disconnect(); thumbIO = null; }
+  thumbQ = [];
+  if(shelfViewMode() !== 'thumbs' || typeof IntersectionObserver !== 'function') return;
+  const els = document.querySelectorAll('#shelf .tbox[data-need]');
+  if(!els.length) return;
+  thumbIO = new IntersectionObserver(entries => {
+    for(const en of entries) if(en.isIntersecting){ thumbIO.unobserve(en.target); thumbQ.push(en.target); }
+    thumbPump();
+  }, { rootMargin: '300px' });
+  els.forEach(el => thumbIO.observe(el));
+}
+
 async function render(){
   const allItems = (await getAll()).sort((a,b)=>b.addedAt-a.addedAt);
   shelfCountHint = allItems.length;   // lets Export refuse an empty shelf before opening the save dialog
@@ -2631,7 +2722,7 @@ async function render(){
         const isSelected = selectedIds.has(it.id);
         row.classList.toggle('selected', isSelected);
         row.innerHTML = `<div class="sel-indicator">${isSelected ? '&#10003;' : ''}</div>
-          ${it.cover ? `<img class="cover-thumb" src="${escapeHtml(it.cover)}">` : ''}
+          ${rowCoverHTML(it)}
           <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
           <div class="sub">${TYPE_LABEL[it.type]}</div></div>`;
         row.onclick = ()=>toggleSelectItem(it.id, row);
@@ -2644,7 +2735,7 @@ async function render(){
         row.dataset.audioId = it.id;
         if(shelfPlayingId === it.id) row.classList.add('playing');
         row.innerHTML = `<button class="inline-play">${shelfPlayingId===it.id && shelfAudioEl && !shelfAudioEl.paused ? '&#10074;&#10074;' : '&#9658;'}</button>
-          ${it.cover ? `<img class="cover-thumb" src="${escapeHtml(it.cover)}">` : ''}
+          ${rowCoverHTML(it)}
           <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
           <div class="sub">${TYPE_LABEL[it.type]}</div>
           <div class="inline-bar"><div class="inline-bar-fill"></div></div>
@@ -2657,7 +2748,7 @@ async function render(){
         row.onclick = ()=>toggleShelfPlay(it.id);
       } else {
         row.onclick = ()=>openReader(it.id);
-        row.innerHTML = `${it.cover ? `<img class="cover-thumb" src="${escapeHtml(it.cover)}">` : ''}
+        row.innerHTML = `${rowCoverHTML(it)}
           <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
           <div class="sub">${TYPE_LABEL[it.type]}${it.progress ? ' \u00b7 in progress' : ''}</div></div>
           <button class="edit" title="Rename or recategorize">&#9998;</button>
@@ -2671,6 +2762,7 @@ async function render(){
   }
   if(shelfPlayingId) refreshShelfAudioRowUI();
   if(selectMode) updateSelectBar();
+  thumbWatch();
 }
 // v1.64.3: coerces first. A title/category that was not text (a crafted or damaged backup) used to throw
 // "s.replace is not a function" here and stop the whole shelf from drawing. null/undefined print as nothing.
@@ -4453,7 +4545,7 @@ async function pdfEditSave(){
   if(pdfBusy || !pdfEd || !pdfDirty() || !curId) return;
   const meta = await getMeta(curId);
   let mode = 'shelf';
-  if(meta && meta.extPath && extRoot){ mode = await pdfAskLinkedSave(meta.extPath); if(mode === 'cancel') return; }
+  if(meta && meta.extPath && extHandleFor(meta.extRoot)){ mode = await pdfAskLinkedSave(meta.extPath); if(mode === 'cancel') return; }
   pdfSetBusy(true);
   try{
     if(mode === 'new') await pdfSaveAsNew(meta); else await pdfSaveOverwrite(meta, mode === 'overwrite');
@@ -4468,16 +4560,16 @@ async function pdfSaveOverwrite(meta, toDisk){
     for(const S of pdfEd.undo.concat(pdfEd.redo, [pdfEd.cur, prevSaved])) await pdfBytesOf(S);   // older snapshots keep their own bytes once the stored file changes
     const upd = { updatedAt: Date.now(), progress: { page: curPdfPage } };
     if(toDisk){
-      if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
-      let live = null; try{ live = (await (await extFileHandle(meta.extPath, false)).getFile()).lastModified; }catch(e){}
+      if(!(await extPerm(true, extHandleFor(meta.extRoot)))) throw new Error('Permission to the notes folder was not granted.');
+      let live = null; try{ live = (await (await extFileHandle(meta.extPath, false, meta.extRoot)).getFile()).lastModified; }catch(e){}
       if(live !== null && meta.extMtime != null && live !== meta.extMtime &&
          !confirm(`"${meta.extPath}" was changed outside Shelfmark since you opened it.\n\nOverwrite that outside version?`)) throw new Error('Save cancelled: the file changed outside Shelfmark.');
-      upd.extMtime = await extWriteBytes(meta.extPath, bytes); upd.extSize = bytes.length;   // disk first: if it fails, nothing diverges
+      upd.extMtime = await extWriteBytes(meta.extPath, bytes, meta.extRoot); upd.extSize = bytes.length;   // disk first: if it fails, nothing diverges
     }
     await putContentOnly(curId, 'pdf', blob);
     await putMetaOnly(curId, upd);
     const S = { bytes, pend: {}, rev: pdfHasPend() ? ++pdfEd.revSeq : pdfEd.cur.rev };
-    pdfEd.blob = blob; pdfEd.lastSave = { blob: prevBlob, S: prevSaved, disk: toDisk ? { path: meta.extPath } : null };
+    pdfEd.blob = blob; pdfEd.lastSave = { blob: prevBlob, S: prevSaved, disk: toDisk ? { path: meta.extPath, root: meta.extRoot } : null };
     if(S.rev !== pdfEd.cur.rev || pdfHasPend()){ pdfEd.undo.push(pdfEd.cur); pdfEd.redo.length = 0; }
     pdfEd.cur = S; pdfEd.saved = S; pdfTrimUndo();
   });
@@ -4486,24 +4578,24 @@ async function pdfSaveOverwrite(meta, toDisk){
 }
 async function pdfSaveAsNew(meta){
   const PL = await loadPdfLib(), bytes = await pdfFlatBytes(PL);
-  if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
+  if(!(await extPerm(true, extHandleFor(meta.extRoot)))) throw new Error('Permission to the notes folder was not granted.');
   const dir = extDirOf(meta.extPath), stem = meta.extPath.split('/').pop().replace(/\.pdf$/i, '');
   let newPath = '', k = 1;
   for(;; k++){
     if(k > 99) throw new Error('There are already many \u201c(edited)\u201d copies in that folder \u2014 rename or remove some first.');
     const nm = stem + ' (edited' + (k > 1 ? ' ' + k : '') + ').pdf';
     newPath = dir ? dir + '/' + nm : nm;
-    if(await extIsGone(newPath)) break;
+    if(await extIsGone(newPath, meta.extRoot)) break;
   }
-  const fh = await extFileHandle(newPath, true);
+  const fh = await extFileHandle(newPath, true, meta.extRoot);
   const w = await fh.createWritable(); await w.write(bytes); await w.close();
   const mtime = (await fh.getFile()).lastModified;
   const newId = Date.now() + '-' + Math.random().toString(36).slice(2);
   await put({ id: newId, title: extTitleOf(newPath), category: meta.category || 'Uncategorized', type: 'pdf', mime: 'application/pdf',
     content: new Blob([bytes], { type: 'application/pdf' }), addedAt: Date.now(), updatedAt: Date.now(), progress: { page: curPdfPage },
-    extPath: newPath, extMtime: mtime, extSize: bytes.length });
+    extPath: newPath, extMtime: mtime, extSize: bytes.length, ...(meta.extRoot ? { extRoot: meta.extRoot } : {}) });
   // keep the working copy so Undo can bring it back, then show the new file
-  pdfSaveAsStash = { origId: curId, newId, newPath, ed: { cur: pdfEd.cur, undo: pdfEd.undo, redo: pdfEd.redo, revSeq: pdfEd.revSeq } };
+  pdfSaveAsStash = { origId: curId, newId, newPath, root: meta.extRoot, ed: { cur: pdfEd.cur, undo: pdfEd.undo, redo: pdfEd.redo, revSeq: pdfEd.revSeq } };
   pdfEd.saved = pdfEd.cur;                       // nothing left to "leave without saving"
   await render();
   await openReader(newId);
@@ -4513,8 +4605,8 @@ async function pdfUndoSaveAs(){
   const st = pdfSaveAsStash; if(!st || pdfBusy) return;
   pdfSetBusy(true);
   try{
-    if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
-    const parts = st.newPath.split('/'); let d = extRoot;
+    if(!(await extPerm(true, extHandleFor(st.root)))) throw new Error('Permission to the notes folder was not granted.');
+    const parts = st.newPath.split('/'); let d = extHandleFor(st.root);
     for(let i = 0; i < parts.length - 1; i++) d = await d.getDirectoryHandle(parts[i]);
     await d.removeEntry(parts[parts.length - 1]);
     await del(st.newId);
@@ -4534,7 +4626,7 @@ async function pdfUndoLastSave(){
     await holdAutoLock(async () => {
       const L = pdfEd.lastSave;
       const upd = { updatedAt: Date.now() };
-      if(L.disk){ const pb = new Uint8Array(await L.blob.arrayBuffer()); upd.extMtime = await extWriteBytes(L.disk.path, pb); upd.extSize = pb.length; }
+      if(L.disk){ const pb = new Uint8Array(await L.blob.arrayBuffer()); upd.extMtime = await extWriteBytes(L.disk.path, pb, L.disk.root); upd.extSize = pb.length; }
       await putContentOnly(curId, 'pdf', L.blob);
       await putMetaOnly(curId, upd);
       pdfEd.blob = L.blob; pdfEd.cur = L.S; pdfEd.saved = L.S; pdfEd.undo = []; pdfEd.redo = []; pdfEd.lastSave = null;
@@ -10141,9 +10233,10 @@ function buildStaticCommands(){
     { id:'import', icon:'&#8681;', label:'Import from JSON', hint:'', action: ()=>{ importOnlyNewNext = false; document.getElementById('importPick').click(); } },
     { id:'import-new', icon:'&#8681;', label:'Import from JSON \u2014 only new items', hint:'skips what is already on the shelf', action: ()=>{ importOnlyNewNext = true; document.getElementById('importPick').click(); } },
     ...(EXT_SUPPORTED ? [
-      { id:'ext-open', icon:'&#128193;', label: extRootName ? 'Change notes folder\u2026' : 'Open a notes folder\u2026', hint: extRootName || 'Obsidian-style', action: ()=>extPickFolder() },
-      ...(extRootName ? [{ id:'ext-sync', icon:'&#128260;', label:'Sync notes folder now', hint: extRootName, action: ()=>extSync(true) },
-                         { id:'ext-unlink', icon:'&#128279;', label:'Unlink notes folder', hint:'keeps files on disk', action: ()=>extUnlink() }] : [])
+      ...(extAllRoots().length < 2 ? [{ id:'ext-open', icon:'&#128193;', label: extRootName ? 'Change notes folder\u2026' : 'Open a notes folder\u2026', hint: extRootName || 'Obsidian-style', action: ()=>extPickFolder() }] : []),
+      ...(extAllRoots().length ? [{ id:'ext-add', icon:'&#10133;', label:'Add another notes folder\u2026', hint:'link more than one folder', action: ()=>extAddFolder() },
+                         { id:'ext-sync', icon:'&#128260;', label: extAllRoots().length > 1 ? 'Sync all notes folders now' : 'Sync notes folder now', hint: extAllRoots().map(r=>r.name).join(', '), action: ()=>extSync(true) },
+                         ...extAllRoots().map(r => ({ id:'ext-unlink-'+r.id, icon:'&#128279;', label: extAllRoots().length > 1 ? 'Unlink notes folder \u201c'+r.name+'\u201d' : 'Unlink notes folder', hint:'keeps files on disk', action: ()=>extUnlinkOne(r.id) }))] : [])
     ] : []),
     { id:'quick-backup', icon:'&#128190;', label:'Save backup now', hint: authMode === 'passcode' ? 'uses your shelf passcode' : 'no passcode: plain file', action: ()=>quickBackup() },
     { id:'export', icon:'&#8679;', label:'Export shelf as JSON', hint:'', action: ()=>openExportModal() },
@@ -10152,6 +10245,7 @@ function buildStaticCommands(){
     { id:'tags', icon:'#', label:'Browse tags', hint:'', action: ()=>openTagsPage() },
     { id:'select', icon: selectMode ? '&times;' : '&#9745;', label: selectMode ? 'Exit selection mode' : 'Select multiple items', hint:'', action: ()=>toggleSelectMode() },
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
+    { id:'shelf-thumbs', icon:'&#9638;', label: shelfViewMode() === 'thumbs' ? 'Shelf view: leave Thumbnails' : 'Shelf view: Thumbnails (PDF first pages)', hint:'', action: ()=>toggleThumbsView() },
     { id:'shelf-view', icon:'&#9776;', label:'Shelf view: switch to '+(shelfViewMode() === 'compact' ? 'Cards' : 'Compact'), hint:'now '+(shelfViewMode() === 'compact' ? 'Compact' : 'Cards'), action: ()=>toggleShelfView() },
     { id:'fold-all', icon:'&#8661;', label:'Categories: collapse all / expand all', hint:'', action: ()=>toggleAllCats() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
@@ -10300,6 +10394,14 @@ if('serviceWorker' in navigator){
 // the files on disk are ordinary plain text. Chromium browsers only.
 const EXT_SUPPORTED = typeof window.showDirectoryPicker === 'function';
 let extRoot = null, extRootName = '', extSyncing = false;
+// v1.77.0: more than one linked folder. extRoot / extRootName stay the FIRST ("main") folder exactly as before (items
+// from it carry no extRoot field); every further folder is an entry of extMore ({id, name, handle}) and its items
+// carry extRoot = that id. Category for items of a further folder is "<folder name> / <subfolder>".
+let extMore = [];
+function extAllRoots(){ return (extRoot ? [{ id:'main', name: extRootName, handle: extRoot }] : []).concat(extMore); }
+function extHandleFor(id){ if(!id || id === 'main') return extRoot; const r = extMore.find(x => x.id === id); return r ? r.handle : null; }
+function extRootIdOf(m){ return (m && m.extRoot) || 'main'; }
+function extCatOf(root, path){ const d = extDirOf(path); return root.id === 'main' ? (d || 'Uncategorized') : root.name + (d ? ' / ' + d : ''); }
 function extDb(){
   return new Promise((res,rej)=>{
     const r = indexedDB.open('shelfmark-ext',1);
@@ -10325,18 +10427,20 @@ async function extIdb(mode, fn){
 // Used by wipeAllData (erase). extUnlink() only removes the 'root' key because
 // it is a deliberate, reversible action that keeps the database itself.
 async function extForget(){
-  extRoot = null; extRootName = '';
+  extRoot = null; extRootName = ''; extMore = [];
   await new Promise(res=>{ const r = indexedDB.deleteDatabase('shelfmark-ext'); r.onsuccess=r.onerror=r.onblocked=()=>res(); });
 }
 async function extLoad(){
   if(!EXT_SUPPORTED) return;
   try{ extRoot = (await extIdb('readonly', st=>st.get('root'))) || null; extRootName = extRoot ? extRoot.name : ''; }catch(e){}
+  try{ const m = await extIdb('readonly', st=>st.get('more')); extMore = Array.isArray(m) ? m.filter(r => r && r.id && r.handle) : []; }catch(e){}
 }
-async function extPerm(ask){
-  if(!extRoot) return false;
+async function extPerm(ask, h){
+  if(h === undefined) h = extRoot;          // v1.77.0: pass the folder's handle for an item of a further folder
+  if(!h) return false;
   const o = { mode:'readwrite' };
-  if((await extRoot.queryPermission(o)) === 'granted') return true;
-  return ask ? (await extRoot.requestPermission(o)) === 'granted' : false;
+  if((await h.queryPermission(o)) === 'granted') return true;
+  return ask ? (await h.requestPermission(o)) === 'granted' : false;
 }
 async function extPickFolder(){
   try{
@@ -10346,10 +10450,41 @@ async function extPickFolder(){
     await extSync(true);
   }catch(e){ if(e && e.name !== 'AbortError') alert('Could not open that folder: '+e.message); }
 }
+// v1.77.0: link one more folder (the first one linked is the main folder, as before).
+async function extAddFolder(){
+  if(!extRoot) return extPickFolder();
+  try{
+    const h = await window.showDirectoryPicker({ mode:'readwrite' });
+    for(const r of extAllRoots()){
+      let same = false, inside = null, holds = null;
+      try{ same = await r.handle.isSameEntry(h); }catch(e){}
+      if(same){ alert(`"${r.name}" is already linked.`); return; }
+      try{ inside = await r.handle.resolve(h); }catch(e){}     // the new folder is inside r
+      if(inside){ alert(`That folder is inside "${r.name}", which is already linked.`); return; }
+      try{ holds = await h.resolve(r.handle); }catch(e){}      // r is inside the new folder
+      if(holds){ alert(`"${r.name}", which is already linked, is inside that folder. Unlink it first, or pick a different folder.`); return; }
+    }
+    let name = h.name, k = 2;
+    while(extAllRoots().some(r => r.name === name)) name = h.name + ' (' + (k++) + ')';
+    extMore.push({ id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, handle: h });
+    await extIdb('readwrite', st=>st.put(extMore, 'more'));
+    await extSync(true);
+  }catch(e){ if(e && e.name !== 'AbortError') alert('Could not open that folder: '+e.message); }
+}
+async function extUnlinkOne(id){
+  if(id === 'main') return extUnlink();
+  const r = extMore.find(x => x.id === id); if(!r) return;
+  if(!confirm(`Unlink the notes folder "${r.name}"?\n\nFiles on disk are not touched. Items already imported stay on your shelf as ordinary items.`)) return;
+  const all = await getAll();
+  for(const m of all){ if(m.extRoot === id) await putMetaOnly(m.id, { extPath:null, extMtime:null, extSize:null, extRoot:null }); }
+  extMore = extMore.filter(x => x.id !== id);
+  await extIdb('readwrite', st=>st.put(extMore, 'more'));
+  render();
+}
 async function extUnlink(){
   if(!confirm('Unlink the notes folder?\n\nFiles on disk are not touched. Notes already imported stay on your shelf as ordinary notes.')) return;
   const all = await getAll();
-  for(const m of all){ if(m.extPath) await putMetaOnly(m.id, { extPath:null, extMtime:null, extSize:null }); }
+  for(const m of all){ if(m.extPath && extRootIdOf(m) === 'main') await putMetaOnly(m.id, { extPath:null, extMtime:null, extSize:null }); }
   extRoot = null; extRootName = '';
   await extIdb('readwrite', st=>st.delete('root'));
   render();
@@ -10361,21 +10496,22 @@ async function extWalk(dir, prefix, out){
     else if(/\.(md|pdf)$/i.test(name)) out.push({ path: prefix+name, handle: h });
   }
 }
-async function extFileHandle(path, create){
-  const parts = path.split('/'); let d = extRoot;
+async function extFileHandle(path, create, rootId){
+  const parts = path.split('/'); let d = extHandleFor(rootId);
+  if(!d) throw new Error('That notes folder is no longer linked.');
   for(let i=0;i<parts.length-1;i++) d = await d.getDirectoryHandle(parts[i], { create });
   return d.getFileHandle(parts[parts.length-1], { create });
 }
-async function extWriteFile(path, text){
-  if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
-  const fh = await extFileHandle(path, false);
+async function extWriteFile(path, text, rootId){
+  if(!(await extPerm(true, extHandleFor(rootId)))) throw new Error('Permission to the notes folder was not granted.');
+  const fh = await extFileHandle(path, false, rootId);
   const w = await fh.createWritable(); await w.write(text); await w.close();
   return (await fh.getFile()).lastModified;
 }
 // v1.74.0: PDFs in the linked folder. Write raw bytes to a linked file / store bytes without writing back.
-async function extWriteBytes(path, bytes){
-  if(!(await extPerm(true))) throw new Error('Permission to the notes folder was not granted.');
-  const fh = await extFileHandle(path, false);
+async function extWriteBytes(path, bytes, rootId){
+  if(!(await extPerm(true, extHandleFor(rootId)))) throw new Error('Permission to the notes folder was not granted.');
+  const fh = await extFileHandle(path, false, rootId);
   const w = await fh.createWritable(); await w.write(bytes); await w.close();
   return (await fh.getFile()).lastModified;
 }
@@ -10387,11 +10523,12 @@ async function putContentOnlyRawBytes(id, buf){
   });
 }
 async function extRefreshOne(id){
-  if(!extRoot || !(await extPerm(false))) return;
   const rec = await getOneRaw(id); if(!rec) return;
   const meta = await decryptMeta(rec);
   if(!meta.extPath) return;
-  let file; try{ file = await (await extFileHandle(meta.extPath, false)).getFile(); }catch(e){ return; }
+  const h = extHandleFor(meta.extRoot);
+  if(!h || !(await extPerm(false, h))) return;
+  let file; try{ file = await (await extFileHandle(meta.extPath, false, meta.extRoot)).getFile(); }catch(e){ return; }
   if(file.lastModified === meta.extMtime) return;
   if(meta.type === 'pdf'){
     await putContentOnlyRawBytes(id, await file.arrayBuffer());
@@ -10463,22 +10600,21 @@ function extPairAdopt(cands, fresh){
 }
 // True only when the browser positively says the file/folder does not exist.
 // Permission errors, a disconnected drive, etc. are NOT "gone" -> never unlink.
-async function extIsGone(path){
-  try{ await (await extFileHandle(path, false)).getFile(); return false; }
+async function extIsGone(path, rootId){
+  try{ await (await extFileHandle(path, false, rootId)).getFile(); return false; }
   catch(e){ return !!e && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError'); }
 }
-async function extSync(interactive){
-  if(!extRoot || !cryptoKey || extSyncing) return;
-  if(!(await extPerm(interactive))) return;
-  extSyncing = true;
+// One folder (v1.77.0: the body of the old extSync). Only items that belong to this folder are looked at.
+async function extSyncRoot(root, interactive){
   const n = { added:0, updated:0, moved:0, adopted:0, unlinked:0 };
+  const rootTag = root.id === 'main' ? null : root.id, tagFld = rootTag ? { extRoot: rootTag } : {};
   let total = 0;
   try{
-    const allFiles = []; await extWalk(extRoot, '', allFiles);
+    const allFiles = []; await extWalk(root.handle, '', allFiles);
     const files = allFiles.filter(f=>!/\.pdf$/i.test(f.path)), pdfFiles = allFiles.filter(f=>/\.pdf$/i.test(f.path));
     total = files.length;
     const all = await getAll();
-    const byPath = new Map(all.filter(m=>m.extPath).map(m=>[m.extPath, m]));
+    const byPath = new Map(all.filter(m=>m.extPath && extRootIdOf(m) === root.id).map(m=>[m.extPath, m]));
     const onDisk = new Set(allFiles.map(f=>f.path));
     const fresh = [];
     for(const f of files){
@@ -10491,7 +10627,7 @@ async function extSync(interactive){
       } else fresh.push({ path:f.path, file, text: await file.text() });
     }
     // Linked items whose path is no longer in the folder listing.
-    const orphanMetas = all.filter(m=>m.extPath && !onDisk.has(m.extPath));
+    const orphanMetas = all.filter(m=>m.extPath && extRootIdOf(m) === root.id && !onDisk.has(m.extPath));
     const orphans = [];
     if(fresh.length){ // their text is only needed to pair renames with new files
       for(const m of orphanMetas){
@@ -10516,24 +10652,23 @@ async function extSync(interactive){
       const o = pairs.get(f.path);
       if(o){                                   // renamed or moved
         const m = o.meta, upd = { extPath:f.path, extMtime:f.file.lastModified };
-        if(m.category === (extDirOf(o.path) || 'Uncategorized')) upd.category = extDirOf(f.path) || 'Uncategorized';
+        if(m.category === extCatOf(root, o.path)) upd.category = extCatOf(root, f.path);
         if(m.title === extTitleOf(o.path)) upd.title = extTitleOf(f.path);
         await putMetaOnly(m.id, upd); claimed.add(m.id); n.moved++;
         continue;
       }
       const hit = adoptPairs.get(f.path);
       if(hit){                                 // same note already on the shelf, unlinked
-        await putMetaOnly(hit.id, { extPath:f.path, extMtime:f.file.lastModified });
+        await putMetaOnly(hit.id, { extPath:f.path, extMtime:f.file.lastModified, ...(rootTag ? { extRoot: rootTag } : {}) });
         n.adopted++;
         continue;
       }
       const title = extTitleOf(f.path);
-      const dirPart = extDirOf(f.path);
       await put({
         id: Date.now()+'-'+Math.random().toString(36).slice(2),
-        title, category: dirPart || 'Uncategorized', type:'markdown', mime:'text/markdown',
+        title, category: extCatOf(root, f.path), type:'markdown', mime:'text/markdown',
         content: f.text, addedAt: f.file.lastModified, updatedAt: f.file.lastModified, progress: null,
-        extPath: f.path, extMtime: f.file.lastModified
+        extPath: f.path, extMtime: f.file.lastModified, ...tagFld
       }); n.added++;
     }
     // ---- PDFs in the folder (v1.74.0): shown on the shelf, refreshed when the file changes, never matched by text ----
@@ -10556,23 +10691,23 @@ async function extSync(interactive){
       if(hit){                                  // renamed or moved
         pdfUsed.add(hit);
         const upd = { extPath: f.path, extMtime: f.file.lastModified, extSize: sz };
-        if(hit.category === (extDirOf(hit.extPath) || 'Uncategorized')) upd.category = extDirOf(f.path) || 'Uncategorized';
+        if(hit.category === extCatOf(root, hit.extPath)) upd.category = extCatOf(root, f.path);
         if(hit.title === extTitleOf(hit.extPath)) upd.title = extTitleOf(f.path);
         await putMetaOnly(hit.id, upd); claimed.add(hit.id); n.moved++;
         continue;
       }
       await put({
         id: Date.now()+'-'+Math.random().toString(36).slice(2),
-        title: extTitleOf(f.path), category: extDirOf(f.path) || 'Uncategorized', type:'pdf', mime:'application/pdf',
+        title: extTitleOf(f.path), category: extCatOf(root, f.path), type:'pdf', mime:'application/pdf',
         content: f.file, addedAt: f.file.lastModified, updatedAt: f.file.lastModified, progress: null,
-        extPath: f.path, extMtime: f.file.lastModified, extSize: sz
+        extPath: f.path, extMtime: f.file.lastModified, extSize: sz, ...tagFld
       }); n.added++;
     }
     // Still missing and confirmed gone: keep the note, drop the link.
     for(const m of orphanMetas){
       if(claimed.has(m.id)) continue;
-      if(!(await extIsGone(m.extPath))) continue;
-      await putMetaOnly(m.id, { extPath:null, extMtime:null }); n.unlinked++;
+      if(!(await extIsGone(m.extPath, root.id))) continue;
+      await putMetaOnly(m.id, { extPath:null, extMtime:null, ...(rootTag ? { extRoot:null } : {}) }); n.unlinked++;
     }
     if(n.added || n.updated || n.moved || n.adopted || n.unlinked) await render();
     if(interactive){
@@ -10580,10 +10715,27 @@ async function extSync(interactive){
       if(n.moved) extra.push(`${n.moved} renamed/moved`);
       if(n.adopted) extra.push(`${n.adopted} matched to existing notes`);
       if(n.unlinked) extra.push(`${n.unlinked} unlinked (file no longer on disk, item kept)`);
-      alert(`Notes folder \"${extRootName}\": ${n.added} added, ${n.updated} updated${extra.length ? ', '+extra.join(', ') : ''}, ${total} notes and ${pdfFiles.length} PDFs in total.`);
+      return `Notes folder \"${root.name}\": ${n.added} added, ${n.updated} updated${extra.length ? ', '+extra.join(', ') : ''}, ${total} notes and ${pdfFiles.length} PDFs in total.`;
     }
-  }catch(e){ if(interactive) alert('Sync failed: '+e.message); }
-  finally{ extSyncing = false; }
+  }catch(e){ if(interactive) return `Notes folder \"${root.name}\": sync failed: ${e.message}`; }
+  return null;
+}
+// All linked folders, one after the other. Permission is asked for every folder first, while the tap that started
+// the sync is still fresh (a browser may refuse a later prompt); a folder that is not allowed is skipped, not unlinked.
+async function extSync(interactive){
+  if(!cryptoKey || extSyncing) return;
+  const roots = extAllRoots(); if(!roots.length) return;
+  const ready = [], msgs = [];
+  for(const root of roots){
+    let ok = false; try{ ok = await extPerm(interactive, root.handle); }catch(e){}
+    if(ok) ready.push(root); else if(interactive) msgs.push(`Notes folder \"${root.name}\": permission was not granted, skipped. Run Sync again to allow it.`);
+  }
+  if(!ready.length){ if(interactive && msgs.length) alert(msgs.join('\n\n')); return; }
+  extSyncing = true;
+  try{
+    for(const root of ready){ const m = await extSyncRoot(root, interactive); if(m) msgs.push(m); }
+  } finally { extSyncing = false; }
+  if(interactive && msgs.length) alert(msgs.join('\n\n'));
 }
 // ============================================================================
 // Event dispatcher (v1.51.4) — replaces every inline onclick/onchange/oninput/
@@ -10625,7 +10777,7 @@ const UI_ACTIONS = Object.freeze({
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
-  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigForget, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
+  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigForget, toggleThumbsView, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,

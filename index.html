@@ -176,6 +176,22 @@
   .shelf[data-view="compact"] .spine.audio-row:not(.playing) .inline-time{display:none;}
   .shelf[data-view="compact"] .spine.audio-row.playing .meta{flex-direction:column;align-items:stretch;gap:0;}
   .shelf[data-view="compact"] .cathead{margin-top:16px;}
+  /* Thumbnail view (v1.77.0): a grid of tiles with the PDF's first page / cover on top */
+  .chipbtn.on{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  .shelf[data-view="thumbs"] .catbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px;}
+  .shelf[data-view="thumbs"] .catbody.collapsed{display:none;}
+  .shelf[data-view="thumbs"] .spine{flex-direction:column;align-items:stretch;gap:0;padding:0;border-left:0;border-top:4px solid var(--t);overflow:hidden;position:relative;}
+  .tbox{aspect-ratio:3/4;background:var(--paper);display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .tbox img{width:100%;height:100%;object-fit:cover;object-position:top;display:block;}
+  .tph{font-size:13px;font-weight:700;letter-spacing:.08em;color:var(--t);opacity:.85;}
+  .shelf[data-view="thumbs"] .spine .meta{padding:8px 10px 9px;flex:none;}
+  .shelf[data-view="thumbs"] .spine .title{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:13.5px;line-height:1.25;}
+  .shelf[data-view="thumbs"] .spine .sub{font-size:11px;margin-top:2px;}
+  .shelf[data-view="thumbs"] .spine .edit,.shelf[data-view="thumbs"] .spine .del,.shelf[data-view="thumbs"] .spine .expand{position:absolute;top:8px;width:26px;height:26px;padding:0;border-radius:50%;background:rgba(255,255,255,.88);color:#222;font-size:14px;display:flex;align-items:center;justify-content:center;}
+  .shelf[data-view="thumbs"] .spine .del{right:6px;} .shelf[data-view="thumbs"] .spine .edit{right:38px;} .shelf[data-view="thumbs"] .spine .expand{right:70px;}
+  .shelf[data-view="thumbs"] .inline-play,.shelf[data-view="thumbs"] .sel-indicator{position:absolute;left:8px;top:8px;z-index:2;}
+  .shelf[data-view="thumbs"] .sel-indicator{background:rgba(255,255,255,.88);}
+  .shelf[data-view="thumbs"] .spine.audio-row:not(.playing) .inline-bar,.shelf[data-view="thumbs"] .spine.audio-row:not(.playing) .inline-time{display:none;}
 
   /* modal */
   .overlay{
@@ -1231,6 +1247,7 @@
     <div id="recentStrip" class="recentstrip" style="display:none;"></div>
     <div class="shelfbar-btns">
       <button type="button" class="chipbtn" id="viewToggleBtn" data-on-click="toggleShelfView">Compact view</button>
+      <button type="button" class="chipbtn" id="thumbsToggleBtn" data-on-click="toggleThumbsView">Thumbnails</button>
       <button type="button" class="chipbtn" id="foldAllBtn" data-on-click="toggleAllCats">Collapse all</button>
     </div>
   </div>
