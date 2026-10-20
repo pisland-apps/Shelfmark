@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.78.0';
+const APP_VERSION = '1.78.1';
 const APP_VERSION_DATE = '2026-10-20';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -391,8 +391,10 @@ async function lockNow(){
   document.getElementById('lockScreen').classList.remove('hidden');
   try{ if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); }catch(e){}
   try{ flushDraftNow(); }catch(e){}
-  // Bounded wait: a stuck write must not keep the key in memory forever.
-  await Promise.race([dbWriteQueue, new Promise(r => setTimeout(r, 4000))]);
+  // Bounded wait: a stuck write must not keep the key in memory forever. The clipboard clear (v1.78.1) runs beside
+  // the queued writes and is bounded to 1.5 s, so it can never delay the lock.
+  const clipDone = Promise.race([clipClearForLock().catch(()=>{}), new Promise(r => setTimeout(r, 1500))]);
+  await Promise.race([Promise.all([dbWriteQueue, clipDone]), new Promise(r => setTimeout(r, 4000))]);
   cryptoKey = null;
   reloadPage();
   return true;
@@ -10729,6 +10731,18 @@ async function clipTryClear(){
 }
 window.addEventListener('focus', ()=>{ if(clipLast && !clipClearTimer) clipClearTimer = setTimeout(clipTryClear, 200); });
 function toggleClipClear(){ setPref('clipClear', !clipClearOn()); }
+// v1.78.1: locking the shelf also clears what the app's Copy button put on the clipboard, if it is still there.
+// Best effort and bounded by lockNow: a browser that will not let the page read the clipboard (for example when the
+// app is in the background during an auto-lock) leaves it alone.
+async function clipClearForLock(){
+  const c = clipLast; if(!c || !clipClearOn()) return;
+  if(clipClearTimer){ clearTimeout(clipClearTimer); clipClearTimer = null; }
+  clipLast = null;
+  try{
+    const cur = await navigator.clipboard.readText();
+    if(cur === c.text) await navigator.clipboard.writeText('');
+  }catch(e){ /* not allowed here: leave the clipboard alone */ }
+}
 
 async function extIsGone(path, rootId){
   try{ await (await extFileHandle(path, false, rootId)).getFile(); return false; }
