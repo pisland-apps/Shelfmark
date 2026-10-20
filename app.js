@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.77.0';
-const APP_VERSION_DATE = '2026-10-17';
+const APP_VERSION = '1.78.0';
+const APP_VERSION_DATE = '2026-10-20';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -2093,7 +2093,7 @@ const WIDTH_MAP = {narrow:'640px', wide:'960px', full:'100%'};
 // it was typed, imported from a backup or synced from a folder. Such a link renders as a
 // plain link (see remoteMediaPlaceholder) that the person can open in a new tab. data:/blob:
 // media (pasted-in pictures, on-shelf audio links) still display in the note.
-let prefs = {theme:'auto', font:'serif', size:'m', width:'wide', sections:'plain', secLevel:'lv-auto', loopAudio:false, itemSortMode:'newest', collapsedCats:[], shelfView:'cards', recentIds:[], bigShelfFolded:false, tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5};
+let prefs = {theme:'auto', font:'serif', size:'m', width:'wide', sections:'plain', secLevel:'lv-auto', loopAudio:false, itemSortMode:'newest', collapsedCats:[], shelfView:'cards', recentIds:[], bigShelfFolded:false, tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5, clipClear:true, extRemoveOnDelete:false, extIgnored:{}};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -2795,7 +2795,8 @@ function dropUndoSlot(){
   if(lastDeleted){ clearTimeout(lastDeleted.timeoutId); lastDeleted = null; }
   hideUndoToast();
 }
-async function deleteItemsWithUndo(ids){
+async function deleteItemsWithUndo(ids, opts){
+  opts = opts || {};
   const epoch = keyEpoch;
   const items = [];
   for(const id of ids){
@@ -2807,13 +2808,13 @@ async function deleteItemsWithUndo(ids){
   if(epoch !== keyEpoch){ dropUndoSlot(); return; } // key changed meanwhile: deleted for good, no Undo
   if(lastDeleted) clearTimeout(lastDeleted.timeoutId);
   const timeoutId = setTimeout(()=>{ lastDeleted = null; hideUndoToast(); }, 6000);
-  lastDeleted = { items, timeoutId };
-  document.getElementById('undoToastText').textContent =
-    items.length === 1 ? 'Removed from your shelf' : `Removed ${items.length} items from your shelf`;
+  lastDeleted = { items, timeoutId, ignoreKeys: opts.ignoreKeys || [], unlinkOnUndo: opts.unlinkOnUndo || [] };
+  document.getElementById('undoToastText').textContent = opts.msg ||
+    (items.length === 1 ? 'Removed from your shelf' : `Removed ${items.length} items from your shelf`);
   showUndoToast();
 }
 async function removeItem(id){
-  await deleteItemsWithUndo([id]);
+  if(!(await removeItemsFlow([id]))) return;
   render();
 }
 function showUndoToast(){
@@ -2825,11 +2826,15 @@ function hideUndoToast(){
 async function undoDelete(){
   if(!lastDeleted) return;
   clearTimeout(lastDeleted.timeoutId);
-  const { items } = lastDeleted;
+  const { items, ignoreKeys = [], unlinkOnUndo = [] } = lastDeleted;
   lastDeleted = null;
   hideUndoToast();
   try{ for(const { rec } of items) await restoreRaw(rec); }
   catch(err){ alert("Couldn't bring that back — please try again."); return; }
+  // v1.78.0: the item is back on the shelf, so its file is no longer "removed on purpose"; and if its file was deleted
+  // from the folder too, the restored item is an ordinary one (it must not be linked to a file that is gone).
+  if(ignoreKeys.length){ const mp = extIgnMap(); for(const k of ignoreKeys) delete mp[k]; await extIgnoreSave(); }
+  for(const id of unlinkOnUndo){ try{ await putMetaOnly(id, { extPath:null, extMtime:null, extSize:null, extRoot:null }); }catch(e){} }
   render();
 }
 
@@ -2878,7 +2883,7 @@ function selectAllToggle(){
 async function bulkDeleteSelected(){
   if(!selectedIds.size) return;
   const ids = [...selectedIds];
-  await deleteItemsWithUndo(ids);
+  if(!(await removeItemsFlow(ids))) return;   // v1.78.0: asks first when linked folder files are involved
   selectedIds.clear();
   exitSelectMode(); // renders once, already reflecting the deletion
 }
@@ -6579,6 +6584,7 @@ async function writeClipboardText(text){
     try{ document.execCommand('copy'); } catch(e2){ /* best-effort only */ }
     document.body.removeChild(ta);
   }
+  clipScheduleClear(text);
 }
 function flashCopied(btn){
   if(btn._copyTimer) clearTimeout(btn._copyTimer);
@@ -10235,6 +10241,8 @@ function buildStaticCommands(){
     ...(EXT_SUPPORTED ? [
       ...(extAllRoots().length < 2 ? [{ id:'ext-open', icon:'&#128193;', label: extRootName ? 'Change notes folder\u2026' : 'Open a notes folder\u2026', hint: extRootName || 'Obsidian-style', action: ()=>extPickFolder() }] : []),
       ...(extAllRoots().length ? [{ id:'ext-add', icon:'&#10133;', label:'Add another notes folder\u2026', hint:'link more than one folder', action: ()=>extAddFolder() },
+                         { id:'ext-rm-on-del', icon:'&#128465;&#65039;', label:'Folder sync: also remove items whose file I delete \u2014 turn '+(prefs.extRemoveOnDelete ? 'off' : 'on'), hint: prefs.extRemoveOnDelete ? 'on' : 'off', action: ()=>toggleExtRemoveOnDelete() },
+                         ...(Object.keys(extIgnMap()).length ? [{ id:'ext-forget-removed', icon:'&#8634;', label:'Bring back files I removed from the shelf', hint: Object.keys(extIgnMap()).length+' still in the folder', action: ()=>extForgetRemoved() }] : []),
                          { id:'ext-sync', icon:'&#128260;', label: extAllRoots().length > 1 ? 'Sync all notes folders now' : 'Sync notes folder now', hint: extAllRoots().map(r=>r.name).join(', '), action: ()=>extSync(true) },
                          ...extAllRoots().map(r => ({ id:'ext-unlink-'+r.id, icon:'&#128279;', label: extAllRoots().length > 1 ? 'Unlink notes folder \u201c'+r.name+'\u201d' : 'Unlink notes folder', hint:'keeps files on disk', action: ()=>extUnlinkOne(r.id) }))] : [])
     ] : []),
@@ -10248,6 +10256,7 @@ function buildStaticCommands(){
     { id:'shelf-thumbs', icon:'&#9638;', label: shelfViewMode() === 'thumbs' ? 'Shelf view: leave Thumbnails' : 'Shelf view: Thumbnails (PDF first pages)', hint:'', action: ()=>toggleThumbsView() },
     { id:'shelf-view', icon:'&#9776;', label:'Shelf view: switch to '+(shelfViewMode() === 'compact' ? 'Cards' : 'Compact'), hint:'now '+(shelfViewMode() === 'compact' ? 'Compact' : 'Cards'), action: ()=>toggleShelfView() },
     { id:'fold-all', icon:'&#8661;', label:'Categories: collapse all / expand all', hint:'', action: ()=>toggleAllCats() },
+    { id:'clip-clear', icon:'&#128203;', label:'Clipboard: auto-clear after Copy \u2014 turn '+(clipClearOn() ? 'off' : 'on'), hint: clipClearOn() ? 'on, 30 s' : 'off', action: ()=>toggleClipClear() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
     ...(authMode === 'passcode' ? [ { id:'lock-now', icon:'&#128274;', label:'Lock now', hint:'', action: ()=>lockNow() } ] : []),
     authMode === 'device'
@@ -10478,6 +10487,7 @@ async function extUnlinkOne(id){
   const all = await getAll();
   for(const m of all){ if(m.extRoot === id) await putMetaOnly(m.id, { extPath:null, extMtime:null, extSize:null, extRoot:null }); }
   extMore = extMore.filter(x => x.id !== id);
+  extIgnoreClearRoot(id);
   await extIdb('readwrite', st=>st.put(extMore, 'more'));
   render();
 }
@@ -10486,6 +10496,7 @@ async function extUnlink(){
   const all = await getAll();
   for(const m of all){ if(m.extPath && extRootIdOf(m) === 'main') await putMetaOnly(m.id, { extPath:null, extMtime:null, extSize:null }); }
   extRoot = null; extRootName = '';
+  extIgnoreClearRoot('main');
   await extIdb('readwrite', st=>st.delete('root'));
   render();
 }
@@ -10600,13 +10611,132 @@ function extPairAdopt(cands, fresh){
 }
 // True only when the browser positively says the file/folder does not exist.
 // Permission errors, a disconnected drive, etc. are NOT "gone" -> never unlink.
+// ============================================================================
+// v1.78.0 — removing items that are linked to a file in a notes folder
+//   * Removing asks once: remove from the shelf only, also delete the file(s) in the folder, or cancel.
+//   * A file left in the folder is put on a small ignore list (kept in the encrypted settings) so the next sync does
+//     not import it again. It is imported again only when the file is edited, or from the Ctrl+K command.
+//   * Optional setting: a file you delete in the folder also removes its item from the shelf (off by default).
+// ============================================================================
+let extDelResolve = null, extIgnDirty = false;
+function extIgnKey(rootId, path){ return (rootId || 'main') + '|' + path; }
+function extIgnMap(){ if(!prefs.extIgnored || typeof prefs.extIgnored !== 'object') prefs.extIgnored = {}; return prefs.extIgnored; }
+function extIgnoreSave(){ return putPrefs(prefs).catch(()=>{}); }
+// true: this file was removed from the shelf on purpose and has not changed since, so sync leaves it alone.
+function extIgnored(rootId, path, mtime){
+  const m = extIgnMap(), k = extIgnKey(rootId, path);
+  if(!Object.prototype.hasOwnProperty.call(m, k)) return false;
+  if(m[k] === mtime) return true;
+  delete m[k]; extIgnDirty = true; return false;   // edited since: it is a new file again
+}
+// Forget entries whose file is gone from the disk (only called when the folder listing was not empty).
+function extIgnPrune(rootId, onDisk){
+  const m = extIgnMap(), pre = extIgnKey(rootId, '');
+  for(const k of Object.keys(m)) if(k.startsWith(pre) && !onDisk.has(k.slice(pre.length))){ delete m[k]; extIgnDirty = true; }
+}
+function extIgnoreClearRoot(rootId){
+  const m = extIgnMap(), pre = extIgnKey(rootId, ''); let ch = false;
+  for(const k of Object.keys(m)) if(k.startsWith(pre)){ delete m[k]; ch = true; }
+  if(ch) extIgnoreSave();
+}
+async function extRemoveFile(path, rootId){
+  const parts = path.split('/'); let d = extHandleFor(rootId);
+  if(!d) throw new Error('That notes folder is no longer linked.');
+  for(let i = 0; i < parts.length - 1; i++) d = await d.getDirectoryHandle(parts[i]);
+  await d.removeEntry(parts[parts.length - 1]);
+}
+function askExtDelete(linked){
+  if(extDelResolve){ const r = extDelResolve; extDelResolve = null; r('cancel'); }
+  const shown = linked.slice(0, 3).map(m => m.extPath), more = linked.length - shown.length;
+  document.getElementById('extDelTitle').textContent = linked.length === 1 ? 'Remove this linked item' : `Remove ${linked.length} linked items`;
+  document.getElementById('extDelInfo').textContent = shown.join('\n') + (more > 0 ? `\n\u2026and ${more} more` : '');
+  document.getElementById('extDelBoth').textContent = linked.length === 1 ? 'Also delete the file from the folder' : 'Also delete the files from the folder';
+  document.getElementById('extDelOverlay').style.display = 'flex';
+  return new Promise(res => { extDelResolve = res; });
+}
+function extDelChoice(c){
+  const o = document.getElementById('extDelOverlay'); if(o) o.style.display = 'none';
+  const r = extDelResolve; extDelResolve = null; if(r) r(c);
+}
+function closeExtDel(){ extDelChoice('cancel'); }
+// Returns false when the person cancelled (nothing was removed).
+async function removeItemsFlow(ids){
+  const linked = [];
+  for(const id of ids){ const m = await getMeta(id); if(m && m.extPath && extHandleFor(m.extRoot)) linked.push(m); }
+  let choice = 'shelf';
+  if(linked.length){ choice = await askExtDelete(linked); if(choice === 'cancel') return false; }
+  const opts = { ignoreKeys: [], unlinkOnUndo: [] }, failed = [];
+  if(choice === 'both'){
+    const perm = new Map();
+    for(const m of linked){
+      const rid = m.extRoot || 'main';
+      try{
+        if(!perm.has(rid)) perm.set(rid, await extPerm(true, extHandleFor(m.extRoot)));
+        if(!perm.get(rid)) throw new Error('Permission to the notes folder was not granted.');
+        try{ await extRemoveFile(m.extPath, rid); }
+        catch(e){ if(!(e && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError'))) throw e; }   // already gone is fine
+        opts.unlinkOnUndo.push(m.id);
+      }catch(e){ failed.push(m); }
+    }
+    if(!failed.length) opts.msg = ids.length === 1 ? 'Removed from your shelf and the folder (Undo brings back the shelf copy only)'
+                                  : `Removed ${ids.length} items and their files (Undo brings back the shelf copies only)`;
+  }
+  // A file that stays in the folder must not come back on the next sync.
+  for(const m of linked){
+    if(opts.unlinkOnUndo.includes(m.id) || m.extMtime == null) continue;
+    const k = extIgnKey(m.extRoot, m.extPath); extIgnMap()[k] = m.extMtime; opts.ignoreKeys.push(k);
+  }
+  if(opts.ignoreKeys.length) await extIgnoreSave();
+  await deleteItemsWithUndo(ids, opts);
+  if(failed.length) alert(`Couldn't delete ${failed.length === 1 ? 'this file' : failed.length + ' files'} from the folder:\n${failed.slice(0, 3).map(m => m.extPath).join('\n')}\n\nThe item${failed.length === 1 ? ' was' : 's were'} removed from the shelf, and the file${failed.length === 1 ? ' is' : 's are'} left alone (it will not be added again unless it is edited).`);
+  return true;
+}
+function toggleExtRemoveOnDelete(){
+  if(!prefs.extRemoveOnDelete && !confirm('Turn this on?\n\nWhen you delete a file in the notes folder, its item is removed from the shelf the next time the folder syncs (you get a few seconds to Undo). Off by default: today the item stays on the shelf as an ordinary item.')) return;
+  setPref('extRemoveOnDelete', !prefs.extRemoveOnDelete);
+}
+async function extForgetRemoved(){
+  const n = Object.keys(extIgnMap()).length; if(!n) return;
+  if(!confirm(`Bring back ${n} file${n === 1 ? '' : 's'} you removed from the shelf?\n\nThey are still in the notes folder; the next sync adds them to the shelf again.`)) return;
+  prefs.extIgnored = {}; await extIgnoreSave();
+  await extSync(true);
+}
+
+// ---- Clipboard auto-clear (v1.78.0) ----
+// After a Copy button puts text on the clipboard, it is cleared ~30 s later, but only if it still holds that same
+// text (so something copied elsewhere in the meantime is never wiped) and only while the app is in the foreground.
+// If the browser will not let the app read the clipboard, nothing is cleared. Clipboard history tools (Windows
+// Win+V, phone keyboards) are outside the page's reach.
+let clipClearTimer = null, clipLast = null;
+function clipClearOn(){ return prefs.clipClear !== false; }
+function clipScheduleClear(text){
+  if(clipClearTimer){ clearTimeout(clipClearTimer); clipClearTimer = null; }
+  clipLast = null;
+  if(!clipClearOn() || !text) return;
+  clipLast = { text, at: Date.now() };
+  clipClearTimer = setTimeout(clipTryClear, 30000);
+}
+async function clipTryClear(){
+  clipClearTimer = null;
+  const c = clipLast; if(!c) return;
+  if(!clipClearOn() || Date.now() - c.at > 10 * 60 * 1000){ clipLast = null; return; }
+  if(!document.hasFocus()) return;                    // tried again when the window gets focus back
+  clipLast = null;
+  try{
+    const cur = await navigator.clipboard.readText();
+    if(cur === c.text) await navigator.clipboard.writeText('');
+  }catch(e){ /* not allowed here: leave the clipboard alone */ }
+}
+window.addEventListener('focus', ()=>{ if(clipLast && !clipClearTimer) clipClearTimer = setTimeout(clipTryClear, 200); });
+function toggleClipClear(){ setPref('clipClear', !clipClearOn()); }
+
 async function extIsGone(path, rootId){
   try{ await (await extFileHandle(path, false, rootId)).getFile(); return false; }
   catch(e){ return !!e && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError'); }
 }
 // One folder (v1.77.0: the body of the old extSync). Only items that belong to this folder are looked at.
 async function extSyncRoot(root, interactive){
-  const n = { added:0, updated:0, moved:0, adopted:0, unlinked:0 };
+  const n = { added:0, updated:0, moved:0, adopted:0, unlinked:0, removed:0 };
   const rootTag = root.id === 'main' ? null : root.id, tagFld = rootTag ? { extRoot: rootTag } : {};
   let total = 0;
   try{
@@ -10616,6 +10746,7 @@ async function extSyncRoot(root, interactive){
     const all = await getAll();
     const byPath = new Map(all.filter(m=>m.extPath && extRootIdOf(m) === root.id).map(m=>[m.extPath, m]));
     const onDisk = new Set(allFiles.map(f=>f.path));
+    if(allFiles.length) extIgnPrune(root.id, onDisk);   // v1.78.0: an empty listing never clears the ignore list
     const fresh = [];
     for(const f of files){
       const file = await f.handle.getFile(); const cur = byPath.get(f.path);
@@ -10624,7 +10755,7 @@ async function extSyncRoot(root, interactive){
           await putContentOnlyRaw(cur.id, await file.text());
           await putMetaOnly(cur.id, { extMtime: file.lastModified, updatedAt: Date.now() }); n.updated++;
         }
-      } else fresh.push({ path:f.path, file, text: await file.text() });
+      } else if(!extIgnored(root.id, f.path, file.lastModified)) fresh.push({ path:f.path, file, text: await file.text() });
     }
     // Linked items whose path is no longer in the folder listing.
     const orphanMetas = all.filter(m=>m.extPath && extRootIdOf(m) === root.id && !onDisk.has(m.extPath));
@@ -10680,7 +10811,7 @@ async function extSyncRoot(root, interactive){
           await putContentOnlyRawBytes(cur.id, await file.arrayBuffer());
           await putMetaOnly(cur.id, { extMtime: file.lastModified, extSize: file.size, updatedAt: Date.now() }); n.updated++;
         }
-      } else pdfFresh.push({ path: f.path, file });
+      } else if(!extIgnored(root.id, f.path, file.lastModified)) pdfFresh.push({ path: f.path, file });
     }
     const pdfOrphans = orphanMetas.filter(m=>m.type === 'pdf'), pdfUsed = new Set();
     const baseOf = p=>p.split('/').pop().toLowerCase();
@@ -10704,17 +10835,40 @@ async function extSyncRoot(root, interactive){
       }); n.added++;
     }
     // Still missing and confirmed gone: keep the note, drop the link.
+    const goneMetas = [];
     for(const m of orphanMetas){
       if(claimed.has(m.id)) continue;
       if(!(await extIsGone(m.extPath, root.id))) continue;
+      goneMetas.push(m);
+    }
+    // v1.78.0 (optional setting, off by default): a file deleted in the folder also removes its item. Never when the
+    // listing came back empty; a big batch (more than 3 and over half of this folder's linked items) is only removed
+    // after the person confirms, and a background sync never removes such a batch on its own.
+    let removeIds = [];
+    if(prefs.extRemoveOnDelete && goneMetas.length && allFiles.length > 0){
+      let okRemove = true;
+      if(goneMetas.length > 3 && goneMetas.length * 2 > byPath.size){
+        okRemove = !!interactive && confirm(`${goneMetas.length} files that were linked to your shelf are gone from the notes folder \u201c${root.name}\u201d.\n\nOK = also remove those ${goneMetas.length} items from the shelf (Undo is offered for a few seconds)\nCancel = keep them as ordinary items`);
+      }
+      if(okRemove) removeIds = goneMetas.filter(m => m.id !== curId).map(m => m.id);   // an item that is open is only unlinked
+    }
+    for(const m of goneMetas){
+      if(removeIds.includes(m.id)) continue;
       await putMetaOnly(m.id, { extPath:null, extMtime:null, ...(rootTag ? { extRoot:null } : {}) }); n.unlinked++;
     }
-    if(n.added || n.updated || n.moved || n.adopted || n.unlinked) await render();
+    if(removeIds.length){
+      await deleteItemsWithUndo(removeIds, { unlinkOnUndo: removeIds,
+        msg: removeIds.length === 1 ? 'Removed from your shelf: its file was deleted in the folder' : `Removed ${removeIds.length} items from your shelf: their files were deleted in the folder` });
+      n.removed = removeIds.length;
+    }
+    if(extIgnDirty){ extIgnDirty = false; await extIgnoreSave(); }
+    if(n.added || n.updated || n.moved || n.adopted || n.unlinked || n.removed) await render();
     if(interactive){
       const extra = [];
       if(n.moved) extra.push(`${n.moved} renamed/moved`);
       if(n.adopted) extra.push(`${n.adopted} matched to existing notes`);
       if(n.unlinked) extra.push(`${n.unlinked} unlinked (file no longer on disk, item kept)`);
+      if(n.removed) extra.push(`${n.removed} removed (file deleted in the folder)`);
       return `Notes folder \"${root.name}\": ${n.added} added, ${n.updated} updated${extra.length ? ', '+extra.join(', ') : ''}, ${total} notes and ${pdfFiles.length} PDFs in total.`;
     }
   }catch(e){ if(interactive) return `Notes folder \"${root.name}\": sync failed: ${e.message}`; }
@@ -10777,7 +10931,7 @@ const UI_ACTIONS = Object.freeze({
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
-  pdfSaveChoice, closePdfSaveAs, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigForget, toggleThumbsView, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
+  pdfSaveChoice, closePdfSaveAs, extDelChoice, closeExtDel, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigForget, toggleThumbsView, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,
@@ -10883,6 +11037,7 @@ const NAV_OVERLAYS = [ // DOM order = stacking order (a later one sits on top of
   ['moveCatOverlay', closeMoveCategory],
   ['pdfSrcOverlay', closePdfSrc],
   ['pdfSaveAsOverlay', closePdfSaveAs],
+  ['extDelOverlay', closeExtDel],
   ['pdfSigOverlay', closePdfSig],
   ['pdfProtOverlay', closePdfProt],
   ['startPageOverlay', closeStartPage]

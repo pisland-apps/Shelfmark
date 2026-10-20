@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
 <title>Shelfmark</title>
 <meta name="theme-color" content="#2a2822">
 <!-- v1.51.3: defense-in-depth against a note (imported backup, or a file
@@ -1487,6 +1488,19 @@ columns: 分类 | 笔记
       <button class="save" data-on-click="pdfSaveChoice" data-arg-click="overwrite">Overwrite the original file</button>
       <button class="cancel" data-on-click="pdfSaveChoice" data-arg-click="new">Save as a new file (original untouched)</button>
       <button class="cancel" data-on-click="pdfSaveChoice" data-arg-click="cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+<div id="extDelOverlay" class="overlay" style="display:none;">
+  <div class="sheet">
+    <h2 id="extDelTitle">Remove this linked item</h2>
+    <p class="alink-empty" style="padding-bottom:4px">Linked to a file in your notes folder:</p>
+    <p class="pdfsrc-info" id="extDelInfo" style="word-break:break-all;font-weight:600;white-space:pre-wrap"></p>
+    <p class="alink-empty" style="padding:4px 0 8px">Removing it from the shelf leaves the file in the folder, and it is not added again unless you edit that file. Deleting the file too cannot be undone.</p>
+    <div class="row" style="flex-direction:column">
+      <button class="save" data-on-click="extDelChoice" data-arg-click="shelf">Remove from the shelf only</button>
+      <button class="cancel" id="extDelBoth" data-on-click="extDelChoice" data-arg-click="both">Also delete the file from the folder</button>
+      <button class="cancel" data-on-click="extDelChoice" data-arg-click="cancel">Cancel</button>
     </div>
   </div>
 </div>
