@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.78.1';
-const APP_VERSION_DATE = '2026-10-20';
+const APP_VERSION = '1.79.0';
+const APP_VERSION_DATE = '2026-10-26';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -765,7 +765,7 @@ const SHELF_BAR_MIN = 15;    // below this the Compact / Collapse-all / Recent r
 const RECENT_KEEP = 12;      // ids remembered (some may be deleted later)
 const RECENT_SHOW = 8;       // chips drawn
 let lastRenderedCats = [];   // categories drawn by the last render() (for Collapse all / Expand all)
-function shelfViewMode(){ return prefs.shelfView === 'compact' ? 'compact' : prefs.shelfView === 'thumbs' ? 'thumbs' : 'cards'; }
+function shelfViewMode(){ return (prefs.shelfView === 'compact' || prefs.shelfView === 'thumbs' || prefs.shelfView === 'books') ? prefs.shelfView : 'cards'; }
 function toggleShelfView(){   // Cards <-> Compact (from Thumbnails it goes to Compact)
   prefs.shelfView = shelfViewMode() === 'compact' ? 'cards' : 'compact';
   putPrefs(prefs).catch(()=>{});
@@ -775,6 +775,19 @@ function toggleThumbsView(){  // v1.77.0: Cards <-> Thumbnails
   prefs.shelfView = shelfViewMode() === 'thumbs' ? 'cards' : 'thumbs';
   putPrefs(prefs).catch(()=>{});
   render();
+}
+function toggleBooksView(){   // v1.79.0: Cards <-> Bookshelf
+  prefs.shelfView = shelfViewMode() === 'books' ? 'cards' : 'books';
+  putPrefs(prefs).catch(()=>{});
+  render();
+}
+// Bookshelf view (v1.79.0): every category is a wooden shelf, every item a book standing on it. Display only: the
+// colour is the item's type colour, the height / width / shade come from the item's id so a book never changes
+// between renders. Tap = open; press-and-hold (phone) or right-click (PC) = rename / recategorize; delete via Select.
+function bookLook(id){
+  let h = 0; const str = String(id);
+  for(let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return { height: 138 + (h % 6) * 9, width: 36 + ((h >>> 4) % 3) * 5, mix: 78 + ((h >>> 8) % 4) * 7 };
 }
 function allCatsFolded(){
   return lastRenderedCats.length > 0 && lastRenderedCats.every(c => collapsedCats.has(c));
@@ -801,14 +814,16 @@ function rememberRecent(id){
 function renderShelfBar(allItems, cats){
   const bar = document.getElementById('shelfBar');
   if(!bar) return;
-  // v1.77.0: a small shelf that holds PDFs or pictures also gets the bar (view buttons only), so Thumbnails can be chosen.
-  const small = allItems.length < SHELF_BAR_MIN, hasPics = allItems.some(it => it.type === 'pdf' || it.type === 'image');
-  const show = (!small || hasPics) && !selectMode;
+  // v1.77.0 / v1.79.0: a small shelf gets the bar too (view buttons only), so Thumbnails and Bookshelf can be chosen.
+  const small = allItems.length < SHELF_BAR_MIN;
+  const show = allItems.length > 0 && !selectMode;   // v1.79.0: any non-empty shelf (the Bookshelf button is for small shelves too)
   bar.style.display = show ? '' : 'none';
   if(!show) return;
   const searching = !!searchQuery;
   document.getElementById('viewToggleBtn').textContent = shelfViewMode() === 'compact' ? 'Cards view' : 'Compact view';
   const tb = document.getElementById('thumbsToggleBtn'); if(tb) tb.classList.toggle('on', shelfViewMode() === 'thumbs');
+  const bb = document.getElementById('booksToggleBtn'); if(bb) bb.classList.toggle('on', shelfViewMode() === 'books');
+  const bh = document.getElementById('booksHint'); if(bh) bh.style.display = shelfViewMode() === 'books' ? '' : 'none';
   document.getElementById('foldAllBtn').style.display = (small || searching || cats.length < 2) ? 'none' : '';
   updateFoldBtn();
   const strip = document.getElementById('recentStrip');
@@ -832,7 +847,7 @@ function renderShelfBar(allItems, cats){
 
 // Called once at unlock, after the saved prefs are merged in.
 function restoreShelfViewPrefs(){
-  prefs.shelfView = (prefs.shelfView === 'compact' || prefs.shelfView === 'thumbs') ? prefs.shelfView : 'cards';
+  prefs.shelfView = (prefs.shelfView === 'compact' || prefs.shelfView === 'thumbs' || prefs.shelfView === 'books') ? prefs.shelfView : 'cards';
   prefs.recentIds = Array.isArray(prefs.recentIds) ? prefs.recentIds.filter(x => typeof x === 'string').slice(0, RECENT_KEEP) : [];
   itemSortMode = prefs.itemSortMode === 'title' ? 'title' : 'newest';
   collapsedCats.clear();
@@ -2719,6 +2734,13 @@ async function render(){
       row.className = 'spine';
       row.dataset.id = it.id;
       row.style.setProperty('--t', TYPE_COLOR[it.type]);
+      const booksView = shelfViewMode() === 'books';
+      if(booksView){
+        const bk = bookLook(it.id);
+        row.style.setProperty('--bh', bk.height + 'px'); row.style.setProperty('--bw', bk.width + 'px'); row.style.setProperty('--bm', bk.mix + '%');
+        row.title = it.title + ' \u00b7 ' + TYPE_LABEL[it.type];
+        if(!selectMode) bookGestures(row, it.id);
+      }
 
       if(selectMode){
         const isSelected = selectedIds.has(it.id);
@@ -2747,9 +2769,9 @@ async function render(){
           <button class="del" title="Remove">&times;</button>`;
         row.querySelector('.inline-play').onclick = (e)=>{ e.stopPropagation(); toggleShelfPlay(it.id); };
         row.querySelector('.expand').onclick = (e)=>{ e.stopPropagation(); openReader(it.id); };
-        row.onclick = ()=>toggleShelfPlay(it.id);
+        row.onclick = booksView ? (()=>{ if(!row._held) openReader(it.id); row._held = false; }) : (()=>toggleShelfPlay(it.id));
       } else {
-        row.onclick = ()=>openReader(it.id);
+        row.onclick = booksView ? (()=>{ if(!row._held) openReader(it.id); row._held = false; }) : (()=>openReader(it.id));
         row.innerHTML = `${rowCoverHTML(it)}
           <div class="meta"><div class="title">${escapeHtml(it.title)}</div>
           <div class="sub">${TYPE_LABEL[it.type]}${it.progress ? ' \u00b7 in progress' : ''}</div></div>
@@ -2765,6 +2787,20 @@ async function render(){
   if(shelfPlayingId) refreshShelfAudioRowUI();
   if(selectMode) updateSelectBar();
   thumbWatch();
+}
+// Bookshelf view: press-and-hold a book (0.5 s, finger not moved) or right-click it to rename / recategorize.
+function bookGestures(row, id){
+  let timer = null, x0 = 0, y0 = 0;
+  const stop = ()=>{ clearTimeout(timer); timer = null; };
+  row.addEventListener('touchstart', e=>{
+    const t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; row._held = false; stop();
+    timer = setTimeout(()=>{ timer = null; row._held = true; openEdit(id); }, 500);
+  }, {passive:true});
+  row.addEventListener('touchmove', e=>{
+    const t = e.touches[0]; if(Math.abs(t.clientX - x0) > 8 || Math.abs(t.clientY - y0) > 8) stop();
+  }, {passive:true});
+  row.addEventListener('touchend', stop); row.addEventListener('touchcancel', stop);
+  row.addEventListener('contextmenu', e=>{ e.preventDefault(); stop(); openEdit(id); });
 }
 // v1.64.3: coerces first. A title/category that was not text (a crafted or damaged backup) used to throw
 // "s.replace is not a function" here and stop the whole shelf from drawing. null/undefined print as nothing.
@@ -10256,6 +10292,7 @@ function buildStaticCommands(){
     { id:'select', icon: selectMode ? '&times;' : '&#9745;', label: selectMode ? 'Exit selection mode' : 'Select multiple items', hint:'', action: ()=>toggleSelectMode() },
     { id:'sort', icon:'&#8645;', label:'Sort: switch to '+(itemSortMode === 'newest' ? 'A\u2013Z' : 'Newest first'), hint:'now '+(itemSortMode === 'newest' ? 'Newest' : 'A\u2013Z'), action: ()=>toggleSortMode() },
     { id:'shelf-thumbs', icon:'&#9638;', label: shelfViewMode() === 'thumbs' ? 'Shelf view: leave Thumbnails' : 'Shelf view: Thumbnails (PDF first pages)', hint:'', action: ()=>toggleThumbsView() },
+    { id:'shelf-books', icon:'&#128218;', label: shelfViewMode() === 'books' ? 'Shelf view: leave Bookshelf' : 'Shelf view: Bookshelf (books standing on shelves)', hint:'', action: ()=>toggleBooksView() },
     { id:'shelf-view', icon:'&#9776;', label:'Shelf view: switch to '+(shelfViewMode() === 'compact' ? 'Cards' : 'Compact'), hint:'now '+(shelfViewMode() === 'compact' ? 'Compact' : 'Cards'), action: ()=>toggleShelfView() },
     { id:'fold-all', icon:'&#8661;', label:'Categories: collapse all / expand all', hint:'', action: ()=>toggleAllCats() },
     { id:'clip-clear', icon:'&#128203;', label:'Clipboard: auto-clear after Copy \u2014 turn '+(clipClearOn() ? 'off' : 'on'), hint: clipClearOn() ? 'on, 30 s' : 'off', action: ()=>toggleClipClear() },
@@ -10945,7 +10982,7 @@ const UI_ACTIONS = Object.freeze({
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
-  pdfSaveChoice, closePdfSaveAs, extDelChoice, closeExtDel, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigForget, toggleThumbsView, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
+  pdfSaveChoice, closePdfSaveAs, extDelChoice, closeExtDel, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigForget, toggleThumbsView, toggleBooksView, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
   doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,

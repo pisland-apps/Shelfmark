@@ -179,6 +179,58 @@
   .shelf[data-view="compact"] .cathead{margin-top:16px;}
   /* Thumbnail view (v1.77.0): a grid of tiles with the PDF's first page / cover on top */
   .chipbtn.on{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  /* Bookshelf view (v1.79.0): categories are wooden shelves, items are books standing on them */
+  .chipbtn.on{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  .bookshint{font-size:11.5px;color:var(--ink-soft);text-align:right;margin-top:6px;}
+  .shelf[data-view="books"]{gap:0;}
+  .shelf[data-view="books"] .cathead{margin:18px 0 0;padding:6px 12px;border:0;border-radius:6px 6px 0 0;background:#3b2616;color:#e9dcc3;}
+  .shelf[data-view="books"] .cathead .catcount{color:#c9b793;}
+  .shelf[data-view="books"] .cathead:first-child{margin-top:0;}
+  .shelf[data-view="books"] .catbody{
+    flex-direction:row;flex-wrap:wrap;align-items:flex-end;gap:5px;
+    padding:16px 14px 0;min-height:176px;
+    background:linear-gradient(#17120d,#201810);
+    border-left:8px solid #5b3d26;border-right:8px solid #5b3d26;border-bottom:12px solid #6d4a2e;
+    box-shadow:inset 0 10px 14px -10px rgba(0,0,0,.7);
+  }
+  .shelf[data-view="books"] .catbody.collapsed{display:none;}
+  .shelf[data-view="books"] .spine{
+    position:relative;flex:0 0 auto;width:var(--bw,40px);height:var(--bh,150px);
+    flex-direction:column;align-items:center;justify-content:flex-start;gap:0;padding:10px 0 8px;
+    border-radius:3px 3px 1px 1px;border-left:0;overflow:hidden;
+    background:linear-gradient(90deg,rgba(255,255,255,.16),rgba(255,255,255,0) 22%,rgba(0,0,0,.28)),color-mix(in srgb,var(--t) var(--bm,100%),#000);
+    box-shadow:0 1px 0 rgba(0,0,0,.5);color:#fff;
+    transition:transform .12s ease;
+  }
+  .shelf[data-view="books"] .spine::before,.shelf[data-view="books"] .spine::after{
+    content:"";position:absolute;left:0;right:0;height:3px;background:rgba(255,255,255,.28);
+  }
+  .shelf[data-view="books"] .spine::before{top:5px;} .shelf[data-view="books"] .spine::after{bottom:5px;}
+  .shelf[data-view="books"] .spine:hover{transform:translateY(-6px);}
+  .shelf[data-view="books"] .spine:active{transform:translateY(-3px);}
+  .shelf[data-view="books"] .spine .meta{flex:1;min-height:0;display:flex;justify-content:center;width:100%;margin:6px 0 4px;}
+  .shelf[data-view="books"] .spine .title{
+    writing-mode:vertical-rl;white-space:normal;overflow:hidden;text-overflow:ellipsis;
+    font-family:'Lora',Georgia,serif;font-size:12.5px;font-weight:600;line-height:1.1;max-height:100%;
+    color:#fff;text-shadow:0 1px 1px rgba(0,0,0,.45);
+  }
+  .shelf[data-view="books"] .spine .sub,.shelf[data-view="books"] .spine .cover-thumb,
+  .shelf[data-view="books"] .spine .inline-play,.shelf[data-view="books"] .spine .inline-bar,
+  .shelf[data-view="books"] .spine .inline-time,.shelf[data-view="books"] .spine .expand,
+  .shelf[data-view="books"] .spine .edit,.shelf[data-view="books"] .spine .del{display:none;}
+  .shelf[data-view="books"] .spine.audio-row.playing{box-shadow:0 0 0 2px var(--audio),0 1px 0 rgba(0,0,0,.5);}
+  .shelf[data-view="books"] .sel-indicator{
+    position:absolute;left:50%;bottom:12px;transform:translateX(-50%);width:20px;height:20px;border-radius:50%;
+    background:rgba(255,255,255,.9);color:#222;font-size:13px;display:flex;align-items:center;justify-content:center;z-index:2;
+  }
+  .shelf[data-view="books"] .spine.selected{box-shadow:0 0 0 2px #fff,0 1px 0 rgba(0,0,0,.5);transform:translateY(-6px);}
+  @media (hover:hover){
+    .shelf[data-view="books"] .spine:hover .edit,.shelf[data-view="books"] .spine:hover .del{
+      display:flex;position:absolute;left:50%;transform:translateX(-50%);width:20px;height:20px;padding:0;border-radius:50%;
+      background:rgba(255,255,255,.88);color:#222;font-size:12px;align-items:center;justify-content:center;z-index:3;
+    }
+    .shelf[data-view="books"] .spine:hover .edit{bottom:30px;} .shelf[data-view="books"] .spine:hover .del{bottom:8px;}
+  }
   .shelf[data-view="thumbs"] .catbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px;}
   .shelf[data-view="thumbs"] .catbody.collapsed{display:none;}
   .shelf[data-view="thumbs"] .spine{flex-direction:column;align-items:stretch;gap:0;padding:0;border-left:0;border-top:4px solid var(--t);overflow:hidden;position:relative;}
@@ -1249,8 +1301,10 @@
     <div class="shelfbar-btns">
       <button type="button" class="chipbtn" id="viewToggleBtn" data-on-click="toggleShelfView">Compact view</button>
       <button type="button" class="chipbtn" id="thumbsToggleBtn" data-on-click="toggleThumbsView">Thumbnails</button>
+      <button type="button" class="chipbtn" id="booksToggleBtn" data-on-click="toggleBooksView">Bookshelf</button>
       <button type="button" class="chipbtn" id="foldAllBtn" data-on-click="toggleAllCats">Collapse all</button>
     </div>
+    <div id="booksHint" class="bookshint" style="display:none;">Tap a book to open it &middot; press and hold (or right-click) to rename or move it &middot; use Select to delete.</div>
   </div>
   <div id="shelf" class="shelf"></div>
 </main>
