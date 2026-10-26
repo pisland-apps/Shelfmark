@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.79.0';
+const APP_VERSION = '1.79.1';
 const APP_VERSION_DATE = '2026-10-26';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -782,12 +782,14 @@ function toggleBooksView(){   // v1.79.0: Cards <-> Bookshelf
   render();
 }
 // Bookshelf view (v1.79.0): every category is a wooden shelf, every item a book standing on it. Display only: the
-// colour is the item's type colour, the height / width / shade come from the item's id so a book never changes
+// colour (v1.79.1: one of 10 from BOOK_COLORS), height, width and shade come from the item's id so a book never changes
 // between renders. Tap = open; press-and-hold (phone) or right-click (PC) = rename / recategorize; delete via Select.
+const BOOK_COLORS = ['#8a3b32','#3f6a4e','#35508a','#6b3f7a','#a07a2a','#2f6f73','#7a4a2b','#4a5568','#9a4a63','#5b6f2e'];
 function bookLook(id){
   let h = 0; const str = String(id);
   for(let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
-  return { height: 138 + (h % 6) * 9, width: 36 + ((h >>> 4) % 3) * 5, mix: 78 + ((h >>> 8) % 4) * 7 };
+  h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0; h = (h ^ (h >>> 13)) >>> 0;   // spread short ids too
+  return { height: 138 + (h % 6) * 9, width: 36 + ((h >>> 4) % 3) * 5, mix: 78 + ((h >>> 8) % 4) * 7, color: BOOK_COLORS[(h >>> 11) % BOOK_COLORS.length] };
 }
 function allCatsFolded(){
   return lastRenderedCats.length > 0 && lastRenderedCats.every(c => collapsedCats.has(c));
@@ -2737,7 +2739,7 @@ async function render(){
       const booksView = shelfViewMode() === 'books';
       if(booksView){
         const bk = bookLook(it.id);
-        row.style.setProperty('--bh', bk.height + 'px'); row.style.setProperty('--bw', bk.width + 'px'); row.style.setProperty('--bm', bk.mix + '%');
+        row.style.setProperty('--bh', bk.height + 'px'); row.style.setProperty('--bw', bk.width + 'px'); row.style.setProperty('--bm', bk.mix + '%'); row.style.setProperty('--bc', bk.color);
         row.title = it.title + ' \u00b7 ' + TYPE_LABEL[it.type];
         if(!selectMode) bookGestures(row, it.id);
       }
