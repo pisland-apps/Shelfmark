@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.79.1';
+const APP_VERSION = '1.79.2';
 const APP_VERSION_DATE = '2026-10-26';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2741,6 +2741,7 @@ async function render(){
         const bk = bookLook(it.id);
         row.style.setProperty('--bh', bk.height + 'px'); row.style.setProperty('--bw', bk.width + 'px'); row.style.setProperty('--bm', bk.mix + '%'); row.style.setProperty('--bc', bk.color);
         row.title = it.title + ' \u00b7 ' + TYPE_LABEL[it.type];
+        if(/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(it.title)) row.classList.add('cjk');   // v1.79.2: Chinese / Japanese / Korean titles get a clearer font and size
         if(!selectMode) bookGestures(row, it.id);
       }
 

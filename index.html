@@ -211,9 +211,11 @@
   .shelf[data-view="books"] .spine .meta{flex:1;min-height:0;display:flex;justify-content:center;width:100%;margin:6px 0 4px;}
   .shelf[data-view="books"] .spine .title{
     writing-mode:vertical-rl;white-space:normal;overflow:hidden;text-overflow:ellipsis;
-    font-family:'Lora',Georgia,serif;font-size:12.5px;font-weight:600;line-height:1.1;max-height:100%;
+    font-family:'Lora',Georgia,'Microsoft YaHei','PingFang SC','Noto Sans SC','Noto Sans CJK SC',sans-serif;font-size:12.5px;font-weight:600;line-height:1.1;max-height:100%;
     color:#fff;text-shadow:0 1px 1px rgba(0,0,0,.45);
   }
+  .shelf[data-view="books"] .spine.cjk .title{font-family:'Microsoft YaHei','PingFang SC','Noto Sans SC','Noto Sans CJK SC','Hiragino Sans','Yu Gothic','Malgun Gothic',sans-serif;font-size:15px;font-weight:500;line-height:1.3;letter-spacing:.06em;text-shadow:0 1px 2px rgba(0,0,0,.6);}
+  .shelf[data-view="books"] .spine.cjk{padding-top:12px;}
   .shelf[data-view="books"] .spine .sub,.shelf[data-view="books"] .spine .cover-thumb,
   .shelf[data-view="books"] .spine .inline-play,.shelf[data-view="books"] .spine .inline-bar,
   .shelf[data-view="books"] .spine .inline-time,.shelf[data-view="books"] .spine .expand,
