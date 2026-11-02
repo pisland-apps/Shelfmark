@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.79.2';
-const APP_VERSION_DATE = '2026-10-26';
+const APP_VERSION = '1.80.0';
+const APP_VERSION_DATE = '2026-11-02';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -9095,7 +9095,11 @@ function openNoteTabMenu(el){
   const m = document.createElement('div');
   m.id = 'noteTabMenu';
   m.className = 'ntab-menu';
+  const clipName = tabClipboard ? tabClipLabel(tabClipboard.name) : '';
   m.innerHTML = `<button type="button" data-on-click="renameNoteTab">Rename…</button>`
+    + `<button type="button" data-on-click="copyNoteTab">Copy tab</button>`
+    + (curTabs.length > 1 ? `<button type="button" data-on-click="cutNoteTab">Cut tab…</button>` : '')
+    + `<button type="button" data-on-click="pasteNoteTab"${tabClipboard ? '' : ' disabled'} title="${tabClipboard ? 'Paste a copy of the tab ' + escapeHtml(clipName) + ' after this tab' : 'Nothing copied yet. Use Copy tab or Cut tab first'}">Paste tab${tabClipboard ? ' \u201c' + escapeHtml(clipName) + '\u201d' : ''}</button>`
     + `<button type="button" data-on-click="moveNoteTab" data-arg-click="L"${curTabIdx === 0 ? ' disabled' : ''}>&larr; Move left</button>`
     + `<button type="button" data-on-click="moveNoteTab" data-arg-click="R"${curTabIdx === curTabs.length - 1 ? ' disabled' : ''}>Move right &rarr;</button>`
     + `<div class="ntab-colors" role="group" aria-label="Tab colour">`
@@ -9378,6 +9382,12 @@ async function closeNoteTab(){
   if(busy){ alert(busy); return; }
   const t = curTabs[curTabIdx];
   if(!confirm('Delete the tab "' + t.name + '"' + (t.text.trim() ? ' and everything written in it' : '') + "? This can't be undone.")) return;
+  await removeCurrentNoteTab();
+}
+// The removal itself (shared by Delete tab and, since v1.80.0, Cut tab): takes the active tab out of the note,
+// writes the note, and moves its bookmarks and fold state away with it. Returns true when the tab is gone.
+async function removeCurrentNoteTab(){
+  if(!curTabs || curTabs.length < 2) return false;
   const removed = curTabs.splice(curTabIdx, 1)[0];
   const oldIdx = curTabIdx;
   curTabIdx = Math.min(oldIdx, curTabs.length - 1);
@@ -9387,7 +9397,7 @@ async function closeNoteTab(){
   catch(err){
     curTabs.splice(oldIdx, 0, removed); curTabIdx = oldIdx; curNoteRaw = prevRaw;
     alert("Couldn't delete the tab — please try again.");
-    return;
+    return false;
   }
   // its bookmarks and fold state go with it
   try{
@@ -9402,6 +9412,83 @@ async function closeNoteTab(){
   await rerenderNoteView();
   putMetaOnly(curId, { activeTab: curTabIdx }).catch(()=>{});
   updateBookmarkUI(((await getOne(curId)) || {}).bookmarks || []);
+  return true;
+}
+// ---- Copy / cut / paste a tab between notes (v1.80.0) ----
+// The clipboard lives in memory only: it is never written to the database or to the system clipboard, so a tab
+// from a private note cannot leak out of the encrypted shelf. It is gone when the shelf locks (the page reloads)
+// or the app is closed. It survives opening other notes, and one copy can be pasted into several notes.
+let tabClipboard = null;   // { name, color, text, from }
+function tabClipLabel(n){ n = String(n || ''); return n.length > 28 ? n.slice(0, 27) + '\u2026' : n; }
+let tabToastTimer = null;
+function tabToast(msg){
+  let el = document.getElementById('ntabToast');
+  if(!el){ el = document.createElement('div'); el.id = 'ntabToast'; el.className = 'ntab-toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(tabToastTimer);
+  tabToastTimer = setTimeout(()=>{ el.classList.remove('show'); }, 3200);
+}
+// What the tab shows right now, including text typed in the editor but not saved yet (Copy only reads it).
+function liveTabText(i){
+  if(editSession && i === editorTabIdx){
+    const ta = document.getElementById('mdEditArea');
+    if(ta) return expandImagesForSave(ta.value);
+  }
+  if(tabEdits.has(i)) return tabEdits.get(i);
+  return curTabs[i].text;
+}
+function copyNoteTab(){
+  closeNoteTabMenu();
+  if(!curTabs || curType !== 'markdown') return;
+  const t = curTabs[curTabIdx];
+  tabClipboard = { name: t.name, color: t.color || '', text: liveTabText(curTabIdx), from: curId };
+  tabToast('Copied the tab \u201c' + tabClipLabel(t.name) + '\u201d. Open another note, tap \u22EF, then Paste tab.');
+}
+async function cutNoteTab(){
+  closeNoteTabMenu();
+  if(!curTabs || curType !== 'markdown' || curTabs.length < 2) return;
+  const busy = tabsBusyMessage();
+  if(busy){ alert(busy); return; }
+  const t = curTabs[curTabIdx];
+  if(!confirm('Cut the tab "' + t.name + '"?\n\nIt is taken out of this note and kept on the clipboard until you paste it into a note (it is lost if you lock the shelf or close the app first).')) return;
+  const clip = { name: t.name, color: t.color || '', text: t.text, from: curId };
+  if(!(await removeCurrentNoteTab())) return;   // it could not be removed: nothing was cut, the clipboard is left as it was
+  tabClipboard = clip;
+  tabToast('Cut the tab \u201c' + tabClipLabel(clip.name) + '\u201d. Open a note, tap \u22EF, then Paste tab.');
+}
+async function pasteNoteTab(){
+  closeNoteTabMenu();
+  if(!curTabs || curType !== 'markdown') return;
+  const clip = tabClipboard;
+  if(!clip){ tabToast('Nothing to paste yet. Use Copy tab or Cut tab first.'); return; }
+  const busy = tabsBusyMessage();
+  if(busy){ alert(busy); return; }
+  const prevIdx = curTabIdx, prevRaw = curNoteRaw, wasSingle = curTabs.length === 1;
+  const firstName = curTabs[0].name;
+  const at = curTabIdx + 1;
+  const name = uniqueTabName(cleanTabName(clip.name) || ('Tab ' + (curTabs.length + 1)), -1);
+  curTabs.splice(at, 0, { name, text: clip.text, color: NOTE_TAB_COLORS[clip.color] ? clip.color : '' });
+  curTabIdx = at; curNoteRaw = clip.text;
+  try{ await putNoteSlice(); }
+  catch(err){
+    curTabs.splice(at, 1); curTabIdx = prevIdx; curNoteRaw = prevRaw;
+    alert(isQuotaError(err) ? "Your device's storage is full, so the tab couldn't be pasted." : "Couldn't paste the tab — please try again.");
+    return;
+  }
+  if(wasSingle){   // bookmarks made before tabs existed belong to the original (first) tab: say so by name
+    try{
+      const it = await getOne(curId);
+      const bms = ((it && it.bookmarks) || []).map(b=> b.tab == null ? Object.assign({}, b, { tab: firstName }) : b);
+      if(bms.some((b, i)=>b !== it.bookmarks[i])) await putMetaOnly(curId, { bookmarks: bms });
+    }catch(err){ /* view state only */ }
+  }
+  dropTableUndo();
+  renderNoteTabs();
+  const c = document.getElementById('rcontent'); if(c) c.scrollTop = 0;
+  await rerenderNoteView();
+  putMetaOnly(curId, { activeTab: curTabIdx }).catch(()=>{});
+  tabToast('Pasted the tab \u201c' + tabClipLabel(name) + '\u201d.');
 }
 async function rerenderNoteView(){
   const mdView = document.getElementById('mdView');
@@ -10981,7 +11068,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  selectNoteTab, continueDraftEdit, addNoteTab, closeNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  selectNoteTab, continueDraftEdit, addNoteTab, closeNoteTab, copyNoteTab, cutNoteTab, pasteNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,

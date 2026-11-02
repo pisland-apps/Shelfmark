@@ -358,6 +358,8 @@
   .ntab-menu>button:hover:not(:disabled){background:rgba(127,127,127,.15);}
   .ntab-menu>button:disabled{opacity:.35;cursor:default;}
   .ntab-menu>button.danger{color:#c0392b;}
+  .ntab-toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);z-index:70;max-width:calc(100vw - 32px);background:var(--ink);color:var(--paper);font-size:14px;line-height:1.35;padding:10px 14px;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;}
+  .ntab-toast.show{opacity:1;transform:translate(-50%,0);}
   .ntab-colors{display:flex;flex-wrap:wrap;gap:8px;padding:8px 10px;}
   .ntab-sw{width:24px;height:24px;border-radius:50%;border:2px solid transparent;padding:0;cursor:pointer;color:var(--ink-soft);background:var(--paper);font-size:15px;line-height:20px;text-align:center;}
   .ntab-sw.on{border-color:var(--ink);box-shadow:0 0 0 2px var(--paper2) inset;}
