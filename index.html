@@ -1757,7 +1757,7 @@ columns: 分类 | 笔记
     <button class="back" data-on-click="closeReader">&larr; Shelf</button>
     <div class="rtitle" id="rtitle"></div>
     <button class="bmbtn index-btn" id="indexBtn" data-on-click="toggleIndexPanel" style="display:none;" aria-expanded="false" title="Jump to another item from your Index note">Index <span class="index-caret">&#9662;</span></button>
-    <button class="bmbtn" id="exportItemBtn" data-on-click="exportCurrentItem" title="Export this file">&#8679;</button>
+    <button class="bmbtn" id="exportItemBtn" data-on-click="openExportItemMenu" data-args-click='["$el"]' title="Export this file (a note with tabs asks: this tab or the whole note)">&#8679;</button>
     <button class="bmbtn" id="settingsBtn" data-on-click="toggleSettingsPanel" style="display:none;" title="Reading settings">&#9881;</button>
     <button class="bmbtn" id="findBtn" data-on-click="toggleFindBar" style="display:none;" title="Find in this note (Ctrl+F)">&#128269;</button>
     <button class="bmbtn" id="editNoteBtn" data-on-click="startEditNote" style="display:none;" title="Edit this note">&#9998;</button>

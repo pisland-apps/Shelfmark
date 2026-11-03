@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.80.0';
-const APP_VERSION_DATE = '2026-11-02';
+const APP_VERSION = '1.81.0';
+const APP_VERSION_DATE = '2026-11-04';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -3331,7 +3331,49 @@ function safeExportFilename(title, ext){
   const stamp = new Date().toISOString().slice(0,10);
   return `${base} ${stamp}${ext}`;
 }
+// v1.81.0: on a note with 2+ tabs the ⇧ button asks what to export: the open tab alone or the whole note.
+function closeExportItemMenu(){
+  const m = document.getElementById('exportItemMenu');
+  if(m) m.remove();
+  document.removeEventListener('click', onExportItemMenuOutside, true);
+}
+function onExportItemMenuOutside(e){
+  const m = document.getElementById('exportItemMenu');
+  if(!m) return;
+  if(m.contains(e.target) || (e.target.closest && e.target.closest('#exportItemBtn'))) return;
+  closeExportItemMenu();
+}
+function openExportItemMenu(el){
+  if(document.getElementById('exportItemMenu')){ closeExportItemMenu(); return; }
+  if(curType !== 'markdown' || !curTabs || curTabs.length < 2) return exportCurrentItem();
+  if(!el || !el.getBoundingClientRect) return exportCurrentItem();
+  const m = document.createElement('div');
+  m.id = 'exportItemMenu';
+  m.className = 'ntab-menu';
+  m.innerHTML = `<button type="button" data-on-click="exportNoteTab" title="Save only the open tab as its own .md file">This tab only \u201c${escapeHtml(tabClipLabel(curTabs[curTabIdx].name))}\u201d</button>`
+    + `<button type="button" data-on-click="exportWholeNote" title="Save the whole note, all ${curTabs.length} tabs, as one .md file">Whole note (${curTabs.length} tabs)</button>`;
+  document.body.appendChild(m);
+  const r = el.getBoundingClientRect();
+  m.style.top = Math.min(r.bottom + 4, window.innerHeight - m.offsetHeight - 8) + 'px';
+  m.style.left = Math.max(8, Math.min(r.right - m.offsetWidth, window.innerWidth - m.offsetWidth - 8)) + 'px';
+  setTimeout(()=>document.addEventListener('click', onExportItemMenuOutside, true), 0);
+}
+function exportWholeNote(){ closeExportItemMenu(); return exportCurrentItem(); }
+// Exports ONLY the open tab: plain markdown with no tab marker, so it opens cleanly in any other app.
+// Takes the text on screen, unsaved edits included (same rule as Copy tab).
+async function exportNoteTab(){
+  closeExportItemMenu();
+  if(!curId || !curTabs || curType !== 'markdown') return;
+  const it = await getOne(curId);
+  if(!it){ alert("Couldn't find this item \u2014 it may have just been deleted."); return; }
+  const t = curTabs[curTabIdx];
+  const raw = liveTabText(curTabIdx);
+  const filename = safeExportFilename((it.title || 'Untitled') + ' - ' + (t.name || ('Tab ' + (curTabIdx + 1))), '.md');
+  try{ await downloadBlob(new Blob([raw], {type:'text/markdown'}), filename); }
+  catch(err){ alert("Couldn't export this tab \u2014 please try again."); }
+}
 async function exportCurrentItem(){
+  closeExportItemMenu();
   if(!curId) return;
   const it = await getOne(curId);
   if(!it){ alert("Couldn't find this item — it may have just been deleted."); return; }
@@ -3342,9 +3384,13 @@ async function exportCurrentItem(){
       // than the last-saved version, so nothing just typed goes missing.
       const editWrap = document.getElementById('mdEditWrap');
       const isEditing = editWrap && editWrap.style.display === 'flex';
-      const raw = isEditing
-        ? expandImagesForSave(document.getElementById('mdEditArea').value)
-        : it.content;
+      // With tabs, "what is in the text box" is only ONE tab, so rebuild the whole note from every tab's
+      // live text (v1.81.0); before this a whole-note export made mid-edit held just the tab being edited.
+      const raw = (isEditing && curTabs && curTabs.length > 1)
+        ? composeNoteTabs(curTabs.map((t, i)=>({ name: t.name, color: t.color, text: liveTabText(i) })))
+        : isEditing
+          ? expandImagesForSave(document.getElementById('mdEditArea').value)
+          : it.content;
       await downloadBlob(new Blob([raw], {type:'text/markdown'}), filename);
     } else {
       await downloadBlob(it.content, filename);
@@ -7536,6 +7582,7 @@ function wireHeadingFold(container){
 
 
 function closeReader(){
+  closeExportItemMenu();
   if(!pdfConfirmLeave()) return;   // unsaved PDF edits: stay open if the user says no
   pdfResetSession();
   dropTableUndo();
@@ -11074,7 +11121,7 @@ const UI_ACTIONS = Object.freeze({
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
   pdfSaveChoice, closePdfSaveAs, extDelChoice, closeExtDel, togglePdfThumbs, togglePdfFind, closePdfFind, pdfFindStep, pdfFindCase, onPdfFindInput, onPdfFindKey, setPdfView, pdfZoomStep, onPdfZoomSelect, onPdfPageKey, onPdfPageChange, setPdfTool, setPdfColor, setPdfInkWidth, setPdfTxtSize, setPdfTxtPreset, pdfPickImage, onPdfImgFile, pdfOpenSig, pdfOpenProt, pdfProtGo, pdfProtSave, pdfProtDirty, closePdfProt, pdfSigClear, pdfSigUse, pdfSigLastUse, pdfSigForget, toggleThumbsView, toggleBooksView, pdfSigColor, closePdfSig, pdfApplySelectionHighlight, pdfEditUndo, pdfEditRedo, pdfEditSave, pdfPageAction, openPdfMenu, togglePdfSelectMode, closePdfSrc, confirmPdfSrc, onPdfSrcFile,
   cyclePdfZoom, cycleSpeed, deleteBookmark, discardDraft, doAuthChange, doExport,
-  doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, filterHelp, findStep,
+  doImportDecrypt, eraseShelfFromApp, exitSelectMode, exportCurrentItem, openExportItemMenu, exportNoteTab, exportWholeNote, filterHelp, findStep,
   foldAllHeadings, insertDivider, insertTableTemplate, insertTimestamp, jumpBookmark,
   jumpOutline, miniPlayerClose, miniPlayerOpenFull, miniPlayerToggle, onCmdPalInput,
   onCmdPalKeydown, onCoverPick, onFile, onFindInput, onFindKeydown, onImportFile, onLockSubmit,
