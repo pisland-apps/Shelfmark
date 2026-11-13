@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.83.0';
+const APP_VERSION = '1.83.1';
 const APP_VERSION_DATE = '2026-11-13';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -172,7 +172,7 @@ async function createPasscode(passcode){
   const { key, rec } = await buildPasscodeAuth(passcode);
   await putAuth(rec);
   cryptoKey = key;
-  authMode = 'passcode';
+  authMode = 'passcode'; refreshLockButtons();
 }
 async function buildDeviceAuth(){
   const key = await crypto.subtle.generateKey({ name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
@@ -182,7 +182,7 @@ async function createDeviceKeyMode(){
   const { key, rec } = await buildDeviceAuth();
   await putAuth(rec); // rejects if this browser can't store a CryptoKey
   cryptoKey = key;
-  authMode = 'device';
+  authMode = 'device'; refreshLockButtons();
 }
 async function verifyPasscode(passcode){
   const auth = await getAuth();
@@ -233,7 +233,7 @@ async function initLockScreen(){
   if(auth && auth.mode === 'device'){
     if(auth.key){
       cryptoKey = auth.key;
-      authMode = 'device';
+      authMode = 'device'; refreshLockButtons();
       await unlockApp();
       return;
     }
@@ -369,6 +369,11 @@ let lastActivityAt = Date.now(), hiddenSince = null;
 function autoLockMinutes(v, choices, dflt){
   const n = Number(v);
   return choices.includes(n) ? n : dflt;
+}
+// v1.83.1: the 🔒 buttons (shelf header, reader bar) exist only when a passcode is set
+function refreshLockButtons(){
+  const on = authMode === 'passcode';
+  document.querySelectorAll('.lock-btn').forEach(el=>{ el.style.display = on ? (el.classList.contains('bmbtn') ? 'flex' : '') : 'none'; });
 }
 function autoLockActive(){ return authMode === 'passcode' && !!cryptoKey; }
 function mediaIsPlaying(){
@@ -586,7 +591,7 @@ async function doAuthChange(){
   busy.style.display = 'flex';
   try{
     await reencryptEverything(newKey, newRec, (done,total)=>{ busyText.textContent = 'Re-encrypting your shelf\u2026 ' + done + ' / ' + total; });
-    authMode = targetMode;
+    authMode = targetMode; refreshLockButtons();
     busy.style.display = 'none';
     closeAuthModal();
     alert(targetMode === 'passcode' ? 'Passcode set. You\'ll be asked for it next time you open Shelfmark.' : 'Passcode removed. Shelfmark will now open straight to your shelf.');
@@ -2713,6 +2718,7 @@ function thumbWatch(){
 }
 
 async function render(){
+  refreshLockButtons();
   const allItems = (await getAll()).sort((a,b)=>b.addedAt-a.addedAt);
   shelfCountHint = allItems.length;   // lets Export refuse an empty shelf before opening the save dialog
   const items = searchQuery
@@ -3085,6 +3091,7 @@ async function saveEdit(){
 
 // ---- Reader ----
 async function openReader(id){
+  refreshLockButtons();
   if(!pdfConfirmLeave()) return;   // unsaved PDF edits
   pdfResetSession();
   flushDraftNow(); // opening another item while a note is mid-edit (palette jump, note link…) must not lose that edit

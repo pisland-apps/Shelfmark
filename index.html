@@ -1262,6 +1262,7 @@
     <div class="brand">Shelfmark<span>your own shelf, added by hand</span></div>
     <div style="display:flex;gap:8px;align-items:center;">
       <button class="icon-btn" data-on-click="quickBackup" id="quickBackupBtn" title="Save a backup of the whole shelf (uses your shelf passcode)" aria-label="Save backup">&#128190;</button>
+      <button class="icon-btn lock-btn" data-on-click="lockNowAsk" title="Lock now" aria-label="Lock now" style="display:none;">&#128274;</button>
       <button class="icon-btn" data-on-click="openCommandPalette" title="Command palette (Ctrl+K)">&#128269;</button>
       <!-- These used to be individual header icons — with the command palette now
            covering all of them (plus theme switching and jump-to-tag), they're kept
@@ -1777,6 +1778,7 @@ columns: 分类 | 笔记
     <button class="back" data-on-click="closeReader">&larr; Shelf</button>
     <div class="rtitle" id="rtitle"></div>
     <button class="bmbtn index-btn" id="indexBtn" data-on-click="toggleIndexPanel" style="display:none;" aria-expanded="false" title="Jump to another item from your Index note">Index <span class="index-caret">&#9662;</span></button>
+    <button class="bmbtn lock-btn" data-on-click="lockNowAsk" title="Lock now" aria-label="Lock now" style="display:none;">&#128274;</button>
     <button class="bmbtn" id="exportItemBtn" data-on-click="openExportItemMenu" data-args-click='["$el"]' title="Export this file (a note with tabs asks: this tab or the whole note)">&#8679;</button>
     <button class="bmbtn" id="settingsBtn" data-on-click="toggleSettingsPanel" style="display:none;" title="Reading settings">&#9881;</button>
     <button class="bmbtn" id="findBtn" data-on-click="toggleFindBar" style="display:none;" title="Find in this note (Ctrl+F)">&#128269;</button>
