@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.82.1';
+const APP_VERSION = '1.83.0';
 const APP_VERSION_DATE = '2026-11-13';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -396,6 +396,7 @@ async function lockNow(){
   const clipDone = Promise.race([clipClearForLock().catch(()=>{}), new Promise(r => setTimeout(r, 1500))]);
   await Promise.race([Promise.all([dbWriteQueue, clipDone]), new Promise(r => setTimeout(r, 4000))]);
   cryptoKey = null;
+  allowUnload = true;   // v1.83.0: the lock's own reload must not raise the "leave?" question (drafts are already kept)
   reloadPage();
   return true;
 }
@@ -1268,6 +1269,7 @@ function putDraft(id, text, tab, edits){
     if(edits && Object.keys(edits).length) payload.edits = edits;
     await sealItemJSON(cryptoKey, rec, 'draft', payload);
     await putRaw(rec);
+    unsavedNotes.add(id);   // v1.83.0: this note has edits parked this session (see "Unsaved edits across notes")
   });
 }
 async function getDraft(id){
@@ -1279,11 +1281,86 @@ async function getDraft(id){
 function clearDraft(id){
   return serialized(async ()=>{
     const rec = await getOneRaw(id);
-    if(!rec || !rec.draftCipher) return;
+    if(!rec || !rec.draftCipher){ unsavedNotes.delete(id); return; }
     delete rec.draftIv; delete rec.draftCipher; delete rec.draftBound;
     await putRaw(rec);
+    unsavedNotes.delete(id);
   });
 }
+
+// ---- Unsaved edits across notes (v1.83.0) ----
+// Edits never have to be saved before you go somewhere else: another tab, another note, a tab operation. They stay
+// as encrypted drafts (see putDraft) and a note you left mid-edit reopens in the editor with them. The one place the
+// app asks is when YOU leave it: Lock now offers Save all / Don't save / Cancel, and closing the tab or window
+// triggers the browser's own "leave?" question. (Auto-lock and a swiped-away app cannot ask anyone: the drafts stay
+// on the device, encrypted, and are offered back at the next unlock.)
+const unsavedNotes = new Set();   // ids that have a draft written this session and not saved / discarded since
+let allowUnload = false;
+function currentEditDirty(){ return !!(curId && curType === 'markdown' && editSession && dirtyTabSet().size > 0); }
+function draftDiffersFromSaved(it, d){
+  const tabs = parseNoteTabs(it.content);
+  const t = (Number.isInteger(d.tab) && tabs[d.tab]) ? d.tab : 0;
+  if(d.text !== tabs[t].text) return true;
+  return Object.keys(d.edits || {}).some(k=> tabs[Number(k)] && typeof d.edits[k] === 'string' && d.edits[k] !== tabs[Number(k)].text);
+}
+// Notes that really have unsaved text right now: [{id, title}]. Drafts identical to the saved note are tidied away.
+async function collectUnsaved(){
+  try{ flushDraftNow(); await dbWriteQueue; }catch(e){}
+  const ids = new Set(unsavedNotes);
+  if(currentEditDirty()) ids.add(curId);
+  const out = [];
+  for(const id of ids){
+    const it = await getOne(id).catch(()=>null), d = await getDraft(id).catch(()=>null);
+    if(!it || !d || it.type !== 'markdown'){ unsavedNotes.delete(id); continue; }
+    if(draftDiffersFromSaved(it, d)) out.push({ id, title: it.title });
+    else { unsavedNotes.delete(id); clearDraft(id).catch(()=>{}); }
+  }
+  return out;
+}
+// Save one note's parked edits: the open note through the normal Save, any other by applying its draft.
+async function saveUnsavedNote(id){
+  if(id === curId && editSession){ await saveEditNote(); return; }
+  const it = await getOne(id), d = await getDraft(id);
+  if(!it || !d) return;
+  const tabs = parseNoteTabs(it.content);
+  const t = (Number.isInteger(d.tab) && tabs[d.tab]) ? d.tab : 0;
+  tabs[t].text = d.text;
+  Object.keys(d.edits || {}).forEach(k=>{ const i = Number(k); if(tabs[i] && typeof d.edits[k] === 'string') tabs[i].text = d.edits[k]; });
+  await putContentOnly(id, 'markdown', composeNoteTabs(tabs));
+  await clearDraft(id);
+}
+let quitList = [];
+function quitCancel(){ const o = document.getElementById('quitOverlay'); if(o) o.style.display = 'none'; }
+async function lockNowAsk(){
+  if(!autoLockActive()) return;
+  const list = await collectUnsaved();
+  if(!list.length){ lockNow(); return; }
+  quitList = list;
+  const n = list.length;
+  document.getElementById('quitText').textContent = n === 1 ? 'This note has edits that are not saved yet:' : n + ' notes have edits that are not saved yet:';
+  document.getElementById('quitNotes').innerHTML = list.slice(0, 8).map(x=>'<li>' + escapeHtml(x.title || 'Untitled') + '</li>').join('') + (n > 8 ? '<li>and ' + (n - 8) + ' more</li>' : '');
+  document.getElementById('quitOverlay').style.display = 'flex';
+}
+async function quitSave(){
+  quitCancel();
+  for(const x of quitList){
+    try{ await saveUnsavedNote(x.id); }
+    catch(err){ alert('Couldn\u2019t save \u201c' + (x.title || 'Untitled') + '\u201d, so the shelf was not locked. Your edits are still kept.'); return; }
+  }
+  lockNow();
+}
+async function quitDiscard(){
+  quitCancel();
+  if(editSession){ stopDraftTimer(); resetTabEdits(); leaveEditMode(); }
+  curDraft = null;
+  for(const x of quitList){ await clearDraft(x.id).catch(()=>{}); }
+  unsavedNotes.clear();
+  lockNow();
+}
+window.addEventListener('beforeunload', e => {
+  if(allowUnload) return;
+  if(unsavedNotes.size || currentEditDirty()){ try{ flushDraftNow(); }catch(err){} e.preventDefault(); e.returnValue = ''; }
+});
 
 // ---- Export / Import ----
 // Export can be either a passphrase-encrypted file (AES-256-GCM, PBKDF2-
@@ -3285,6 +3362,9 @@ async function openReader(id){
     document.getElementById('settingsBtn').style.display = 'flex';
     updateBookmarkUI(it.bookmarks || []);
     updateOutlineUI(buildOutline(div));
+    // v1.83.0: a note you left mid-edit earlier in this session reopens straight in the editor with your
+    // unsaved text (no "Continue editing" tap). Drafts from an earlier session still show the banner.
+    if(curDraft && unsavedNotes.has(id)) startEditNote();
   } else if(it.type === 'audio'){
     // Reuses the SAME shared player as the shelf list and note-embedded
     // shelf:// links — not a separate <audio> element — so there's only
@@ -5291,7 +5371,8 @@ function blockOffsets(text){
 // curNoteRaw's.
 function editParagraphAt(idx){
   if(curNoteRaw == null) return;
-  if(editSession && curTabIdx !== editorTabIdx) return;   // v1.70.1: reading another tab while an edit is open: a tap on text must not move the editor (the pencil does that)
+  // v1.83.0: reading another tab while an edit is open: a tap on text moves the editor to that tab (the tab you
+  // leave keeps its unsaved text), so you can edit anywhere without saving first.
   startEditNote();
   // Resuming a draft: paragraph numbers refer to the SAVED text, so they don't
   // line up with the draft — leave the caret alone rather than land on the
@@ -9192,8 +9273,9 @@ async function setNoteTabColor(arg){
 }
 async function moveNoteTabTo(from, to){
   if(!curTabs || from === to || from < 0 || to < 0 || from >= curTabs.length || to >= curTabs.length) return;
-  const busy = tabsBusyMessage();
-  if(busy){ alert(busy); renderNoteTabs(); return; }
+  return withEditsKept(()=>moveNoteTabToCore(from, to));
+}
+async function moveNoteTabToCore(from, to){
   const prevTabs = curTabs.slice(), prevIdx = curTabIdx, activeObj = curTabs[curTabIdx];
   const moved = curTabs.splice(from, 1)[0];
   curTabs.splice(to, 0, moved);
@@ -9286,10 +9368,56 @@ let noteTabDrag = null, noteTabDragSuppressClick = false;
   document.addEventListener('touchmove', e=>{ if(noteTabDrag && noteTabDrag.on && e.cancelable) e.preventDefault(); }, { passive:false });
   document.addEventListener('contextmenu', e=>{ if(noteTabDrag && noteTabDrag.touch && e.target.closest && e.target.closest('#noteTabs')) e.preventDefault(); });
 })();
-function tabsBusyMessage(){
-  if(editSession) return 'Save or cancel your edit first, then add, move, rename, recolour or delete tabs. (Switching between tabs works while editing.)';
-  if(curDraft) return 'This note has an unsaved draft in the tab "' + ((curTabs[curDraft.tab] || {}).name || '') + '". Continue editing or discard it first.';
-  return '';
+// v1.83.0: tab changes (add, move, delete, cut, paste) no longer need Save / Cancel first. withEditsKept() below
+// parks the unsaved text of every tab, lets the operation run as it always did (it only ever writes the SAVED
+// text), then puts each unsaved text back on its tab (found by identity, so a moved tab keeps its edits).
+function tabsBusyMessage(){ return ''; }
+async function withEditsKept(op){
+  if(!curTabs || curType !== 'markdown' || !(editSession || curDraft)) return op();
+  const keep = new Map();   // tab object -> unsaved text
+  let editorObj = null;
+  if(editSession){
+    const ta = document.getElementById('mdEditArea');
+    editorObj = curTabs[editorTabIdx] || null;
+    if(ta && editorObj) keep.set(editorObj, expandImagesForSave(ta.value));
+    tabEdits.forEach((t, i)=>{ if(curTabs[i]) keep.set(curTabs[i], t); });
+    stopDraftTimer(); resetTabEdits(); curDraft = null; leaveEditMode();
+  } else if(curDraft){
+    editorObj = curTabs[curDraft.tab] || null;
+    if(editorObj) keep.set(editorObj, curDraft.text);
+    Object.keys(curDraft.edits || {}).forEach(k=>{ if(curTabs[Number(k)]) keep.set(curTabs[Number(k)], curDraft.edits[k]); });
+    curDraft = null; renderDraftBanner();
+  }
+  let res;
+  try{ res = await op(); }
+  finally{
+    try{ await restoreKeptEdits(keep, editorObj); }catch(err){ console.error('[tabs] restoring unsaved edits', err); }
+  }
+  return res;
+}
+async function restoreKeptEdits(keep, editorObj){
+  if(!curTabs) return;
+  const changed = [];   // [index, text] for tabs that still exist and really differ from what is saved
+  keep.forEach((t, obj)=>{ const i = curTabs.indexOf(obj); if(i >= 0 && t !== curTabs[i].text) changed.push([i, t]); });
+  if(!changed.length) return;
+  if(editSession){   // the operation itself opened the editor (a new empty tab): park the rest beside it
+    changed.forEach(([i, t])=>{ if(i !== editorTabIdx) tabEdits.set(i, t); });
+    tabEditsRev++; refreshTabDots(); flushDraftNow();
+    return;
+  }
+  const showIdx = Math.max(0, Math.min(curTabs.length - 1, curTabIdx));   // the tab the operation left active (new, pasted, neighbour, moved)
+  const ei = editorObj && curTabs.indexOf(editorObj) >= 0 ? curTabs.indexOf(editorObj) : (curTabIdx || 0);
+  const mine = changed.find(c=>c[0] === ei);
+  const edits = {};
+  changed.forEach(([i, t])=>{ if(i !== ei) edits[i] = t; });
+  curTabIdx = ei; curNoteRaw = curTabs[ei].text;
+  curDraft = { text: mine ? mine[1] : curTabs[ei].text, tab: ei, savedAt: Date.now() };
+  if(Object.keys(edits).length) curDraft.edits = edits;
+  startEditNote();
+  tabEditsRev++;
+  if(showIdx !== ei) await switchTabWhileEditing(showIdx);
+  refreshTabDots();
+  flushDraftNow();   // the draft now carries the new tab numbers
 }
 async function selectNoteTab(arg){
   if(!curTabs || curType !== 'markdown') return;
@@ -9415,10 +9543,11 @@ async function renameNoteTab(){
 }
 async function addNoteTab(){
   if(!curTabs || curType !== 'markdown') return;
-  const busy = tabsBusyMessage();
-  if(busy){ alert(busy); return; }
   const n = prompt('Name for the new tab:', 'Tab ' + (curTabs.length + 1));
   if(n === null) return;
+  return withEditsKept(()=>addNoteTabCore(n));
+}
+async function addNoteTabCore(n){
   const prevIdx = curTabIdx, prevRaw = curNoteRaw, wasSingle = curTabs.length === 1;
   const firstName = curTabs[0].name;
   curTabs.push({ name: uniqueTabName(cleanTabName(n) || ('Tab ' + (curTabs.length + 1)), -1), text: '', color: '' });
@@ -9444,8 +9573,6 @@ async function addNoteTab(){
 async function closeNoteTab(){
   closeNoteTabMenu();
   if(!curTabs || curTabs.length < 2) return;
-  const busy = tabsBusyMessage();
-  if(busy){ alert(busy); return; }
   const t = curTabs[curTabIdx];
   if(!confirm('Delete the tab "' + t.name + '"' + (t.text.trim() ? ' and everything written in it' : '') + "? This can't be undone.")) return;
   await removeCurrentNoteTab();
@@ -9454,6 +9581,9 @@ async function closeNoteTab(){
 // writes the note, and moves its bookmarks and fold state away with it. Returns true when the tab is gone.
 async function removeCurrentNoteTab(){
   if(!curTabs || curTabs.length < 2) return false;
+  return withEditsKept(()=>removeCurrentNoteTabCore());
+}
+async function removeCurrentNoteTabCore(){
   const removed = curTabs.splice(curTabIdx, 1)[0];
   const oldIdx = curTabIdx;
   curTabIdx = Math.min(oldIdx, curTabs.length - 1);
@@ -9514,11 +9644,9 @@ function copyNoteTab(){
 async function cutNoteTab(){
   closeNoteTabMenu();
   if(!curTabs || curType !== 'markdown' || curTabs.length < 2) return;
-  const busy = tabsBusyMessage();
-  if(busy){ alert(busy); return; }
   const t = curTabs[curTabIdx];
   if(!confirm('Cut the tab "' + t.name + '"?\n\nIt is taken out of this note and kept on the clipboard until you paste it into a note (it is lost if you lock the shelf or close the app first).')) return;
-  const clip = { name: t.name, color: t.color || '', text: t.text, from: curId };
+  const clip = { name: t.name, color: t.color || '', text: liveTabText(curTabIdx), from: curId };   // unsaved edits go with the tab
   if(!(await removeCurrentNoteTab())) return;   // it could not be removed: nothing was cut, the clipboard is left as it was
   tabClipboard = clip;
   tabToast('Cut the tab \u201c' + tabClipLabel(clip.name) + '\u201d. Open a note, tap \u22EF, then Paste tab.');
@@ -9528,8 +9656,9 @@ async function pasteNoteTab(){
   if(!curTabs || curType !== 'markdown') return;
   const clip = tabClipboard;
   if(!clip){ tabToast('Nothing to paste yet. Use Copy tab or Cut tab first.'); return; }
-  const busy = tabsBusyMessage();
-  if(busy){ alert(busy); return; }
+  return withEditsKept(()=>pasteNoteTabCore(clip));
+}
+async function pasteNoteTabCore(clip){
   const prevIdx = curTabIdx, prevRaw = curNoteRaw, wasSingle = curTabs.length === 1;
   const firstName = curTabs[0].name;
   const at = curTabIdx + 1;
@@ -10453,7 +10582,7 @@ function buildStaticCommands(){
     { id:'fold-all', icon:'&#8661;', label:'Categories: collapse all / expand all', hint:'', action: ()=>toggleAllCats() },
     { id:'clip-clear', icon:'&#128203;', label:'Clipboard: auto-clear after Copy \u2014 turn '+(clipClearOn() ? 'off' : 'on'), hint: clipClearOn() ? 'on, 30 s' : 'off', action: ()=>toggleClipClear() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
-    ...(authMode === 'passcode' ? [ { id:'lock-now', icon:'&#128274;', label:'Lock now', hint:'', action: ()=>lockNow() } ] : []),
+    ...(authMode === 'passcode' ? [ { id:'lock-now', icon:'&#128274;', label:'Lock now', hint:'', action: ()=>lockNowAsk() } ] : []),
     authMode === 'device'
       ? { id:'passcode-set', icon:'&#128274;', label:'Set a passcode\u2026', hint:'currently none', action: ()=>openAuthModal('set') }
       : { id:'passcode-remove', icon:'&#128275;', label:'Remove passcode\u2026', hint:'', action: ()=>openAuthModal('remove') },
@@ -11134,7 +11263,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  selectNoteTab, continueDraftEdit, addNoteTab, closeNoteTab, copyNoteTab, cutNoteTab, pasteNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, stepReadSize, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  selectNoteTab, continueDraftEdit, addNoteTab, closeNoteTab, copyNoteTab, cutNoteTab, pasteNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, lockNowAsk, quitSave, quitDiscard, quitCancel, setAutoLockPref, setReadPref, stepReadSize, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
@@ -11236,6 +11365,7 @@ const NAV_OVERLAYS = [ // DOM order = stacking order (a later one sits on top of
   ['exportOverlay', ()=>{ if(!exportRunning) closeExportModal(); }],   // Back never cancels a running export
   ['guideOverlay', closeGuide],
   ['secInfoOverlay', closeSecInfo],
+  ['quitOverlay', quitCancel],
   ['authOverlay', closeAuthModal],
   ['busyOverlay', ()=>{}],                                              // a running job: Back does nothing
   ['importPassOverlay', ()=>{ if(!importRunning) closeImportPassModal(); }],
