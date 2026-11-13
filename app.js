@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.83.1';
+const APP_VERSION = '1.84.0';
 const APP_VERSION_DATE = '2026-11-13';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -335,7 +335,8 @@ async function unlockApp(){
   restoreShelfViewPrefs();
   await ensureShelfId();
   render();
-  applyStartPage().catch(()=>{}); // v1.59.1: open the chosen start page (default: stay on the Shelf)
+  (pendingOpen ? Promise.resolve() : applyStartPage()).then(()=>openPendingWindowTarget()).catch(()=>{}); // v1.59.1: open the chosen start page (default: stay on the Shelf); v1.84.0: or the tab this window was opened for
+  startSyncPresence();
   // Best-effort: ask the browser to protect this origin's storage from
   // automatic eviction under disk pressure. Silent either way — some
   // browsers auto-grant based on site engagement, some prompt, some just
@@ -400,6 +401,7 @@ async function lockNow(){
   // the queued writes and is bounded to 1.5 s, so it can never delay the lock.
   const clipDone = Promise.race([clipClearForLock().catch(()=>{}), new Promise(r => setTimeout(r, 1500))]);
   await Promise.race([Promise.all([dbWriteQueue, clipDone]), new Promise(r => setTimeout(r, 4000))]);
+  syncPost({ t:'lock' });   // v1.84.0: locking one window locks them all
   cryptoKey = null;
   allowUnload = true;   // v1.83.0: the lock's own reload must not raise the "leave?" question (drafts are already kept)
   reloadPage();
@@ -612,6 +614,7 @@ let curId = null, curBlobUrl = null, curType = null, curNoteRaw = null;
 // and other Markdown apps). curNoteRaw is always the ACTIVE tab's text, so reading, editing,
 // find, outline, checkboxes and table edits keep working on it unchanged; curTabs holds all tabs.
 let curTabs = null, curTabIdx = 0;
+let curBaseContent = null;   // v1.84.0: the saved text of the open note as this window last saw it (3-way merge base)
 const NOTE_TAB_DEFAULT = 'Tab 1';
 const NOTE_TAB_COLORS = Object.freeze({ red:'#d64545', orange:'#e07b2a', amber:'#c9a227', green:'#3f9a5b', teal:'#2a9d9d', blue:'#3b78d8', purple:'#8a5cc7', pink:'#d65a9b', gray:'#7a7a72' });
 function cleanTabName(n){ return String(n == null ? '' : n).replace(/-->/g, '').replace(/~c:/g, '').replace(/[\r\n]+/g, ' ').trim().slice(0, 60); }
@@ -1070,14 +1073,14 @@ function tx(mode){ return db.transaction('items',mode).objectStore('items'); }
 function getAllRaw(){ return new Promise((res)=>{ const r = tx('readonly').getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>res([]); }); }
 function getOneRaw(id){ return new Promise((res)=>{ const r = tx('readonly').get(id); r.onsuccess=()=>res(r.result); }); }
 function putRaw(rec){ return idbWrite('items', st=>st.put(rec)); }
-function delRaw(id){ return idbWrite('items', st=>st.delete(id)); }
+function delRaw(id){ const p = idbWrite('items', st=>st.delete(id)); p.then(()=>syncPost({ t:'del', id })).catch(()=>{}); return p; }
 // v1.51.10: del() / put() / restoreRaw() go through the same write queue as
 // putMetaOnly, putContentOnly and the draft writers. Unqueued, a delete could
 // land while one of those was mid-way through reading the record, and the
 // slower writer would then put its stale copy back (a deleted item coming back
 // to life; an import or add being overwritten by an old copy).
 function del(id){ return serialized(()=>delRaw(id)); }
-function restoreRaw(rec){ return serialized(()=>putRaw(rec)); }
+function restoreRaw(rec){ return serialized(async ()=>{ await putRaw(rec); syncPost({ t:'chg', id:rec.id, list:true }); }); }
 function isQuotaError(err){
   return !!err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
 }
@@ -1190,6 +1193,7 @@ function put(item){
   return serialized(async ()=>{
     const rec = await encryptItemRecord(item);
     await putRaw(rec);
+    syncPost({ t:'chg', id:item.id, list:true });
   });
 }
 // Metadata-only update (rename, recategorize, progress, bookmarks) — keeps
@@ -1202,6 +1206,8 @@ async function putMetaOnly(id, metaUpdates){
     Object.assign(meta, metaUpdates);
     await sealItemJSON(cryptoKey, rec, 'meta', meta);
     await putRaw(rec);
+    // reading position, active tab, folds, bookmarks and reader prefs are per-window comforts: no shelf refresh elsewhere
+    if(Object.keys(metaUpdates).some(k=>!['activeTab','progress','folds','readerPrefs','bookmarks'].includes(k))) syncPost({ t:'chg', id, list:true });
   });
 }
 // Thrown when a linked note's on-disk file changed since it was opened and
@@ -1214,7 +1220,14 @@ async function putContentOnly(id, type, contentValue){
   return serialized(async ()=>{
     const rec = await getOneRaw(id);
     if(!rec) return;
-    const bytes = type === 'markdown' ? new TextEncoder().encode(contentValue) : await contentValue.arrayBuffer();
+    // v1.84.0: another window may have saved this note since this one loaded it. Merge tab by tab instead of
+    // writing this window's older copy over it (see mergeThreeWay).
+    let finalText = contentValue;
+    if(type === 'markdown' && id === curId && curBaseContent !== null && typeof contentValue === 'string'){
+      const latest = await decryptContent(rec, 'markdown');
+      if(latest !== curBaseContent && latest !== contentValue) finalText = mergeThreeWay(curBaseContent, contentValue, latest);
+    }
+    const bytes = type === 'markdown' ? new TextEncoder().encode(finalText) : await contentValue.arrayBuffer();
     await sealItemBlob(cryptoKey, rec, 'content', bytes);
     // Linked note (v1.50.0): write the file on disk FIRST; if that fails, throw
     // so the caller keeps the editor open and nothing diverges.
@@ -1234,13 +1247,18 @@ async function putContentOnly(id, type, contentValue){
           );
           if(!overwrite) throw new ExtConflictError('Save cancelled: the linked file changed outside Shelfmark.');
         }
-        const mtime = await extWriteFile(meta.extPath, contentValue, meta.extRoot);
+        const mtime = await extWriteFile(meta.extPath, finalText, meta.extRoot);
         meta.extMtime = mtime;
       }
       meta.updatedAt = Date.now();
       await sealItemJSON(cryptoKey, rec, 'meta', meta);
     }
     await putRaw(rec);
+    if(type === 'markdown' && id === curId){
+      curBaseContent = finalText;
+      if(finalText !== contentValue) adoptMergedContent(finalText);
+    }
+    syncPost({ t:'chg', id, list:true });
   });
 }
 // putMetaOnly / putContentOnly / the draft writers below are all
@@ -1251,8 +1269,11 @@ async function putContentOnly(id, type, contentValue){
 // other's change (a draft write could resurrect the OLD note text over a
 // just-saved one). This queue makes them run strictly one after another.
 let dbWriteQueue = Promise.resolve();
+// v1.84.0: with several windows open, two read-modify-writes of the same record could still overlap (this window's
+// queue cannot see the other window). The Web Lock makes each one atomic across every window of the app.
 function serialized(fn){
-  const p = dbWriteQueue.then(fn);
+  const run = ()=> (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) ? navigator.locks.request('shelfmark-db', ()=>fn()) : fn();
+  const p = dbWriteQueue.then(run);
   dbWriteQueue = p.catch(()=>{});
   return p;
 }
@@ -1270,7 +1291,7 @@ function putDraft(id, text, tab, edits){
   return serialized(async ()=>{
     const rec = await getOneRaw(id);
     if(!rec) return;
-    const payload = { text, savedAt: Date.now(), tab };
+    const payload = { text, savedAt: Date.now(), tab, win: WIN_ID };
     if(edits && Object.keys(edits).length) payload.edits = edits;
     await sealItemJSON(cryptoKey, rec, 'draft', payload);
     await putRaw(rec);
@@ -1287,11 +1308,123 @@ function clearDraft(id){
   return serialized(async ()=>{
     const rec = await getOneRaw(id);
     if(!rec || !rec.draftCipher){ unsavedNotes.delete(id); return; }
+    // v1.84.0: a draft that another OPEN window is still editing is theirs: leave it alone
+    try{ const dd = await openItemJSON(cryptoKey, rec, 'draft'); if(dd && dd.win && dd.win !== WIN_ID && peerAlive(dd.win)) return; }catch(e){}
     delete rec.draftIv; delete rec.draftCipher; delete rec.draftBound;
     await putRaw(rec);
     unsavedNotes.delete(id);
   });
 }
+
+// ---- Several windows (v1.84.0) ---------------------------------------------------------------------------------
+// "Open in new window" (tab menu, ⧉ in the reader bar on a computer, command palette) opens the same shelf in a
+// second window on the chosen note and tab, for side-by-side comparing, copying and moving. Each window asks for the
+// passcode itself (the key only ever lives in memory). What keeps two windows from hurting each other:
+//   * every database read-modify-write takes a Web Lock, so it is atomic across windows (serialized());
+//   * a save merges tab by tab with what the other window saved meanwhile (mergeThreeWay) and asks only when both
+//     windows changed the SAME tab (or the tabs themselves);
+//   * a window that is only reading follows the other window's saves at once; one that is editing is told and merges at Save;
+//   * a draft another open window is still editing is left to that window;
+//   * copy / cut tab works between windows, and locking one window locks all of them.
+// Windows talk over a BroadcastChannel (same origin only, nothing stored); it carries note ids and the copied tab.
+let WIN_ID = Math.random().toString(36).slice(2, 10);
+const syncCh = (typeof BroadcastChannel === 'function') ? new BroadcastChannel('shelfmark-sync') : null;
+const peers = new Map();   // window id -> last time it was heard from
+function peerAlive(w){ const t = peers.get(w); return !!t && Date.now() - t < 12000; }
+function syncPost(m){ if(!syncCh) return; try{ syncCh.postMessage({ ...m, w: WIN_ID }); }catch(e){} }
+let pendingOpen = parseWindowHash(typeof location !== 'undefined' ? location.hash : '');
+if(pendingOpen){ try{ history.replaceState(null, '', location.pathname + location.search); }catch(e){} }
+function parseWindowHash(h){
+  const m = /^#w=([^.&]+)(?:\.(\d+))?$/.exec(h || '');
+  if(!m) return null;
+  let id; try{ id = decodeURIComponent(m[1]); }catch(e){ return null; }
+  return { id, tab: m[2] !== undefined ? Number(m[2]) : null };
+}
+function windowUrl(id, tab){
+  return location.origin + location.pathname + location.search + '#w=' + encodeURIComponent(id) + (tab === null || tab === undefined ? '' : '.' + tab);
+}
+function openInNewWindow(id, tab){
+  if(!id) return null;
+  const aw = (screen && screen.availWidth) || 1200, ah = (screen && screen.availHeight) || 800;
+  const al = (screen && screen.availLeft) || 0, at = (screen && screen.availTop) || 0;
+  const w = Math.round(aw / 2);   // the right half of the screen; the current window stays where it is
+  return window.open(windowUrl(id, tab), 'shelfmark-' + Date.now(), 'popup=yes,noopener,width=' + w + ',height=' + ah + ',left=' + (al + aw - w) + ',top=' + at);
+}
+function openTabInNewWindow(){ closeNoteTabMenu(); if(curId) openInNewWindow(curId, curTabs ? curTabIdx : null); }
+function openItemInNewWindow(){ if(curId) openInNewWindow(curId, curType === 'markdown' && curTabs && curTabs.length > 1 ? curTabIdx : null); }
+async function openPendingWindowTarget(){
+  const p = pendingOpen; pendingOpen = null;
+  if(!p) return;
+  await openReader(p.id);
+  if(curTabs && p.tab !== null && p.tab !== curTabIdx && curTabs[p.tab]) await selectNoteTab(String(p.tab));
+}
+function startSyncPresence(){
+  if(startSyncPresence.done) return; startSyncPresence.done = true;
+  syncPost({ t:'hi' }); syncPost({ t:'clip?' });
+  setInterval(()=>syncPost({ t:'hi' }), 4000);
+  window.addEventListener('pagehide', ()=>syncPost({ t:'bye' }));
+}
+// Tab-by-tab three-way merge of one note: `base` = what this window loaded / last saved, `ours` = what it is saving,
+// `latest` = what is in the database now. Throws ExtConflictError (the editor stays open, nothing is written) when
+// the user declines to overwrite.
+function mergeThreeWay(base, ours, latest){
+  const B = parseNoteTabs(base), O = parseNoteTabs(ours), T = parseNoteTabs(latest);
+  const same = (a, b)=> a.length === b.length && a.every((t, i)=>t.name === b[i].name && (t.color || '') === (b[i].color || ''));
+  if(!(same(B, O) && same(B, T))){
+    if(!confirm('This note was also changed in another window (its tabs were added, moved, renamed, coloured or deleted).\n\nOK = save this window\u2019s version over it\nCancel = don\u2019t save yet (your text stays open here)')) throw new ExtConflictError('Save cancelled: the tabs were changed in another window.');
+    return ours;
+  }
+  const out = O.map((t, i)=>{
+    const b = B[i].text, th = T[i].text, o = t.text;
+    if(o === b || o === th) return { ...t, text: th };   // untouched here, or both windows agree
+    if(th === b) return t;                                // only this window changed it
+    if(!confirm('The tab \u201c' + t.name + '\u201d was changed in both windows.\n\nOK = keep this window\u2019s text (overwrites the other window\u2019s change)\nCancel = don\u2019t save yet (your text stays open here)')) throw new ExtConflictError('Save cancelled: the same tab was changed in another window.');
+    return t;
+  });
+  return composeNoteTabs(out);
+}
+// Take new saved text (a merge result, or what another window saved) into the open note.
+function adoptMergedContent(raw){
+  if(curType !== 'markdown') return;
+  const t = parseNoteTabs(raw);
+  if(curTabs && t.length === curTabs.length && t.every((x, i)=>x.name === curTabs[i].name)) t.forEach((x, i)=>{ curTabs[i].text = x.text; curTabs[i].color = x.color; });
+  else { curTabs = t; curTabIdx = Math.min(curTabIdx, t.length - 1); }
+  curNoteRaw = curTabs[curTabIdx].text;
+  if(!editSession){ renderNoteTabs(); rerenderNoteView(); }
+}
+let lastExtToastAt = 0;
+async function onNoteChangedElsewhere(id){
+  if(id !== curId || curType !== 'markdown' || curBaseContent === null) return;
+  const it = await getOne(id).catch(()=>null);
+  if(!it || it.content === curBaseContent) return;
+  if(editSession){
+    if(Date.now() - lastExtToastAt > 60000){ lastExtToastAt = Date.now(); tabToast('This note was changed in another window. When you save, both versions are merged.'); }
+    return;
+  }
+  curBaseContent = it.content;
+  adoptMergedContent(it.content);
+}
+let listRenderTimer = null, lockedByPeer = false;
+function handleSyncMessage(m){
+  if(!m || typeof m !== 'object' || !m.w || m.w === WIN_ID) return;
+  peers.set(m.w, Date.now());
+  if(m.t === 'bye'){ peers.delete(m.w); return; }
+  if(!cryptoKey) return;   // a locked window ignores everything
+  if(m.t === 'chg' || m.t === 'del'){
+    if(m.list || m.t === 'del'){ clearTimeout(listRenderTimer); listRenderTimer = setTimeout(()=>{ render().catch(()=>{}); }, 800); }
+    if(m.id && m.id === curId){
+      if(m.t === 'del'){ if(!editSession){ closeReader(); tabToast('That note was deleted in another window.'); } else tabToast('This note was deleted in another window. Copy what you need before you close it.'); }
+      else onNoteChangedElsewhere(m.id).catch(()=>{});
+    }
+  } else if(m.t === 'clip'){
+    if(m.clip && typeof m.clip.text === 'string') tabClipboard = { name: String(m.clip.name || ''), color: String(m.clip.color || ''), text: m.clip.text, from: m.clip.from };
+  } else if(m.t === 'clip?'){
+    if(tabClipboard) syncPost({ t:'clip', clip: tabClipboard });
+  } else if(m.t === 'lock'){
+    if(!lockedByPeer){ lockedByPeer = true; lockNow(); }
+  }
+}
+if(syncCh) syncCh.onmessage = ev => { try{ handleSyncMessage(ev.data); }catch(e){ console.error('[sync]', e); } };
 
 // ---- Unsaved edits across notes (v1.83.0) ----
 // Edits never have to be saved before you go somewhere else: another tab, another note, a tab operation. They stay
@@ -3103,7 +3236,7 @@ async function openReader(id){
   rememberLastOpened(id);
   rememberRecent(id);   // v1.68.0: feeds the Recent strip on the shelf
   curDraft = null;
-  curTabs = null; curTabIdx = 0;
+  curTabs = null; curTabIdx = 0; curBaseContent = null;
   resetTabEdits();
   editSession = false;
   closeNoteTabMenu();
@@ -3285,6 +3418,7 @@ async function openReader(id){
     curBlobUrl = URL.createObjectURL(it.content);
     c.innerHTML = `<img class="full" src="${curBlobUrl}">`;
   } else if(it.type === 'markdown'){
+    curBaseContent = it.content;
     curTabs = parseNoteTabs(it.content);
     curTabIdx = Math.min(Math.max(0, Number(it.activeTab) || 0), curTabs.length - 1);
     curNoteRaw = curTabs[curTabIdx].text;
@@ -5547,6 +5681,7 @@ window.addEventListener('pagehide', flushDraftNow);
 async function loadDraftFor(id, savedText){
   const d = await getDraft(id);
   if(!d) return null;
+  if(d.win && d.win !== WIN_ID && peerAlive(d.win)) return null;   // v1.84.0: being edited right now in another window
   const t = (curTabs && Number.isInteger(d.tab) && curTabs[d.tab]) ? d.tab : curTabIdx;
   const saved = curTabs ? curTabs[t].text : savedText;
   // v1.70.0: keep only edits for tabs that still exist and really differ from what is saved
@@ -9250,7 +9385,8 @@ function openNoteTabMenu(el){
   m.id = 'noteTabMenu';
   m.className = 'ntab-menu';
   const clipName = tabClipboard ? tabClipLabel(tabClipboard.name) : '';
-  m.innerHTML = `<button type="button" data-on-click="renameNoteTab">Rename…</button>`
+  m.innerHTML = `<button type="button" data-on-click="openTabInNewWindow" title="Open this tab in a second window, to compare, copy or move text side by side">Open in new window</button>`
+    + `<button type="button" data-on-click="renameNoteTab">Rename…</button>`
     + `<button type="button" data-on-click="copyNoteTab">Copy tab</button>`
     + (curTabs.length > 1 ? `<button type="button" data-on-click="cutNoteTab">Cut tab…</button>` : '')
     + `<button type="button" data-on-click="pasteNoteTab"${tabClipboard ? '' : ' disabled'} title="${tabClipboard ? 'Paste a copy of the tab ' + escapeHtml(clipName) + ' after this tab' : 'Nothing copied yet. Use Copy tab or Cut tab first'}">Paste tab${tabClipboard ? ' \u201c' + escapeHtml(clipName) + '\u201d' : ''}</button>`
@@ -9646,6 +9782,7 @@ function copyNoteTab(){
   if(!curTabs || curType !== 'markdown') return;
   const t = curTabs[curTabIdx];
   tabClipboard = { name: t.name, color: t.color || '', text: liveTabText(curTabIdx), from: curId };
+  syncPost({ t:'clip', clip: tabClipboard });
   tabToast('Copied the tab \u201c' + tabClipLabel(t.name) + '\u201d. Open another note, tap \u22EF, then Paste tab.');
 }
 async function cutNoteTab(){
@@ -9656,6 +9793,7 @@ async function cutNoteTab(){
   const clip = { name: t.name, color: t.color || '', text: liveTabText(curTabIdx), from: curId };   // unsaved edits go with the tab
   if(!(await removeCurrentNoteTab())) return;   // it could not be removed: nothing was cut, the clipboard is left as it was
   tabClipboard = clip;
+  syncPost({ t:'clip', clip });
   tabToast('Cut the tab \u201c' + tabClipLabel(clip.name) + '\u201d. Open a note, tap \u22EF, then Paste tab.');
 }
 async function pasteNoteTab(){
@@ -10589,6 +10727,7 @@ function buildStaticCommands(){
     { id:'fold-all', icon:'&#8661;', label:'Categories: collapse all / expand all', hint:'', action: ()=>toggleAllCats() },
     { id:'clip-clear', icon:'&#128203;', label:'Clipboard: auto-clear after Copy \u2014 turn '+(clipClearOn() ? 'off' : 'on'), hint: clipClearOn() ? 'on, 30 s' : 'off', action: ()=>toggleClipClear() },
     { id:'loop', icon:'&#128257;', label:'Audio loop: turn '+(prefs.loopAudio ? 'off' : 'on'), hint: prefs.loopAudio ? 'on' : 'off', action: ()=>toggleLoopAudio() },
+    ...(curId ? [ { id:'new-window', icon:'&#10697;', label:'Open this in a new window', hint: curTabs && curTabs.length > 1 ? 'this tab' : '', action: ()=>openItemInNewWindow() } ] : []),
     ...(authMode === 'passcode' ? [ { id:'lock-now', icon:'&#128274;', label:'Lock now', hint:'', action: ()=>lockNowAsk() } ] : []),
     authMode === 'device'
       ? { id:'passcode-set', icon:'&#128274;', label:'Set a passcode\u2026', hint:'currently none', action: ()=>openAuthModal('set') }
@@ -11270,7 +11409,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  selectNoteTab, continueDraftEdit, addNoteTab, closeNoteTab, copyNoteTab, cutNoteTab, pasteNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, lockNowAsk, quitSave, quitDiscard, quitCancel, setAutoLockPref, setReadPref, stepReadSize, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  selectNoteTab, continueDraftEdit, addNoteTab, closeNoteTab, copyNoteTab, cutNoteTab, pasteNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, openTabInNewWindow, openItemInNewWindow, lockNowAsk, quitSave, quitDiscard, quitCancel, setAutoLockPref, setReadPref, stepReadSize, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
