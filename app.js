@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.81.0';
-const APP_VERSION_DATE = '2026-11-04';
+const APP_VERSION = '1.82.0';
+const APP_VERSION_DATE = '2026-11-13';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
@@ -2104,6 +2104,11 @@ async function mergeImportedItems(items, info){
 
 const FONT_MAP = {serif:"Georgia,'Times New Roman',serif", sans:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", mono:"'SFMono-Regular',Consolas,Menlo,monospace", zh:"'PingFang SC','Heiti SC','Microsoft YaHei',sans-serif"};
 const SIZE_MAP = {s:'15px', m:'17px', l:'19px', xl:'22px'};
+// v1.82.0: A- / A+ fine text size. `px` (0 = off, use the S/M/L/XL preset) is a whole number
+// of pixels between READ_PX_MIN and READ_PX_MAX and wins over the preset when set.
+const READ_PX_MIN = 12, READ_PX_MAX = 34;
+function validReadPx(n){ return Number.isInteger(n) && n >= READ_PX_MIN && n <= READ_PX_MAX; }
+function effReadPx(e){ return validReadPx(e.px) ? e.px : (parseInt(SIZE_MAP[e.size] || SIZE_MAP.m, 10)); }
 // v1.58.0: reading-column width. Only affects screens wider than the value; phones look the same.
 const WIDTH_MAP = {narrow:'640px', wide:'960px', full:'100%'};
 // Remote media (v1.52.4): a note's ![](https://...) image or https audio link is never
@@ -2112,7 +2117,7 @@ const WIDTH_MAP = {narrow:'640px', wide:'960px', full:'100%'};
 // it was typed, imported from a backup or synced from a folder. Such a link renders as a
 // plain link (see remoteMediaPlaceholder) that the person can open in a new tab. data:/blob:
 // media (pasted-in pictures, on-shelf audio links) still display in the note.
-let prefs = {theme:'auto', font:'serif', size:'m', width:'wide', sections:'plain', secLevel:'lv-auto', loopAudio:false, itemSortMode:'newest', collapsedCats:[], shelfView:'cards', recentIds:[], bigShelfFolded:false, tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5, clipClear:true, extRemoveOnDelete:false, extIgnored:{}};
+let prefs = {theme:'auto', font:'serif', size:'m', px:0, width:'wide', sections:'plain', secLevel:'lv-auto', loopAudio:false, itemSortMode:'newest', collapsedCats:[], shelfView:'cards', recentIds:[], bigShelfFolded:false, tocSideHidden:false, categoryOrder:[], shelfId:'', shelfName:'', exportShelfName:true, autoLockIdleMin:10, autoLockAwayMin:5, clipClear:true, extRemoveOnDelete:false, extIgnored:{}};
 let settingsPanelOpen = false;
 
 function txS(mode){ return db.transaction('settings',mode).objectStore('settings'); }
@@ -2149,6 +2154,7 @@ function readPrefsClean(o){
   for(const k of Object.keys(READ_PREF_VALUES)){
     if(typeof o[k] === 'string' && READ_PREF_VALUES[k].includes(o[k])) out[k] = o[k];
   }
+  if(o.px === 0 || validReadPx(o.px)) out.px = o.px;   // 0 = "use the S/M/L/XL preset"
   return Object.keys(out).length ? out : null;
 }
 function applyPrefs(p){
@@ -2156,7 +2162,7 @@ function applyPrefs(p){
   if(e.theme === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', e.theme);
   document.documentElement.style.setProperty('--read-font', FONT_MAP[e.font] || FONT_MAP.serif);
-  document.documentElement.style.setProperty('--read-size', SIZE_MAP[e.size] || SIZE_MAP.m);
+  document.documentElement.style.setProperty('--read-size', validReadPx(e.px) ? e.px + 'px' : (SIZE_MAP[e.size] || SIZE_MAP.m));
   document.documentElement.style.setProperty('--read-width', WIDTH_MAP[e.width] || WIDTH_MAP.wide);
   if(e.sections === 'cards') document.documentElement.setAttribute('data-sections', 'cards');
   else document.documentElement.removeAttribute('data-sections');
@@ -2173,6 +2179,7 @@ function toggleLoopAudio(){
 }
 function setPref(key, val){
   prefs[key] = val;
+  if(key === 'size') prefs.px = 0;   // picking S/M/L/XL drops the fine A-/A+ size
   applyPrefs(prefs);
   putPrefs(prefs).catch(()=>{});
   refreshSettingsUI();
@@ -2186,15 +2193,23 @@ function saveReadOverride(){
   return putMetaOnly(id, { readerPrefs: val }).catch(()=>{});
 }
 function setReadPref(key, val){
+  if(key === 'px' && !(val === 0 || validReadPx(val))) return;
   if(settingsScope === 'page' && curId && curType === 'markdown'){
-    if(!READ_PREF_VALUES[key] || !READ_PREF_VALUES[key].includes(val)) return;
+    if(key !== 'px' && (!READ_PREF_VALUES[key] || !READ_PREF_VALUES[key].includes(val))) return;
     curReadOverride = { ...(curReadOverride || {}), [key]: val };
+    if(key === 'size') curReadOverride.px = 0;
     applyPrefs(prefs);
     saveReadOverride();
     refreshSettingsUI();
     return;
   }
   setPref(key, val);
+}
+// A- / A+ : one pixel step from whatever size is showing now (preset or fine), clamped.
+function stepReadSize(d){
+  const eff = settingsScope === 'page' ? { ...prefs, ...(curReadOverride || {}) } : prefs;
+  const n = Math.max(READ_PX_MIN, Math.min(READ_PX_MAX, effReadPx(eff) + (parseInt(d, 10) || 0)));
+  setReadPref('px', n);
 }
 function setSettingsScope(scope){
   settingsScope = (scope === 'page' && curId && curType === 'markdown') ? 'page' : 'app';
@@ -2218,9 +2233,13 @@ function refreshSettingsUI(){
         : ['plain','cards'].includes(b.dataset.v) ? 'sections'
         : ['lv-auto','lv1','lv2','lv3'].includes(b.dataset.v) ? 'secLevel'
         : ['narrow','wide','full'].includes(b.dataset.v) ? 'width' : 'size';
-      b.classList.toggle('active', eff[key] === b.dataset.v);
+      b.classList.toggle('active', eff[key] === b.dataset.v && (key !== 'size' || !validReadPx(eff.px)));
     });
   });
+  const px = effReadPx(eff);
+  const nowEl = document.getElementById('sizeNow'); if(nowEl) nowEl.textContent = px + ' px';
+  const mBtn = document.getElementById('sizeMinusBtn'); if(mBtn) mBtn.disabled = px <= READ_PX_MIN;
+  const pBtn = document.getElementById('sizePlusBtn'); if(pBtn) pBtn.disabled = px >= READ_PX_MAX;
   const reset = document.getElementById('readPrefsResetRow');
   if(reset) reset.style.display = (settingsScope === 'page' && curReadOverride) ? 'flex' : 'none';
   const hint = document.getElementById('settingsScopeHint');
@@ -11115,7 +11134,7 @@ function createIndexNoteFromGuide(){
   return quickNewNote('Index', NOTE_TEMPLATES.index.content());
 }
 const UI_ACTIONS = Object.freeze({
-  selectNoteTab, continueDraftEdit, addNoteTab, closeNoteTab, copyNoteTab, cutNoteTab, pasteNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
+  selectNoteTab, continueDraftEdit, addNoteTab, closeNoteTab, copyNoteTab, cutNoteTab, pasteNoteTab, renameNoteTab, openNoteTabMenu, moveNoteTab, setNoteTabColor, openStartPage, closeStartPage, setStartPageMode, setStartPageItem, scrollToTop, updatePassHint, lockNow, setAutoLockPref, setReadPref, stepReadSize, setSettingsScope, resetReadPrefs, bulkDeleteSelected, cancelEditNote, chooseNoteTemplate, closeAdd, closeAudioLinkPicker,
   closeAuthModal, closeCommandPalette, closeEdit, closeExportModal, closeFindBar, closeGuide,
   closeHelpDock, closeImportPassModal, closeMarkdownHelp, closeMoveCategory, closeReader,
   closeSecInfo, closeTagsPage, confirmMoveCategory, copyCodeBlock, copyCodeLine, createIndexNoteFromGuide,
