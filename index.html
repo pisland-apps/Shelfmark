@@ -31,6 +31,10 @@
     --card:#fbf9f2;
     --read-font:'Lora',Georgia,serif; --read-size:17px; --read-width:960px;
   }
+  :root[data-theme="white"]{
+    --paper:#ffffff; --paper2:#f3f3f1; --ink:#111111; --ink-soft:#444444;
+    --line:rgba(0,0,0,.26); --card:#f6f6f4;
+  }
   :root[data-theme="sepia"]{
     --paper:#f3e9d0; --paper2:#eadcb8; --ink:#3b2a18; --ink-soft:#6b5030;
     --line:rgba(59,42,24,.26); --card:#f8f0dc;
@@ -1779,6 +1783,7 @@ columns: 分类 | 笔记
     <div class="seg">
       <button data-v="auto" data-on-click="setReadPref" data-args-click='["theme","auto"]'>Auto</button>
       <button data-v="light" data-on-click="setReadPref" data-args-click='["theme","light"]'>Light</button>
+      <button data-v="white" data-on-click="setReadPref" data-args-click='["theme","white"]'>White</button>
       <button data-v="dark" data-on-click="setReadPref" data-args-click='["theme","dark"]'>Dark</button>
       <button data-v="sepia" data-on-click="setReadPref" data-args-click='["theme","sepia"]'>Sepia</button>
     </div>

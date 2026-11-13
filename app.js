@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.82.0';
+const APP_VERSION = '1.82.1';
 const APP_VERSION_DATE = '2026-11-13';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -2136,7 +2136,7 @@ async function putPrefs(p){
 // stored; anything missing follows the app-wide setting. `curReadOverride` is the open
 // note's override (null when none), `settingsScope` is which of the two the panel edits.
 const READ_PREF_VALUES = {
-  theme: ['auto','light','dark','sepia'],
+  theme: ['auto','light','white','dark','sepia'],
   font:  Object.keys(FONT_MAP),
   size:  Object.keys(SIZE_MAP),
   width: Object.keys(WIDTH_MAP),
@@ -2228,7 +2228,7 @@ function refreshSettingsUI(){
     seg.querySelectorAll('button').forEach(b=>{
       if(b.dataset.scope){ b.classList.toggle('active', settingsScope === b.dataset.scope); return; }
       if(!b.dataset.v) return; // the Reset button
-      const key = ['auto','light','dark','sepia'].includes(b.dataset.v) ? 'theme'
+      const key = ['auto','light','white','dark','sepia'].includes(b.dataset.v) ? 'theme'
         : ['serif','sans','mono','zh'].includes(b.dataset.v) ? 'font'
         : ['plain','cards'].includes(b.dataset.v) ? 'sections'
         : ['lv-auto','lv1','lv2','lv3'].includes(b.dataset.v) ? 'secLevel'
@@ -10421,8 +10421,8 @@ let cmdPalTagCommands = [];
 function buildStaticCommands(){
   const storageBtn = document.getElementById('storageBtn');
   const storageHint = (storageBtn && storageBtn.style.display !== 'none') ? storageBtn.textContent : '';
-  const THEME_LABEL = {auto:'Auto (match device)', light:'Light', dark:'Dark', sepia:'Sepia'};
-  const themeCmds = ['auto','light','dark','sepia'].map(t=>({
+  const THEME_LABEL = {auto:'Auto (match device)', light:'Light', white:'White', dark:'Dark', sepia:'Sepia'};
+  const themeCmds = ['auto','light','white','dark','sepia'].map(t=>({
     id:'theme-'+t, icon:'&#9681;', label:'Theme: '+THEME_LABEL[t],
     hint: prefs.theme === t ? 'current' : '', action: ()=>setPref('theme', t)
   }));
