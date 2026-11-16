@@ -658,6 +658,23 @@
     }
   }
   .ebar-tools .tool-esc{font-size:12px;font-weight:600;letter-spacing:.2px;}
+  /* v1.84.1: on a phone the 18 tool buttons wrapped into 4 rows and, with Cancel / Save, ate about a third of the
+     screen while typing. Narrow screens now keep ONE swipeable row (fade at the right edge hints there is more),
+     slightly smaller buttons, and tighter padding. Wide screens keep the wrapped grid. */
+  @media (max-width:699px){
+    .ebar{gap:6px;padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px));}
+    .ebar-tools{
+      flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;gap:6px;
+      scrollbar-width:none;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+      -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);
+              mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);
+      padding-right:20px;
+    }
+    .ebar-tools::-webkit-scrollbar{display:none;}
+    .ebar-tools .tool{width:40px;height:38px;padding:0;display:inline-flex;align-items:center;justify-content:center;}
+    .ebar-actions button{padding:8px;}
+    .style-menu{left:12px;}
+  }
   .ebar-tools .tool-hl{background:rgba(255,213,74,.5);border-radius:3px;padding:0 4px;}
   /* v1.65.0: small text, text colour, highlight colour ({small:..} {red:..} {bg-yellow:..}) and the second row under a bullet */
   .mdbody .ts-small{font-size:.8em;}

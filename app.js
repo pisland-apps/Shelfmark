@@ -8,8 +8,8 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.84.0';
-const APP_VERSION_DATE = '2026-11-13';
+const APP_VERSION = '1.84.1';
+const APP_VERSION_DATE = '2026-11-16';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
 
