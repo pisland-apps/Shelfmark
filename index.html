@@ -851,9 +851,13 @@
   .mdbody table th{background:var(--card);font-weight:600;}
   .mdbody table td[rowspan],.mdbody table th[rowspan]{vertical-align:middle;}
   .mdbody ul.task-list{list-style:none;padding-left:0;}
-  .mdbody .task-item{display:flex;align-items:flex-start;gap:8px;margin:4px 0;}
-  .mdbody .task-item label{display:flex;align-items:flex-start;gap:8px;cursor:pointer;}
-  .mdbody .task-item input[type=checkbox]{margin-top:5px;flex-shrink:0;width:16px;height:16px;}
+  .mdbody .task-item{display:flex;align-items:flex-start;gap:8px;margin:2px 0;}
+  /* v1.84.3: the app-wide form rule `label{font-size:12px;color:grey;margin:14px 0 6px}` was leaking into
+     checklist rows: a big gap between items, and text stuck at 12px so the A-/A+ and S/M/L/XL sizes did
+     nothing. Checklist labels now take the page's own text size, colour and no extra margin; the box
+     scales with the text. */
+  .mdbody .task-item label{display:flex;align-items:flex-start;gap:.5em;cursor:pointer;margin:0;font-size:inherit;color:inherit;line-height:inherit;}
+  .mdbody .task-item input[type=checkbox]{margin:.35em 0 0;flex-shrink:0;width:1.05em;height:1.05em;min-width:16px;min-height:16px;}
   .mdbody .task-item .done{text-decoration:line-through;color:var(--ink-soft);}
   .md-audio{
     margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
