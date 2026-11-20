@@ -790,6 +790,14 @@
   .mdbody .callout-fold[open] > summary.callout-title::after{transform:rotate(90deg);}
   .mdbody .callout-fold > .callout-body{margin-top:0;padding:0 14px 12px;}
   .mdbody ol{padding-left:1.4em;}
+  /* v1.84.2: bullets / numbering sat too far from the text. The browser default gave a list a 40px left indent
+     and a full blank line above and below it. Now the indent is small and the gap is tight; ordinary
+     paragraphs are not touched. (Nested indent is a margin-left on each <li>, so it still works.) */
+  .mdbody ul,.mdbody ol{margin:.15em 0;padding-left:1.35em;}
+  .mdbody ul.task-list{padding-left:0;}
+  .mdbody li{margin:0;}
+  .mdbody .mdblock:has(+ .mdblock > :is(ul,ol)) > p{margin-bottom:.15em;}
+  .mdbody .mdblock:has(> :is(ul,ol)) + .mdblock > p{margin-top:.15em;}
   .mdbody hr{border:none;border-top:1px solid var(--line);margin:20px 0;}
   .mdbody hr.hr-c{border-top-width:2px;}
   .mdbody hr.hr-red{border-top-color:#d6453d;}
