@@ -8,7 +8,7 @@
 // actual cached build can silently drift apart. See CACHE_VERSION's comment
 // in service-worker.js, and the deploy checklist in README.md.
 // ============================================================================
-const APP_VERSION = '1.84.3';
+const APP_VERSION = '1.84.4';
 const APP_VERSION_DATE = '2026-11-20';
 
 document.getElementById('versionBadge').textContent = 'v' + APP_VERSION + ' · ' + APP_VERSION_DATE;
@@ -9257,6 +9257,14 @@ function wireTaskCheckboxes(container){
   container.querySelectorAll('input[type=checkbox][data-block-idx]').forEach(cb=>{
     cb.onclick = (e)=>{
       e.stopPropagation();
+      // v1.84.4: un-ticking asks first, naming the item, so a stray tap can't silently undo a done item
+      // (ticking stays one tap). Cancel puts the tick back; nothing is saved.
+      if(!cb.checked){
+        const label = cb.closest('label');
+        const txt = ((label && label.textContent) || '').trim().replace(/\s+/g, ' ');
+        const shown = txt.length > 80 ? txt.slice(0, 80) + '\u2026' : txt;
+        if(!confirm('Untick this item?\n\n\u201c' + shown + '\u201d')){ cb.checked = true; return; }
+      }
       toggleTaskCheckbox(Number(cb.dataset.blockIdx), Number(cb.dataset.lineIdx));
     };
   });

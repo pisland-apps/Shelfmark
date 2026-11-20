@@ -857,7 +857,10 @@
      nothing. Checklist labels now take the page's own text size, colour and no extra margin; the box
      scales with the text. */
   .mdbody .task-item label{display:flex;align-items:flex-start;gap:.5em;cursor:pointer;margin:0;font-size:inherit;color:inherit;line-height:inherit;}
-  .mdbody .task-item input[type=checkbox]{margin:.35em 0 0;flex-shrink:0;width:1.05em;height:1.05em;min-width:16px;min-height:16px;}
+  /* v1.84.4: a checkbox's own font-size is the browser's 13px, so the em margin above was worked out from 13px,
+     not from the text, and the box sat above the text line. It now takes the text's size; the margin centres
+     the box on the first line (line-height is 1.75em). */
+  .mdbody .task-item input[type=checkbox]{font-size:inherit;margin:calc((1.75em - 1.05em) / 2) 0 0;flex-shrink:0;width:1.05em;height:1.05em;min-width:16px;min-height:16px;}
   .mdbody .task-item .done{text-decoration:line-through;color:var(--ink-soft);}
   .md-audio{
     margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
